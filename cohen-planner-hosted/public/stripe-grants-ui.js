@@ -2,6 +2,8 @@
 // Stripe workspace. All edits replace the nested config so saved scenarios remain isolated.
 let stripeWorkspace='overview';
 let stripeActualMode='full',stripeActualAsOf=null;
+let stripeValMode='price';
+function stripeValModeSet(value){stripeValMode=value;render();}
 function stripeActualModeSet(value){stripeActualMode=value;render();}
 function stripeWorkspaceSet(view){stripeWorkspace=view;render();}
 function stripeGrantCommit(edit){
@@ -80,15 +82,27 @@ function renderStripeWorkspace(R){
     const path=ledger?Object.values(ledger.prices).filter(p=>p.year>=sy-2&&p.year<=ey):[];
     const charted=path.filter(p=>p.year>=sy);
     const hasVal=path.some(p=>p.valuation>0);
-    const bn=v=>!(v>0)?'—':v>=1e12?'$'+(v/1e12).toFixed(v>=1e13?1:2)+'T':v>=1e9?'$'+(v/1e9).toFixed(v>=1e10?0:1)+'B':v>=1e6?'$'+Math.round(v/1e6)+'M':'$'+num(v);
-    const chg=(now,was)=>!(was>0)||!(now>0)?'—':`${now>=was?'+':''}${((now/was-1)*100).toFixed(1)}%`;
-    h+=`<section class="sc"><h3>Valuation & share price</h3><div class="sg-fields">${input('Reference valuation ($)','referenceValuation',c.referenceValuation)}${input('Valuation ceiling ($, optional)','valuationCeiling',c.valuationCeiling)}${input('Annual dilution (decimal, 0.01 = 1%)','dilutionRate',c.dilutionRate)}${input('Future grant-dollar growth (decimal)','grantGrowth',c.grantGrowth)}</div><p class="sg-note">Annual growth is marked the following February: 2026 growth changes the February 2027 price. The ceiling limits valuation growth; dilution can still reduce per-share value. Explicit price overrides take precedence.</p><div class="sg-actions">${[['conservative','Conservative'],['base','Base'],['bull','Optimistic']].map(([k,l])=>`<button onclick="applyStripePreset('${k}')">${l} path</button>`).join('')}</div>${charted.length?(hasVal?stripeGrantChart(charted.map(p=>({year:p.year,value:p.valuation})),'Company valuation',bn):'')+stripeGrantChart(charted.map(p=>({year:p.year,value:p.tender})),'Tender price / share',v=>'$'+num(v)):''}${hasVal?'':`<p class="sg-note">No reference valuation is set, so the path carries a share price only. Enter one above to see the company valuation behind it.</p>`}</section>`;
+    // Whole numbers throughout. Valuations stay in billions for the whole column rather than
+    // switching unit partway down it, so the years compare at a glance.
+    const round=v=>Math.round(Number(v)||0).toLocaleString('en-US');
+    // The one guard on rounding: a positive price under a dollar must not print as $0.
+    const usdShare=v=>!(v>0)?'—':v<1?'$'+v.toFixed(2):'$'+round(v);
+    const bn=v=>!(v>0)?'—':v>=5e8?'$'+round(v/1e9)+'B':v>=1e6?'$'+round(v/1e6)+'M':'$'+round(v);
+    const chg=(now,was)=>!(was>0)||!(now>0)?'—':`${now>=was?'+':''}${Math.round((now/was-1)*100)}%`;
+    // One chart, two series. Valuation and share price live on scales three orders of
+    // magnitude apart; drawing them together would flatten one of them into the axis, so the
+    // toggle swaps which one the chart is showing rather than crowding both onto it.
+    const series=hasVal&&stripeValMode==='valuation'
+      ?{points:charted.map(p=>({year:p.year,value:p.valuation})),label:'Company valuation',format:bn}
+      :{points:charted.map(p=>({year:p.year,value:p.tender})),label:'Tender price / share',format:usdShare};
+    const toggle=hasVal?`<div class="sg-toggle" role="group" aria-label="Chart series">${[['price','Share price'],['valuation','Company valuation']].map(([k,l])=>`<button class="${(stripeValMode==='valuation'?'valuation':'price')===k?'active':''}" aria-pressed="${(stripeValMode==='valuation'?'valuation':'price')===k}" onclick="stripeValModeSet('${k}')">${l}</button>`).join('')}</div>`:'';
+    h+=`<section class="sc"><h3>Valuation & share price</h3><div class="sg-fields">${input('Reference valuation ($)','referenceValuation',c.referenceValuation)}${input('Valuation ceiling ($, optional)','valuationCeiling',c.valuationCeiling)}${input('Annual dilution (decimal, 0.01 = 1%)','dilutionRate',c.dilutionRate)}${input('Future grant-dollar growth (decimal)','grantGrowth',c.grantGrowth)}</div><p class="sg-note">Annual growth is marked the following February: 2026 growth changes the February 2027 price. The ceiling limits valuation growth; dilution can still reduce per-share value. Explicit price overrides take precedence.</p><div class="sg-actions">${[['conservative','Conservative'],['base','Base'],['bull','Optimistic']].map(([k,l])=>`<button onclick="applyStripePreset('${k}')">${l} path</button>`).join('')}</div>${toggle}${charted.length?stripeGrantChart(series.points,series.label,series.format):''}${hasVal?'':`<p class="sg-note">No reference valuation is set, so the path carries a share price only. Enter one above to see the company valuation behind it.</p>`}</section>`;
     if(path.length)h+=`<section class="sc"><h3>Year by year</h3><p>${hasVal?'The valuation and the per-share price that follows from it. They separate by exactly the dilution you assume — a year where the company is worth more per share than the year before, but each share is worth less, is dilution outrunning growth.':'The share price behind every year of the plan.'} Pick a year to edit its prices below.</p><div class="sg-table-wrap"><table class="sg-path-table"><thead><tr><th>Year</th>${hasVal?'<th>Company valuation</th><th>Valuation change</th>':''}<th>Tender / share</th><th>Per-share change</th><th>May grant / share</th><th>Source</th></tr></thead><tbody>${path.map((p,i)=>{
       const prev=path[i-1], o=c.prices?.[p.year]||{};
       const source=p.year===c.priceYear?'Anchor':o.tender>0||o.valuation>0?'Entered':p.historicalEstimate?'Estimated':'Projected';
-      return `<tr class="${p.year===yr?'sg-row-current':''}" onclick="setStripeYear(${p.year})" title="Edit ${p.year} prices"><th>${p.year}</th>${hasVal?`<td>${bn(p.valuation)}</td><td>${chg(p.valuation,prev?.valuation)}</td>`:''}<td>$${num(p.tender)}</td><td>${chg(p.tender,prev?.tender)}</td><td>$${num(p.grant)}</td><td><span class="sg-badge">${source}</span></td></tr>`;
+      return `<tr class="${p.year===yr?'sg-row-current':''}" onclick="setStripeYear(${p.year})" title="Edit ${p.year} prices"><th>${p.year}</th>${hasVal?`<td>${bn(p.valuation)}</td><td>${chg(p.valuation,prev?.valuation)}</td>`:''}<td>${usdShare(p.tender)}</td><td>${chg(p.tender,prev?.tender)}</td><td>${usdShare(p.grant)}</td><td><span class="sg-badge">${source}</span></td></tr>`;
     }).join('')}</tbody></table></div><p class="sg-note">Anchor is the reference year you entered. Entered rows carry an explicit override. Estimated rows are historical years priced at the reference until you enter them. Everything else follows the growth assumptions.</p></section>`;
-    h+=`<section class="sc"><h3>${yr} prices</h3><p>Blank overrides follow the scenario. May grant price sets ARG/PEG shares. Quarterly 409A sets QCA shares. Vest FMV sets modeled compensation and cost basis; it defaults to 409A—check against your vest statement. Tender price values holdings and eligible sales.</p><div class="sg-fields">${[['tender','February tender / share',price?.tender,num],['grant','May grant / share',price?.grant,num],['valuation','Company valuation',price?.valuation,v=>num(Math.round(v))]].map(([k,l,v,f])=>`<label class="sg-field"><span>${l}</span><input type="number" min="0.000001" step="any" value="${c.prices[yr]?.[k]??''}" placeholder="${v?f(v):'Automatic'}" onchange="stripePriceSet(${yr},'${k}',this.value)"></label>`).join('')}</div><div class="sg-table-wrap"><table><thead><tr><th>Quarter</th><th>409A / share</th><th>Vest FMV / share</th></tr></thead><tbody>${[0,1,2,3].map(q=>`<tr><th>Q${q+1}</th>${['q409a','vestFMV'].map(k=>`<td><input aria-label="Q${q+1} ${k}" type="number" min="0.000001" step="any" value="${c.prices[yr]?.[k]?.[q]??''}" placeholder="${price?num(price[k][q]):'Automatic'}" onchange="stripePriceSet(${yr},'${k}',this.value,${q})"></td>`).join('')}</tr>`).join('')}</tbody></table></div></section>`;
+    h+=`<section class="sc"><h3>${yr} prices</h3><p>Blank overrides follow the scenario. May grant price sets ARG/PEG shares. Quarterly 409A sets QCA shares. Vest FMV sets modeled compensation and cost basis; it defaults to 409A—check against your vest statement. Tender price values holdings and eligible sales.</p><div class="sg-fields">${[['tender','February tender / share',price?.tender,round],['grant','May grant / share',price?.grant,round],['valuation','Company valuation',price?.valuation,round]].map(([k,l,v,f])=>`<label class="sg-field"><span>${l}</span><input type="number" min="0.000001" step="any" value="${c.prices[yr]?.[k]??''}" placeholder="${v?f(v):'Automatic'}" onchange="stripePriceSet(${yr},'${k}',this.value)"></label>`).join('')}</div><div class="sg-table-wrap"><table><thead><tr><th>Quarter</th><th>409A / share</th><th>Vest FMV / share</th></tr></thead><tbody>${[0,1,2,3].map(q=>`<tr><th>Q${q+1}</th>${['q409a','vestFMV'].map(k=>`<td><input aria-label="Q${q+1} ${k}" type="number" min="0.000001" step="any" value="${c.prices[yr]?.[k]?.[q]??''}" placeholder="${price?round(price[k][q]):'Automatic'}" onchange="stripePriceSet(${yr},'${k}',this.value,${q})"></td>`).join('')}</tr>`).join('')}</tbody></table></div></section>`;
     h+=`<details class="sc polish-fold"><summary>Edit annual growth assumptions</summary><div class="sg-fields">${Array.from({length:10},(_,i)=>`<label class="sg-field"><span>${sy+i} growth → Feb ${sy+i+1}</span><input type="number" min="-99" max="300" step="1" value="${((P['stripeRetY'+i]??.08)*100).toFixed(1)}" onchange="U('stripeRetY${i}',Number(this.value)/100)"></label>`).join('')}<label class="sg-field"><span>Long-term growth %</span><input type="number" min="-99" max="100" step="1" value="${((P.stripeLongTermReturn??.08)*100).toFixed(1)}" onchange="U('stripeLongTermReturn',Number(this.value)/100)"></label></div></details>`;
   }
   if(stripeWorkspace==='income'){
@@ -111,5 +125,28 @@ function renderStripeWorkspace(R){
 function stripeGrantChart(points,label,format){
   const max=Math.max(1,...points.map(p=>p.value)),min=Math.min(0,...points.map(p=>p.value));
   const xy=points.map((p,i)=>[40+i*820/Math.max(1,points.length-1),155-(p.value-min)/(max-min)*115]);
-  return `<figure class="sg-chart"><figcaption>${label} <span>Projected · selected scenario</span></figcaption><svg viewBox="0 0 900 190" role="img" aria-label="${label}: ${format(points[0].value)} in ${points[0].year}, ${format(points.at(-1).value)} in ${points.at(-1).year}"><line x1="40" y1="155" x2="860" y2="155" stroke="var(--bd)"/><polyline points="${xy.map(p=>p.join(',')).join(' ')}" fill="none" stroke="#8b80ff" stroke-width="3"/>${[0,Math.floor((points.length-1)/2),points.length-1].map(i=>`<circle cx="${xy[i][0]}" cy="${xy[i][1]}" r="4" fill="#8b80ff"/>`).join('')}</svg><div class="sg-chart-labels">${[0,Math.floor((points.length-1)/2),points.length-1].map(i=>`<span>${points[i].year}<strong>${format(points[i].value)}</strong></span>`).join('')}</div></figure>`;
+  const marks=[0,Math.floor((points.length-1)/2),points.length-1];
+  // Every year of the path is readable, not just the three that fit as labels: the chart
+  // carries its own points and reports whichever one the pointer is nearest.
+  const hover=points.map((p,i)=>[String(p.year),format(p.value),Math.round(xy[i][1]*100)/100]);
+  return `<figure class="sg-chart"><figcaption>${label} <span class="sg-chart-read" data-idle="Projected · selected scenario">Projected · selected scenario</span></figcaption><svg viewBox="0 0 900 190" role="img" aria-label="${label}: ${format(points[0].value)} in ${points[0].year}, ${format(points.at(-1).value)} in ${points.at(-1).year}" data-pts='${JSON.stringify(hover)}' onpointermove="stripeChartHover(event,this)" onpointerleave="stripeChartLeave(this)"><line x1="40" y1="155" x2="860" y2="155" stroke="var(--bd)"/><line class="sg-cross" x1="40" y1="24" x2="40" y2="155" stroke="#8b80ff" stroke-width="1" stroke-dasharray="3 3" opacity="0"/><polyline points="${xy.map(p=>p.join(',')).join(' ')}" fill="none" stroke="#8b80ff" stroke-width="3"/>${marks.map(i=>`<circle cx="${xy[i][0]}" cy="${xy[i][1]}" r="4" fill="#8b80ff"/>`).join('')}<circle class="sg-hoverdot" r="6" fill="#8b80ff" stroke="var(--s1)" stroke-width="2" opacity="0"/></svg><div class="sg-chart-labels">${marks.map(i=>`<span>${points[i].year}<strong>${format(points[i].value)}</strong></span>`).join('')}</div></figure>`;
+}
+// Nearest-year readout. The pointer never has to land on a point; it picks the closest.
+function stripeChartHover(e,svg){
+  let pts;try{pts=JSON.parse(svg.dataset.pts||'[]')}catch(_){return}
+  if(!pts.length)return;
+  const r=svg.getBoundingClientRect();if(!r.width)return;
+  const step=pts.length>1?820/(pts.length-1):0;
+  const i=Math.max(0,Math.min(pts.length-1,step?Math.round(((e.clientX-r.left)/r.width*900-40)/step):0));
+  const cx=40+i*step, cross=svg.querySelector('.sg-cross'), dot=svg.querySelector('.sg-hoverdot');
+  cross.setAttribute('x1',cx);cross.setAttribute('x2',cx);cross.setAttribute('opacity','1');
+  dot.setAttribute('cx',cx);dot.setAttribute('cy',pts[i][2]);dot.setAttribute('opacity','1');
+  const out=svg.parentElement.querySelector('.sg-chart-read');
+  if(out){out.textContent=`${pts[i][0]} · ${pts[i][1]}`;out.classList.add('live');}
+}
+function stripeChartLeave(svg){
+  svg.querySelector('.sg-cross')?.setAttribute('opacity','0');
+  svg.querySelector('.sg-hoverdot')?.setAttribute('opacity','0');
+  const out=svg.parentElement.querySelector('.sg-chart-read');
+  if(out){out.textContent=out.dataset.idle||'';out.classList.remove('live');}
 }

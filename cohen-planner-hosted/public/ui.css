@@ -777,3 +777,10 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .sg-path-table td{font-variant-numeric:tabular-nums}
 .sg-path-table tr.sg-row-current th,.sg-path-table tr.sg-row-current td{background:rgba(139,128,255,.16);color:var(--tx)}
 .sg-path-table tr.sg-row-current th:first-child{box-shadow:inset 3px 0 0 #8b80ff}
+/* Which series the one chart is showing. */
+.sg-toggle{display:inline-flex;gap:4px;padding:4px;margin:16px 0 0;background:var(--s1);border:1px solid var(--bd);border-radius:11px}
+.sg-workspace .sg-toggle button{min-height:34px;padding:7px 14px;border:0;border-radius:8px;background:transparent;color:var(--t2);font-size:12px}
+.sg-workspace .sg-toggle button.active{background:rgba(139,128,255,.18);color:#bcb4ff}
+/* The hover readout replaces the caption's standing note, so nothing moves as you sweep. */
+.sg-chart svg{touch-action:pan-y}
+.sg-chart-read.live{color:var(--tx);font-weight:600;font-variant-numeric:tabular-nums}

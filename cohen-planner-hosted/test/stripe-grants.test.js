@@ -213,10 +213,12 @@ describe('Stripe workspace interactions',()=>{
   it('shows the valuation and the share price for every year of the path',()=>{
     const w=workspace();w.call("stripeWorkspaceSet('prices')");
     const html=w.elements.chartArea.innerHTML;
-    // Both halves of the path are drawn, not just the per-share one.
+    // Both halves of the path are available; the table carries them side by side.
     expect(html).toContain('Company valuation');
     expect(html).toContain('Tender price / share');
     const body=html.slice(html.indexOf('sg-path-table'));
+    expect(body).toContain('Valuation change');
+    expect(body).toContain('Per-share change');
     for(let y=2026;y<=2030;y++)expect(body).toContain(`<th>${y}</th>`);
     expect(body).toContain('Anchor');       // the reference year says so
     expect(body).toContain('Projected');
@@ -228,8 +230,38 @@ describe('Stripe workspace interactions',()=>{
     w.ctx.P.stripeGrants={...w.ctx.P.stripeGrants,dilutionRate:.02};
     w.call("stripeWorkspaceSet('prices')");
     const row=w.elements.chartArea.innerHTML.split('<tr').find(r=>r.includes('<th>2027</th>'));
-    expect(row).toContain('+30.0%');  // valuation, off 2026's 30% growth
-    expect(row).toContain('+27.5%');  // per share, after 2% dilution
+    expect(row).toContain('+30%');  // valuation, off 2026's 30% growth
+    expect(row).toContain('+27%');  // per share, after 2% dilution
+  });
+
+  it('draws one chart and swaps which series it shows',()=>{
+    const w=workspace();w.call("stripeWorkspaceSet('prices')");
+    const caption=()=>w.elements.chartArea.innerHTML.match(/<figcaption>([^<]+)</)[1].trim();
+    expect(w.elements.chartArea.innerHTML.match(/<figure class="sg-chart"/g)).toHaveLength(1);
+    expect(caption()).toBe('Tender price / share');
+    w.call("stripeValModeSet('valuation')");
+    expect(w.elements.chartArea.innerHTML.match(/<figure class="sg-chart"/g)).toHaveLength(1);
+    expect(caption()).toBe('Company valuation');
+    w.call("stripeValModeSet('price')");
+    expect(caption()).toBe('Tender price / share');
+  });
+
+  it('carries every year in the chart so any of them can be read on hover',()=>{
+    const w=workspace();w.call("stripeWorkspaceSet('prices')");
+    const pts=JSON.parse(w.elements.chartArea.innerHTML.match(/data-pts='([^']+)'/)[1]);
+    expect(pts).toHaveLength(2030-2026+1);            // every plan year, not just the three labelled
+    expect(pts[0][0]).toBe('2026');
+    expect(pts.at(-1)[0]).toBe('2030');
+    for(const [,label,y] of pts){expect(label).toMatch(/^\$[\d,]+$/);expect(Number.isFinite(y)).toBe(true);}
+  });
+
+  it('rounds every figure on the path to whole dollars',()=>{
+    const w=workspace();
+    w.ctx.P.stripeGrants={...w.ctx.P.stripeGrants,dilutionRate:.017};  // guarantees ragged decimals
+    w.call("stripeWorkspaceSet('prices')");
+    const text=w.elements.chartArea.innerHTML.replace(/<[^>]+>/g,' ');
+    expect(text).not.toMatch(/\$[\d,]+\.\d/);   // no $256.794
+    expect(text).not.toMatch(/[-+]\d+\.\d%/);   // no +12.7%
   });
 
   it('carries a share price alone when no valuation is set',()=>{
