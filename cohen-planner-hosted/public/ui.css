@@ -784,3 +784,18 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 /* The hover readout replaces the caption's standing note, so nothing moves as you sweep. */
 .sg-chart svg{touch-action:pan-y}
 .sg-chart-read.live{color:var(--tx);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* Focus pass: one task per surface; supporting detail stays one click away. */
+.refine-fold{min-width:0;margin:12px 0;padding:16px 18px;border:1px solid var(--bd);border-radius:14px;background:var(--s1)}
+.refine-fold>summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--tx);line-height:1.5;min-height:24px}
+.refine-fold[open]>summary{margin-bottom:16px}
+.refine-fold p{color:var(--t2);font-size:12px;line-height:1.65}
+.refine-fold:focus-within{border-color:var(--accent)}
+.refine-links{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
+#summaries:has(>.refine-fold){display:block}
+#summaries>.refine-fold{margin-top:16px}
+.dr-intro{display:block}.dr-intro h2{font-size:24px}.dr-intro p{max-width:70ch}
+.dr-context .dr-metrics{margin-top:16px}.dr-context .dr-timeline{margin-top:18px}
+.pf-mix.refine-fold{margin-bottom:16px}.pf-mix.refine-fold .pf-mix-bar{margin-top:12px}
+.refine-goals .ui-head p{color:var(--t2);font-size:13px}
+@media(max-width:700px){.refine-fold{padding:14px}.refine-fold>summary{min-height:30px}.refine-links .ui-btn{flex:1 1 200px}.dr-intro h2{font-size:23px}}

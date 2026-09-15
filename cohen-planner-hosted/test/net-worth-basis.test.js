@@ -161,13 +161,10 @@ describe('both charts answer to the same inflation toggle', () => {
 describe('every single-figure net worth surface shows the total', () => {
   const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
 
-  it('agrees between the Overview tile and the nav rail', () => {
-    // These read $31.62M and $38.06M on the same screen — the tile on `nw`, the rail on the
-    // total. The difference was the whole 2058 retirement balance. The tile now follows the
-    // same ex-retirement flag the cockpit is on, so the two can differ only by that choice.
-    expect(html).toContain('const ovLast=cockpitExRet?last.nw:last.netWorth;');
-    expect(html).toContain('money(ovLast)');
-    expect(html).toContain('const series=R.map(r=>r.netWorth);');
+  it('keeps Accounts focused on observed balances without a second future net-worth headline', () => {
+    expect(html).toContain('money(ovNw)');
+    expect(html).not.toContain('money(ovLast)');
+    expect(html).not.toContain('UI.money(series[series.length-1])');
     expect(html).not.toContain('const series=R.map(r=>r.nw+r.k401);');
   });
 

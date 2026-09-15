@@ -122,7 +122,7 @@ function renderCockpit(R){
       ${_inbox?`<p class="cp-meta">${Number(_inbox.checksRun)||0} of ${Number(_inbox.checksTotal)||0} checks ran; ${(_inbox.notChecked||[]).length} comparisons unavailable. Signals depend on source coverage and model assumptions.</p>`:''}<button class="cp-text-link" onclick="cockpitGo('watch')">Open full watchlist →</button></section>
       <section class="cp-card cp-intelligence"><span class="cp-eyebrow">ADVISOR</span><h3>Think it through.</h3><p>Bring a question. Explore the trade-offs with your plan in view.</p>
       <button onclick="cockpitQuestion('What are the three most consequential decisions in my current plan? Show the evidence, source dates, uncertainty and what would change your recommendation.')">What deserves my attention? ↗</button>
-      <form onsubmit="event.preventDefault();cockpitQuestion(this.elements.question.value)"><label for="cp-question">Your question</label><textarea id="cp-question" name="question" required placeholder="What if I changed jobs…" rows="2"></textarea><button class="cp-button" type="submit">Prepare in advisor →</button></form><small>You review the question before sending.</small></section>
+</section>
       </section>
       <div class="cp-floor"><span>Lowest projected liquid investments</span><strong>${money(floor.liq)} <small>in ${floor.yr}</small></strong><button onclick="cockpitGo('home')">Explore the pressure point →</button></div>
     </aside></div></div>`;

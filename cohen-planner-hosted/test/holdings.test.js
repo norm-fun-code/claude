@@ -258,9 +258,9 @@ describe('portfolio view reaches the investments fetch', () => {
     expect(fn).toMatch(/loadMonarchInvestments\(\)/);
   });
 
-  it('keeps the accounts card and the diagnostic on the failure path', () => {
+  it('keeps the accounts route and diagnostic on the failure path', () => {
     const fail = fn.slice(fn.indexOf('monarchInvestments===false'));
-    expect(fail).toMatch(/renderMonarchAccountsCard\(\)/); // balances not lost when holdings fail
+    expect(fail).toContain("setSubView('overview')"); // balances not lost when holdings fail
     expect(fail).toMatch(/runMonarchDiagnostics\(\)/);
   });
 
