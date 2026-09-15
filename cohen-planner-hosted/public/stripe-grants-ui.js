@@ -1,5 +1,7 @@
 'use strict';
 let stripeWorkspace='overview';
+// Fields the reader enters in billions and the model stores in dollars.
+const STRIPE_BILLIONS=['referenceValuation','valuationCeiling'];
 function stripeWorkspaceSet(view){stripeWorkspace=['overview','prices','income'].includes(view)?view:'overview';render();}
 function stripeWorkspaceNav(){return `<nav class="sg-nav" aria-label="Stripe workspace">${[['overview','Position'],['income','Compensation'],['prices','Valuation path']].map(([v,l])=>`<button class="${stripeWorkspace===v?'active':''}" aria-current="${stripeWorkspace===v?'page':'false'}" onclick="stripeWorkspaceSet('${v}')">${l}</button>`).join('')}</nav>`;}
 function stripeGrantIntro(){return `<div class="sg-status"><span class="sg-dot on"></span><span>Manual compensation · separate growth on vested holdings</span></div>`;}
@@ -8,29 +10,80 @@ function stripeManualSet(year,key,value){
   const i=year-(P.planStartYear||2026), n=Number(value);
   if(i<11)P['norm'+(key==='cash'?'Cash':'Stock')+'Y'+i]=n;
   else P.stripeManualLater={...P.stripeManualLater,[year]:{...normComp(P,i),[key]:n}};
-  markDirty();buildControls();render();savePlannerState();
+  markDirty();buildControls();savePlannerState();
+  // Deliberately NOT render(). This fires on blur, once per cell, while you are working
+  // down a column of thirty-three years — and a full re-render replaces the table, which
+  // threw away its scroll position and the focus Tab had just moved on to. Every figure the
+  // edit changes is updated in place instead; the rest of the app re-renders on the next
+  // tab change, which is the first time any of it is on screen.
+  stripeRefreshComp();
+}
+// A later year's amounts can be derived from an earlier one, so one edit can move many rows.
+// Every row is refreshed, except a field the reader is currently typing into.
+function stripeRefreshComp(){
+  const sy=P.planStartYear||2026, ey=P.planEndYear||2058;
+  for(let y=sy;y<=ey;y++){
+    const n=normComp(P,y-sy);
+    const tot=document.getElementById('sg-total-'+y);
+    if(tot)tot.textContent=fmt(n.cash+n.stock);
+    for(const k of ['cash','stock']){
+      const el=document.getElementById(`sg-comp-${k}-${y}`);
+      if(el&&el!==document.activeElement)el.value=Math.round(n[k]);
+    }
+  }
 }
 function stripeGrantSet(key,value){
-  const n=value===''?null:Number(value);
-  if(n!==null&&(!Number.isFinite(n)||n<0||(key==='priceYear'&&(!Number.isInteger(n)||n<2000||n>2100)))){showToast('Enter a valid non-negative value.','red');return;}
+  const raw=value===''?null:Number(value);
+  if(raw!==null&&(!Number.isFinite(raw)||raw<0||(key==='priceYear'&&(!Number.isInteger(raw)||raw<2000||raw>2100)))){showToast('Enter a valid non-negative value.','red');return;}
+  // Valuations are entered and shown in billions; the model works in dollars.
+  const n=raw!==null&&STRIPE_BILLIONS.includes(key)?raw*1e9:raw;
   P.stripeGrants={...StripeGrants.setup(P),...P.stripeGrants,enabled:false,[key]:n};
   // Relative prices suffice for a valuation path; manual compensation needs no share price.
   if(!(P.stripeGrants.referenceTender>0))P.stripeGrants.referenceTender=1;
-  markDirty();render();savePlannerState();
+  markDirty();savePlannerState();
+  stripeKeepFocus(render);
+}
+// A field that redraws the panel around itself loses the caret with it. Restores focus and
+// the selection to the same field afterwards, plus any scrolled table's position.
+function stripeKeepFocus(fn){
+  // Never let restoring the cursor cost someone their edit: without a live DOM this is just fn().
+  if(typeof document==='undefined'||!document.querySelectorAll)return fn();
+  const a=document.activeElement;
+  const id=a&&a.id&&document.getElementById('chartArea')?.contains(a)?a.id:null;
+  const sel=id?[a.selectionStart,a.selectionEnd]:null;
+  const tops=[...document.querySelectorAll('#chartArea .sg-table-wrap')].map(w=>w.scrollTop);
+  fn();
+  document.querySelectorAll('#chartArea .sg-table-wrap').forEach((w,i)=>{if(tops[i])w.scrollTop=tops[i]});
+  if(!id)return;
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.focus();
+  try{if(sel&&sel[0]!=null)el.setSelectionRange(sel[0],sel[1])}catch(_){/* number inputs refuse a range in some browsers */}
 }
 function renderStripeWorkspace(R){
   const sy=P.planStartYear||2026,ey=P.planEndYear||2058,c={...StripeGrants.setup(P),...P.stripeGrants};
   const esc=s=>String(s).replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
   let h=stripeWorkspaceNav()+`<header class="ui-head"><div><span class="ui-eyebrow">STRIPE EQUITY</span><h2>${stripeWorkspace==='income'?'Your compensation. Your assumptions.':'The valuation behind the plan.'}</h2></div></header>`;
   if(stripeWorkspace==='income'){
-    h+=`<section class="sc"><h3>Annual compensation</h3><p>Cash includes salary, cash bonus and any award taken in cash. Stock is the gross value expected to vest that year, including any appreciation you anticipate before vesting.</p><p class="sg-note">These are the same inputs used by Norm’s compensation and every projection. No grant or share-price multiplier is added to income. After withholding and sales, retained stock enters your holdings once.</p><div class="sg-table-wrap"><table><thead><tr><th>Year</th><th>Cash compensation</th><th>Stock compensation at vesting</th><th>Total</th></tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>{const n=normComp(P,i);return `<tr><th>${sy+i}</th>${['cash','stock'].map(k=>`<td><input type="number" min="0" step="any" aria-label="${sy+i} ${k} compensation" value="${Math.round(n[k])}" onchange="stripeManualSet(${sy+i},'${k}',this.value)"></td>`).join('')}<td>${fmt(n.cash+n.stock)}</td></tr>`;}).join('')}</tbody></table></div><p class="sg-note">Years after ${sy+10} follow the growth assumptions unless you enter an annual amount. Previously calculated amounts have been preserved as manual inputs.</p></section>`;
+    h+=`<section class="sc"><h3>Annual compensation</h3><p>Cash includes salary, cash bonus and any award taken in cash. Stock is the gross value expected to vest that year, including any appreciation you anticipate before vesting.</p><p class="sg-note">These are the same inputs used by Norm’s compensation and every projection. No grant or share-price multiplier is added to income. After withholding and sales, retained stock enters your holdings once.</p><div class="sg-table-wrap"><table><thead><tr><th>Year</th><th>Cash compensation</th><th>Stock compensation at vesting</th><th>Total</th></tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>{const n=normComp(P,i);return `<tr><th>${sy+i}</th>${['cash','stock'].map(k=>`<td><input id="sg-comp-${k}-${sy+i}" type="number" min="0" step="any" aria-label="${sy+i} ${k} compensation" value="${Math.round(n[k])}" onchange="stripeManualSet(${sy+i},'${k}',this.value)"></td>`).join('')}<td id="sg-total-${sy+i}">${fmt(n.cash+n.stock)}</td></tr>`;}).join('')}</tbody></table></div><p class="sg-note">Years after ${sy+10} follow the growth assumptions unless you enter an annual amount. Previously calculated amounts have been preserved as manual inputs.</p></section>`;
   }else{
-    const field=(label,key,v)=>`<label class="sg-field"><span>${label}</span><input type="number" min="0" step="any" value="${v??''}" onchange="stripeGrantSet('${key}',this.value)"></label>`;
-    h+=`<section class="sc"><h3>Company valuation</h3><div class="sg-fields">${field('Reference valuation ($)','referenceValuation',c.referenceValuation)}${field('Reference February year','priceYear',c.priceYear)}${field('Valuation ceiling ($, optional)','valuationCeiling',c.valuationCeiling)}</div><p class="sg-note">Growth for 2026 appears at the February 2027 tender, and so on. Holdings follow the same price path; compensation remains your manual estimate. With no dilution, valuation and share price grow proportionally.</p>${c.dilutionRate>0?`<p class="sg-note">Your existing ${(c.dilutionRate*100).toFixed(1)}% annual dilution assumption is preserved.</p>`:''}</section>`;
+    // Billions in, billions out. The field used to be labelled in dollars, so "160" — the
+    // only way anyone writes $160B — was read as one hundred and sixty dollars and every
+    // figure downstream rounded to $0B.
+    const field=(label,key,v)=>{
+      const shown=v==null?'':STRIPE_BILLIONS.includes(key)?v/1e9:v;
+      return `<label class="sg-field"><span>${label}</span><input id="sg-grant-${key}" type="number" min="0" step="any" value="${shown}" onchange="stripeGrantSet('${key}',this.value)"></label>`;
+    };
+    h+=`<section class="sc"><h3>Company valuation</h3><div class="sg-fields">${field('Reference valuation ($B)','referenceValuation',c.referenceValuation)}${field('Reference February year','priceYear',c.priceYear)}${field('Valuation ceiling ($B, optional)','valuationCeiling',c.valuationCeiling)}</div><p class="sg-note">Growth for 2026 appears at the February 2027 tender, and so on. Holdings follow the same price path; compensation remains your manual estimate. With no dilution, valuation and share price grow proportionally.</p>${c.dilutionRate>0?`<p class="sg-note">Your existing ${(c.dilutionRate*100).toFixed(1)}% annual dilution assumption is preserved.</p>`:''}</section>`;
     if(c.referenceValuation>0){
       const candidates=[{name:'Current plan',p:P},...scenarios.map(s=>({name:s.name||'Saved scenario',p:scenarioPlan(s.params)}))];
       const paths=candidates.map(x=>({...x,prices:StripeGrants.pricePath({...x.p,stripeGrants:{...c,...x.p.stripeGrants}},sy,ey)}));
-      const bn=v=>'$'+(v/1e9).toLocaleString('en-US',{maximumFractionDigits:1})+'B';
+      // A positive valuation must never print as $0B: below a billion, say so in its own unit.
+      // Whole numbers, and a positive valuation never prints as $0B: below a billion, say it
+      // in its own unit rather than rounding it away.
+      const bn=v=>!(v>0)?'$0':v>=1e9?'$'+Math.round(v/1e9).toLocaleString('en-US')+'B'
+        :v>=1e6?'$'+Math.round(v/1e6).toLocaleString('en-US')+'M'
+        :'$'+Math.round(v).toLocaleString('en-US');
       h+=stripeGrantChart(Object.values(paths[0].prices).filter(p=>p.year>=sy&&p.year<=ey).map(p=>({year:p.year,value:p.valuation})),'Company valuation · current scenario',bn);
       h+=`<section class="sc"><h3>Valuation by year & scenario</h3><div class="sg-table-wrap"><table><thead><tr><th>February</th>${paths.map(x=>`<th>${esc(x.name)}</th>`).join('')}</tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>`<tr><th>${sy+i}</th>${paths.map(x=>`<td>${bn(x.prices[sy+i].valuation)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></section>`;
     }else h+=`<section class="sc"><p>Enter a reference company valuation to see its projected value each year and compare your saved scenarios.</p></section>`;

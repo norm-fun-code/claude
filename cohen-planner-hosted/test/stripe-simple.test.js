@@ -56,6 +56,54 @@ describe('simple Stripe UI',()=>{
   const old=w.ctx.P.stripeManualLater;w.call("stripeManualSet(2040,'cash','0')");expect(M.normComp(w.ctx.P,14).cash).toBe(0);expect(old[2040].cash).toBeGreaterThan(0);
   w.call("stripeManualSet(2026,'stock','-1')");expect(M.normComp(w.ctx.P,0).stock).toBe(123000);expect(w.messages.length).toBe(1);
  });
+ it('takes the valuation in billions, the unit anyone actually writes it in',()=>{
+  const w=workspace();w.call("stripeWorkspaceSet('prices')");
+  w.call("stripeGrantSet('referenceValuation','160')");
+  expect(w.ctx.P.stripeGrants.referenceValuation).toBe(160e9);   // stored in dollars
+  const html=w.elements.chartArea.innerHTML;
+  expect(html).toContain('Reference valuation ($B)');
+  expect(html).toContain('id="sg-grant-referenceValuation" type="number" min="0" step="any" value="160"');
+  expect(html).toContain('$160B');       // and nothing rounds it to $0B
+  expect(html).not.toContain('$0B');
+  w.call("stripeGrantSet('valuationCeiling','400')");
+  expect(w.ctx.P.stripeGrants.valuationCeiling).toBe(400e9);
+ });
+
+ it('reads a figure saved under the old dollars label in the unit it can only have meant',()=>{
+  // $160 is not a company valuation; $106.5B is. Only the first can be a units mistake.
+  const healed=PM.migrateP({stripeSimplified:true,stripeGrants:{referenceValuation:160,valuationCeiling:400}});
+  expect(healed.stripeGrants.referenceValuation).toBe(160e9);
+  expect(healed.stripeGrants.valuationCeiling).toBe(400e9);
+  const real={stripeSimplified:true,stripeGrants:{referenceValuation:106.5e9,valuationCeiling:null}};
+  expect(PM.migrateP(real).stripeGrants.referenceValuation).toBe(106.5e9);
+  expect(PM.migrateP(real).stripeGrants.valuationCeiling).toBeNull();
+  expect(PM.migrateP(PM.migrateP(healed))).toEqual(PM.migrateP(healed));   // idempotent
+ });
+
+ it('edits a compensation cell without rebuilding the table under the cursor',()=>{
+  // The table scrolls and is thirty-three rows deep. Re-rendering it on every blur sent it
+  // back to the top and dropped the focus Tab had just moved on, which made working down a
+  // column impossible. Totals update in place instead.
+  const src=fs.readFileSync(new URL('../public/stripe-grants-ui.js',import.meta.url),'utf8');
+  const body=src.slice(src.indexOf('function stripeManualSet'),src.indexOf('function stripeRefreshComp'))
+    .split('\n').filter(l=>!l.trim().startsWith('//')).join('\n');
+  expect(body).not.toMatch(/[^a-zA-Z]render\(\)/);
+  expect(body).toContain('stripeRefreshComp()');
+
+  const w=workspace();w.call("stripeWorkspaceSet('income')");
+  for(const y of [2032,2040])for(const k of ['cash','stock'])w.elements[`sg-comp-${k}-${y}`]={value:'',tagName:'INPUT'};
+  for(const y of [2032,2040])w.elements['sg-total-'+y]={textContent:''};
+  w.call("stripeManualSet(2032,'cash','333333')");
+  expect(w.elements['sg-comp-cash-2032'].value).toBe(333333);
+  expect(w.elements['sg-total-2032'].textContent).toBe('$'+Math.round(333333+M.normComp(w.ctx.P,6).stock));
+  // A year that later years are derived from moves them too, so every row refreshes.
+  w.ctx.P.stripeManualLater={};   // 2040 now grows off 2036 rather than carrying its own figure
+  w.call("stripeManualSet(2036,'cash','"+Math.round(M.normComp(w.ctx.P,10).cash)+"')");
+  const before=w.elements['sg-total-2040'].textContent;
+  w.call("stripeManualSet(2036,'cash','900000')");
+  expect(w.elements['sg-total-2040'].textContent).not.toBe(before);
+ });
+
  it('has an explicit empty state and no fabricated valuation',()=>{
   const w=workspace();w.ctx.P.stripeGrants.referenceValuation=null;w.call("stripeWorkspaceSet('prices')");expect(w.elements.chartArea.innerHTML).toContain('Enter a reference company valuation');expect(w.elements.chartArea.innerHTML).not.toContain('<figure');
  });

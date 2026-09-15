@@ -84,10 +84,31 @@
 
   function migrateP(raw){
     if(!raw||typeof raw!=='object')return raw;
-    return simplifyStripe(migrateObservedOn(migrateChildcare(migrateCompSplit(migrateYearKeys(raw)))));
+    return fixValuationUnits(simplifyStripe(migrateObservedOn(migrateChildcare(migrateCompSplit(migrateYearKeys(raw))))));
   }
 
   // Convert the currently effective compensation once, retaining the old ledger for recovery.
+  // The valuation fields were labelled in dollars but are only ever written in billions —
+  // nobody types 106500000000. Entries like "160" were taken literally, and $160 rounds to
+  // $0B everywhere it is shown, which is what the chart was reporting.
+  //
+  // The field now says $B. A figure already saved under the old label is read in whichever
+  // unit it can only have meant: a company valuation below a million dollars is not a
+  // valuation at all, so it can only be billions typed into a dollars box. Anything a
+  // million or over is left exactly as it stands — that is a real dollar figure, and
+  // rescaling it would be inventing a number rather than reading one.
+  const BILLIONS_FIELDS=['referenceValuation','valuationCeiling'];
+  function fixValuationUnits(p){
+    const c=p.stripeGrants;
+    if(!c)return p;
+    const out={...c};let touched=false;
+    for(const k of BILLIONS_FIELDS){
+      const v=Number(c[k]);
+      if(Number.isFinite(v)&&v>0&&v<1e6){out[k]=v*1e9;touched=true;}
+    }
+    return touched?{...p,stripeGrants:out}:p;
+  }
+
   function simplifyStripe(p){
     if(p.stripeSimplified)return p;
     const G=typeof module!=='undefined'&&module.exports?require('./stripe-grants.js'):root.StripeGrants;
