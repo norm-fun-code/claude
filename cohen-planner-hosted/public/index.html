@@ -1183,6 +1183,8 @@ function compCell(key,isStock){
   return`<input type="text" inputmode="numeric" id="s_${key}" value="${fmtF(P[key]||0)}" onchange="UComp('${key}',this.value,this)" onkeydown="if(event.key==='Enter')this.blur()" class="comp-in${isStock?' comp-stock':''}">`;
 }
 let _collapsedSections=new Set(JSON.parse(localStorage.getItem('plannerCollapsed')||JSON.stringify(['childcare','tuition','plan-start','stripe'])));
+// Start the long account register folded once; later choices keep their existing persistence.
+if(!localStorage.getItem('plannerFocusV1')){_collapsedSections.add('acct-list');localStorage.setItem('plannerCollapsed',JSON.stringify([..._collapsedSections]));localStorage.setItem('plannerFocusV1','1');}
 // `full` re-renders the whole view rather than just the settings panel, so the same
 // persisted collapse set can drive sections outside it instead of growing a second one.
 function toggleSection(key,full){_collapsedSections.has(key)?_collapsedSections.delete(key):_collapsedSections.add(key);localStorage.setItem('plannerCollapsed',JSON.stringify([..._collapsedSections]));full?render():buildControls()}
@@ -1899,10 +1901,7 @@ function render(){
       if(!reuseChart||!_updateChart(dsInc,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsInc},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>fmtK(v)}}}}});
     }
   }
-  document.getElementById('summaries').innerHTML=`
-    <div class="sc"><h3>🏠 Home</h3><p><span class="mono" style="font-weight:600;color:var(--tx)">${fmt(P.homePrice)}</span> in ${P.homePurchaseYear}<br>${P.downPctg}% down · <span class="mono">${fmt(mm)}/mo</span> at ${P.mortgageRate}%</p></div>
-    <div class="sc"><h3>📊 Tax Engine</h3><p>Fed MFJ 2026 + NYS + NYC + FICA<br>SALT $40.4K w/ phaseout above $505K<br>CTC $2.2K/kid w/ AGI phaseout<br>${P.nancySoloPractice?'Nancy: QBI + home office + SE':'Nancy: W2'}</p></div>
-    <div class="sc"><h3>💡 Per-Kid Costs</h3><p>Infant +$9K · School +$10K · Teen +$14K/yr<br><em style="font-size:7.5px;color:var(--t3)">${(P.expenseInflation*100).toFixed(1)}%/yr inflation · ${P.numKids} kids</em></p></div>`;
+  document.getElementById('summaries').innerHTML=`<details class="polish-fold refine-fold"><summary>Projection assumptions</summary><p>All charts use the same saved income, tax, housing and family-cost inputs. Use Settings to adjust them, or inspect the annual table for exact amounts.</p><button class="ui-btn" onclick="setSubView('table')">Open annual table →</button></details>`;
 }
 
 let _stripeYear=null;
@@ -2094,7 +2093,7 @@ function renderStripeTab(R,P){
   }
 
   // ── Auditable year-by-year ledger ──
-  h+=`<div class="tw"><table><thead><tr>${['Year','Beginning','New equity','Vest sold','Held sold','Gains tax','Appreciation','Ending','% of NW','Return'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${
+  h+=`<details class="polish-fold refine-fold"><summary>Annual equity ledger · ${sy}–${last.yr}</summary><div class="tw"><table><thead><tr>${['Year','Beginning','New equity','Vest sold','Held sold','Gains tax','Appreciation','Ending','% of NW','Return'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${
     R.map(r=>`<tr style="background:${r.yr===yr?'rgba(103,114,229,.07)':''}">
       <td style="font-weight:700;color:var(--tx)">${r.yr}</td>
       <td>${fmt(r.sBeg)}</td>
@@ -2106,13 +2105,10 @@ function renderStripeTab(R,P){
       <td style="color:${V};font-weight:600">${fmt(r.sEnd)}</td>
       <td>${(r.sPct*100).toFixed(0)}%</td>
       <td style="color:var(--t3)">${(r.sRate*100).toFixed(0)}%</td>
-    </tr>`).join('')}</tbody></table></div>`;
+    </tr>`).join('')}</tbody></table></div></details>`;
 
   ca.innerHTML=h;
-  document.getElementById('summaries').innerHTML=`
-    <div class="sc"><h3>${UI.icon('diamond')}How this is modeled</h3><p>Each year’s grant vests in four equal quarterly lots, so a lot vesting in Q4 earns none of that year’s return. Pre-existing holdings earn the full year.</p></div>
-    <div class="sc"><h3>${UI.icon('doc')}Tax</h3><p>Vesting stock is ordinary W-2 income — already taxed above. Selling at vest adds no capital gain, because basis is the vest-date price.</p></div>
-    <div class="sc"><h3>${UI.icon('chart')}Not the portfolio</h3><p>Stripe uses its own return path, which you set. Portfolio return (${((P.investReturn||0)*100).toFixed(1)}%) applies only to diversified assets, and Monte Carlo varies only those.</p></div>`;
+  document.getElementById('summaries').innerHTML=`<details class="polish-fold refine-fold"><summary>Vesting, tax & valuation assumptions</summary><p>Manual stock compensation is gross value at vesting. Withholding and sales reduce the stock retained; the remainder enters your holdings once. Stripe growth is marked at the following February tender. Diversified investments use their separate return assumption.</p></details>`;
 }
 
 // Actual synced Stripe balance vs. the plan's assumption. Synced values are shown, never
@@ -2452,11 +2448,11 @@ function renderWatchTab(R,P){
 
   // What was NOT checked, given the same weight as what was.
   if((d.notChecked||[]).length){
-    h+=`<section class="wl-gaps"><span class="ui-eyebrow">${d.notChecked.length} thing${d.notChecked.length===1?'':'s'} could not be checked</span>
+    h+=`<details class="wl-gaps refine-fold"><summary>${d.notChecked.length} thing${d.notChecked.length===1?'':'s'} could not be checked</summary>
       ${d.notChecked.map(s=>`<div class="wl-gap">
         <strong>${advEscape(s.kind)}</strong><em>needs ${advEscape(String(s.missing))}</em>
         ${s.note?`<p>${advEscape(s.note)}</p>`:''}</div>`).join('')}
-    </section>`;
+    </details>`;
   }
   if((d.checksThatFailed||[]).length){
     h+=`<section class="wl-gaps" data-tone="critical"><span class="ui-eyebrow">${d.checksThatFailed.length} check${d.checksThatFailed.length===1?'':'s'} failed to run</span>
@@ -2561,7 +2557,6 @@ function renderOverviewTab(R,P){
     // keeping a second opinion — and carries the same checkbox, so it can be changed here.
     const ovRet=Number((cls.retirement||{}).total)||0;
     const ovNw=cockpitExRet?sum.netWorth-ovRet:sum.netWorth;
-    const ovLast=cockpitExRet?last.nw:last.netWorth;
     h+=`<label class="cp-basis" style="max-width:420px"><input type="checkbox"${cockpitExRet?'':' checked'}
       onchange="cockpitSetExRet(!this.checked)">
       <span>Include retirement</span>
@@ -2573,8 +2568,6 @@ function renderOverviewTab(R,P){
       ${tile('Accessible today',money(sum.accessible),provChip('observed',d.asOf,true),'cash + taxable — spendable without penalty','var(--g)')}
       ${tile('Stripe equity',money(sum.stripeVested),provChip('observed',d.asOf,true),'vested only — grants are future pay','#6772e5')}
       ${tile('Retirement',money(ovRet),provChip('observed',d.asOf,true),cockpitExRet?'locked until 59½ · not in net worth above':'locked until retirement age')}
-      ${tile(`Cash flow ${y0.yr}`,(y0.flow>=0?'+':'−')+money(Math.abs(y0.flow)),provChip('projected',null,true),y0.flow>=0?(y0.gap>0?`total pay covers the year · ${money(y0.gap)} of it comes from vest`:'cash pay alone covers the year'):'spending exceeds total after-tax pay',y0.flow>=0?'var(--g)':'var(--r)')}
-      ${tile(`${cockpitExRet?'Net worth ex-retirement':'Net worth'} ${last.yr}`,money(ovLast),provChip('projected',null,true),'if the plan holds')}
     </div>`;
 
     // ── Anything unknown, said out loud ──
@@ -2645,7 +2638,7 @@ function renderOverviewTab(R,P){
     // ── Reconciliation: proposed, never applied ──
     const rec=(window.PlannerAccounts?PlannerAccounts.reconcile(sum,P):{lines:[]});
     const material=rec.lines.filter(l=>Math.abs(l.delta)>1000);
-    h+=`<div class="glass-card" style="padding:14px 16px">
+    h+=`<details class="polish-fold refine-fold" ${material.length||!rec.complete?'open':''}><summary>Plan vs. accounts · ${material.length} differences to review</summary><div>
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Plan vs. your accounts</div>
       <div style="font-size:10px;color:var(--t2);margin-bottom:9px">Nothing here changes your plan until you click Apply. Each line is one assumption.</div>
       ${rec.lines.map(l=>`<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-top:1px solid var(--bd);flex-wrap:wrap">
@@ -2666,7 +2659,7 @@ function renderOverviewTab(R,P){
             : '<span style="font-size:9px;color:var(--g)">matches</span>'}
       </div>${l.applicable===false?`<div style="font-size:9.5px;color:var(--a);padding:0 0 7px;line-height:1.5">${advEscape(l.blockedReason)}</div>`:''}`).join('')}
       ${!rec.complete?`<div style="font-size:9.5px;color:var(--a);margin-top:8px">Incomplete: ${rec.blocked.map(advEscape).join(', ')} ${rec.blocked.length===1?'has':'have'} no balance, so these comparisons are missing that amount.</div>`:''}
-    </div>`;
+    </div></details>`;
 
     // ── Double counting ──
     if((d.doubleCounting||[]).length){
@@ -2720,29 +2713,13 @@ function renderOverviewTab(R,P){
     h+=`</div>`;
   }
 
-  // ── Up to three things worth doing ──
-  const actions=[];
-  if((sum.unknownBalance||[]).length)actions.push({t:`Confirm ${sum.unknownBalance.length} missing balance${sum.unknownBalance.length===1?'':'s'}`,w:'Totals are short by an unknown amount until you do.',c:'var(--a)'});
-  if((cls.unknown||{accounts:[]}).accounts.length)actions.push({t:`Classify ${cls.unknown.accounts.length} account${cls.unknown.accounts.length===1?'':'s'}`,w:'Unclassified accounts are excluded from accessible assets.',c:'var(--a)'});
-  const recL=(window.PlannerAccounts&&!d.error)?PlannerAccounts.reconcile(sum,P).lines.filter(l=>Math.abs(l.delta)>25000):[];
-  if(recL.length)actions.push({t:`Reconcile ${recL[0].label.toLowerCase()}`,w:`Your plan assumes ${money(recL[0].planValue)}; your accounts show ${money(recL[0].actual)}.`,c:'var(--accent)'});
-  if(y0.gap>0&&actions.length<3)actions.push({t:`${money(y0.gap)} of ${y0.yr} spending needs stock sold`,w:'Cash pay alone does not cover the year. That is by design, not a shortfall.',c:'var(--t2)'});
-  if(actions.length){
-    h+=`<div class="glass-card" style="padding:14px 16px">
-      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:8px">Worth doing next</div>
-      ${actions.slice(0,3).map((a,i)=>`<div style="display:flex;gap:9px;padding:6px 0;${i?'border-top:1px solid var(--bd)':''}">
-        <span style="color:${a.c};font-weight:700;font-size:11px">${i+1}</span>
-        <div><div style="font-size:11px;color:var(--tx);font-weight:600">${advEscape(a.t)}</div>
-          <div style="font-size:9.5px;color:var(--t2);margin-top:1px">${advEscape(a.w)}</div></div></div>`).join('')}</div>`;
-  }
-
   // ── What the connection can and cannot do ──
   const capRow=(k,lbl)=>{const c=caps[k]||{available:false,detail:''};
     return `<div style="display:flex;align-items:center;gap:7px;font-size:9.5px;padding:3px 0">
       <span style="color:${c.available?'var(--g)':'var(--t3)'};font-weight:700">${c.available?'✓':'—'}</span>
       <span style="color:var(--tx);min-width:92px">${lbl}</span>
       <span style="color:var(--t3);flex:1">${advEscape(String(c.detail||''))}</span></div>`;};
-  h+=`<div class="glass-card" style="padding:13px 15px">
+  h+=`<details class="polish-fold refine-fold"><summary>Connection details & data labels</summary><div>
     <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:6px">What this connection provides</div>
     ${capRow('balances','Balances')}${capRow('holdings','Holdings')}${capRow('transactions','Transactions')}${capRow('taxLots','Tax lots')}
     ${(d.blocked||[]).length?`<div style="font-size:9.5px;color:var(--t3);margin-top:6px;line-height:1.5">Unavailable data disables only what depends on it: ${d.blocked.map(b=>advEscape(b.feature)).join(' · ')}.</div>`:''}
@@ -2751,7 +2728,7 @@ function renderOverviewTab(R,P){
   h+=`<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:9px;color:var(--t3);padding:0 2px">
     ${Object.keys(PROV).map(k=>`<span>${provChip(k)} ${PROV[k].hint}</span>`).join('')}</div>`;
 
-  h+=`</div>`;
+  h+=`</details></div>`;
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
 }
@@ -2949,7 +2926,7 @@ function renderSpendingTab(R,P){
     <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t3);margin-bottom:3px">${lbl}</div>
     <div style="font-size:16px;font-weight:800;font-family:'SF Mono',monospace;color:${col};letter-spacing:-.4px">${money(v)}</div>
     <div style="font-size:8.5px;color:var(--t3);margin-top:2px">${n||0} rows${note?' · '+note:''}</div></div>`;
-  h+=`<div>
+  const classificationDetails=`<details class="polish-fold refine-fold"><summary>Transaction classification & exclusions</summary><div>
     <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:7px">How the ledger classified — ${cov.first||'—'} to ${cov.last||'—'}</div>
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
       ${bucket('Spending',tot.expense,cnt.expense,'var(--tx)','net of refunds')}
@@ -2960,7 +2937,7 @@ function renderSpendingTab(R,P){
       ${bucket('Refunds',tot.refund,cnt.refund,'var(--a)','netted into categories')}
     </div>
     <div style="font-size:9.5px;color:var(--t3);margin-top:7px;line-height:1.5">Transfers and card payments are excluded from spending on purpose — moving money between your own accounts is not consumption, and the purchases a card payment settles are already counted. ${cnt.excluded?`${cnt.excluded} rows were hidden from reports or are split parents whose children are counted instead.`:''}</div>
-  </div>`;
+  </div></details>`;
 
   // ── Rolling averages, only where coverage permits ──
   const roll=d.rolling||{};
@@ -3051,7 +3028,7 @@ function renderSpendingTab(R,P){
         <td style="color:var(--t3)">${m.count}${m.pending?` <span style="color:var(--a)">+${m.pending}p</span>`:''}</td>
       </tr>`}).join('')}</tbody></table></div></details>`;
 
-  h+=`<div style="font-size:9.5px;color:var(--t3);line-height:1.6;padding:0 2px">Budget-vs-actual by category, recurring commitments and overrun flags come next — they are deliberately behind this reconciliation view, so the classification above can be checked against what you know before anything alerts on it.</div>`;
+  h+=classificationDetails;
 
   h+=`</div>`;
   ca.innerHTML=h;
@@ -3201,7 +3178,7 @@ function renderPortfolioTab(R,P){
       <div style="font-size:11px;color:var(--t3);margin-bottom:14px">GetInvestments returned an error. Monarch may not have holdings data for your accounts.</div>
       <button onclick="runMonarchDiagnostics()" style="padding:7px 14px;background:var(--s2);color:var(--t2);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px">🩺 Diagnose connection</button>
       <button onclick="loadMonarchInvestments()" style="padding:7px 14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px">Retry</button>
-    ${renderMonarchAccountsCard()}</div>`;
+    <div class="refine-links"><button class="ui-btn" onclick="setSubView('overview')">Manage accounts & classifications →</button></div></div>`;
     mountAccountDonut();
     return;
   }
@@ -3288,11 +3265,10 @@ function renderPortfolioTab(R,P){
     ].map(k=>`<div class="kpi"><div class="kpi-l">${k.l}</div><div class="kpi-v" style="color:${k.c};font-size:14px">${k.v}</div><div class="kpi-s">${k.s}</div></div>`).join('')}
   </div>
 
-  ${mixData.length>1?`<section class="glass-card pf-mix">
-    <h3>Asset mix</h3>
+  ${mixData.length>1?`<details class="polish-fold refine-fold pf-mix"><summary>Allocation by asset class</summary>
     <div class="pf-mix-bar" aria-hidden="true">${mixSeries.map(([,v,col])=>`<span style="flex:${v};background:${col}"></span>`).join('')}</div>
     <div class="pf-mix-key">${mixSeries.map(([lb,v,col])=>`<div><span class="portfolio-holding-swatch" style="background:${col}"></span><span>${lb}</span><strong>${fmt(v)}</strong></div>`).join('')}</div>
-  </section>`:''}
+  </details>`:''}
 
   <div class="pf-split">
     <div class="glass-card" style="padding:14px">
@@ -3415,14 +3391,13 @@ function renderPortfolioTab(R,P){
 
     const allItems=[...flags,...observations];
     if(allItems.length===0)return'';
-    return`<div class="glass-card" style="padding:14px;margin-bottom:10px">
-      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Portfolio Analysis</div>
+    return`<details class="polish-fold refine-fold"><summary>Portfolio context</summary><div>
       <div style="display:flex;flex-direction:column;gap:6px">
         ${allItems.map(o=>`<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:rgba(10,37,64,.03);border-radius:7px;border-left:2px solid ${o.c}">
           <div style="font-size:11px;color:${o.c};line-height:1.45">${o.t}</div>
         </div>`).join('')}
       </div>
-    </div>`;
+    </div></details>`;
   })()}
 
   ${(()=>{
@@ -3457,7 +3432,7 @@ function renderPortfolioTab(R,P){
     </div>`;
   })()}
 
-  ${renderMonarchAccountsCard()}
+  <div class="refine-links"><button class="ui-btn" onclick="setSubView('overview')">Manage accounts & classifications →</button></div>
   </div>`;
   mountAccountDonut();
 
@@ -3553,7 +3528,7 @@ function renderHousingTab(R,P){
   };
   const cur=cost(q.homePrice),atMax=cost(a.max);
 
-  let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
+  let h=`<div class="refine-goals" style="display:flex;flex-direction:column;gap:14px;padding:2px"><header class="ui-head"><div><h2>Milestones & resilience</h2><p>Home funding, education and the reserves that support them.</p></div></header>`;
 
   // ── The answer ──
   h+=`<div class="glass-card" style="padding:22px 24px;background:linear-gradient(135deg,rgba(99,91,255,.07),rgba(103,114,229,.03))">
@@ -3653,7 +3628,7 @@ function renderHousingTab(R,P){
   const allVals=grid.flatMap(g=>g.cells);
   const gMin=Math.min(...allVals),gMax=Math.max(...allVals);
   const shade=v=>{const t=gMax>gMin?(v-gMin)/(gMax-gMin):0.5;return `rgba(99,91,255,${(0.05+t*0.22).toFixed(3)})`};
-  h+=`<div class="glass-card" style="padding:16px 18px">
+  h+=`<details class="polish-fold refine-fold"><summary>Compare mortgage rates & down payments</summary><div>
     <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">What you can afford, by rate and down payment</div>
     <div style="font-size:10px;color:var(--t2);margin-bottom:11px">Each cell is the lower of the two limits, run through the full model.</div>
     <div class="tw" style="max-height:none"><table style="font-size:11px">
@@ -3668,7 +3643,7 @@ function renderHousingTab(R,P){
       ${(()=>{const base=cellMax(q.mortgageRate,q.downPctg),up=cellMax(Math.round((q.mortgageRate+1)*1000)/1000,q.downPctg);
         return `A 1-point rise in rates costs you about <strong style="color:var(--tx)">${money(Math.max(0,base-up))}</strong> of purchasing power at ${q.downPctg}% down.`})()}
     </div>
-  </div>`;
+  </div></details>`;
 
   // ── What the current price costs, month by month ──
   const line=(lbl,v,col)=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:5px 0;border-bottom:1px solid var(--bd)"><span style="color:var(--t2)">${lbl}</span><span style="font-family:'SF Mono',monospace;font-weight:600;color:${col||'var(--tx)'}">${fmtF(Math.round(v))}/mo</span></div>`;
@@ -4160,206 +4135,7 @@ function renderGoalsTab(R,P,tT){
   const defYrs=drawYears(R);
 
   // ── build HTML ──
-  let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
-
-  // Priority action items
-  const _actions=[];
-  // 1. Down payment
-  if(!dpOnTrack){_actions.push({icon:'🏠',color:'var(--a)',text:`Need ${fmt(dpShortfall)} more for down payment — save ~${fmt(dpMoNeeded)}/mo for ${yearsLeft} yr${yearsLeft!==1?'s':''}`});}
-  else{_actions.push({icon:'🏠',color:'var(--g)',text:`Down payment funded — ${fmt(projLiq)} available by ${P.homePurchaseYear-1} covers the ${fmt(dp)} needed${projStripeShare>0?` (incl. ${fmt(projStripeShare)} Stripe)`:''}`});}
-  // 2. Nancy trajectory
-  const nancyMatYr=P.nancyRampYear+P.nancyRampYears;
-  const nancyMatRow=R.find(r=>r.yr===nancyMatYr);
-  if(nancyMatRow){_actions.push({icon:'👩‍⚕️',color:'var(--p)',text:`Nancy hits full capacity (~${fmt(Math.round(P.nancyMaxClients*P.nancyHourlyRate*P.nancyWeeksPerYear))}/yr) in ${nancyMatYr}`});}
-  // 3. Liquid floor
-  const minLiqRow=R.reduce((a,b)=>b.liq<a.liq?b:a,R[0]);
-  if(minLiqRow.liq<500000){_actions.push({icon:'⚠️',color:'var(--r)',text:`Liquid hits floor of ${fmt(minLiqRow.liq)} in ${minLiqRow.yr} — consider increasing savings rate or deferring home purchase`});}
-  else{_actions.push({icon:'💧',color:'var(--g)',text:`Liquid floor ${fmt(minLiqRow.liq)} in ${minLiqRow.yr} — above $500K safety cushion`});}
-  // 4. Deficit years
-  const defCount=drawYears(R);
-  if(defCount>5){_actions.push({icon:'📉',color:'var(--r)',text:`${defCount} of ${R.length} years draw on savings or held Stripe — the rest are covered by that year's vest. Return assumptions matter a lot here`});}
-
-  h+=`<div style="background:linear-gradient(135deg,var(--s1),var(--s2));border:1px solid var(--bd);border-radius:10px;padding:14px 16px">
-    <div style="font-size:11px;font-weight:700;color:var(--tx);margin-bottom:10px;display:flex;align-items:center;gap:6px"><span>🎯</span><span>Plan highlights</span></div>
-    <div style="display:flex;flex-direction:column;gap:7px">
-      ${_actions.map((a,i)=>`<div style="display:flex;align-items:flex-start;gap:8px">
-        <span style="font-size:13px;flex-shrink:0;margin-top:1px">${a.icon}</span>
-        <span style="font-size:11px;line-height:1.5;color:var(--t2)">${a.text}</span>
-      </div>`).join('')}
-    </div>
-  </div>`;
-
-  // GOAL 0: Compare only complete totals.
-  if(monarchSnapshot&&!monarchSnapshot.partial){
-    const curYr=new Date().getFullYear();
-    const projRow=R.find(r=>r.yr===curYr)||R[0];
-    const prevRow=R.find(r=>r.yr===curYr-1);
-    const impliedLiq=monarchSnapshot.liquid;
-    // The model emits year-END values, but a live snapshot is mid-year. Pro-rate the
-    // plan to today: start-of-year baseline + (fraction of year elapsed) × this year's
-    // projected growth. Without this, a June snapshot is measured against a Dec-31
-    // finish line and always reads "behind".
-    const _now=new Date(),_ys=new Date(curYr,0,1),_ye=new Date(curYr+1,0,1);
-    const yrFrac=Math.min(1,Math.max(0,(_now-_ys)/(_ye-_ys)));
-    const pctElapsed=Math.round(yrFrac*100);
-    // Annual NW growth the plan projects for curYr — the INCREMENT only, not the absolute level.
-    // This is driven purely by the plan's income/expense model for this year and is reliable
-    // regardless of what starting point we use for the comparison.
-    // Jan-1 baseline: always use P.startingLiquid (the user's slider input).
-    // For the growth increment, use the model's prior-year row if available (multi-year plan),
-    // so we capture only this year's projected change, not a stale absolute.
-    const jan1Liq=(P.startingLiquid||0)+(P.startingStripeEquity||0);
-    const jan1LiqBase=prevRow?planLiquidComparable(prevRow):jan1Liq;
-    const annualLiqGrowth=planLiquidComparable(projRow)-jan1LiqBase;
-    // Pro-rated plan target: user's starting liquid + this year's pro-rated growth
-    const planLiq=Math.round(jan1Liq+yrFrac*annualLiqGrowth);
-    // 401k: informational only (not used in headline comparison)
-    const has401k=monarchSnapshot.retirement>0;
-    const live401k=has401k?monarchSnapshot.retirement:(P.k401Start||0);
-    const jan1_401=prevRow?prevRow.k401:(P.k401Start||0);
-    const annual401Growth=projRow.k401-jan1_401;
-    const plan401=Math.round(jan1_401+yrFrac*annual401Growth);
-    const diff401=live401k-plan401;
-    // Headline: liquid only — 401k excluded (user tracks liquid net worth).
-    const liqDiff=impliedLiq-planLiq;
-    const headlineActual=impliedLiq;
-    const headlinePlan=planLiq;
-    const totalDiff=headlineActual-headlinePlan;
-    const ahead=totalDiff>=0;
-    const needsAnchor=false;
-    // ── Lumpy-year guard ───────────────────────────────────────────────────
-    // The plan's annual liquid delta bakes in discrete events — chiefly the home
-    // down payment, which hits at a single moment, not evenly across the year.
-    // Linearly pro-rating such a year produces a meaningless "pace" (you read wildly
-    // ahead before the purchase, wildly behind after), so we flag it instead.
-    const isDpYear=curYr===P.homePurchaseYear;
-    // A "big swing" year: this year's net liquid change is large vs the starting base
-    // (e.g. a heavy deficit year drawing down savings) — pro-rating is less reliable.
-    const swingRatio=jan1Liq>0?Math.abs(annualLiqGrowth)/jan1Liq:0;
-    const bigSwing=!isDpYear&&swingRatio>0.5;
-    const unreliable=isDpYear||bigSwing;
-    // Plain-language summary
-    const monthName=_now.toLocaleDateString('en-US',{month:'long'});
-    let plainSummary;
-    if(isDpYear){
-      plainSummary=`${curYr} is your planned home-purchase year — the ${fmt(dp)} down payment lands as a one-time event, so a simple "on-pace" number isn't meaningful until the purchase clears. Use the tiles below to track liquid against the full-year plan.`;
-    }else if(bigSwing){
-      plainSummary=`${curYr} is a high-swing year (plan moves liquid by ${annualLiqGrowth>=0?'+':''}${fmt(annualLiqGrowth)}), so mid-year pace is approximate.`;
-    }else{
-      plainSummary=`You're <b style="color:${ahead?'var(--g)':'var(--r)'}">${fmt(Math.abs(totalDiff))} ${ahead?'ahead of':'behind'}</b> where your plan expected your liquid net worth to be by ${monthName} ${curYr}.`;
-    }
-    const syncDate=new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-    h+=`<div style="background:var(--a-soft);border:1px solid rgba(191,105,0,.25);border-radius:10px;padding:16px 18px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-        <div>
-          <div style="font-size:13px;font-weight:700;color:var(--tx)">📍 Live Snapshot · Monarch</div>
-          <div style="font-size:10px;color:var(--t2);margin-top:2px">As of ${syncDate} · vs. plan pace (${pctElapsed}% through ${curYr})</div>
-        </div>
-        ${unreliable?`<div style="background:var(--a-soft);border:1px solid rgba(191,105,0,.3);border-radius:6px;padding:6px 12px;text-align:center;max-width:130px">
-          <div style="font-size:11px;font-weight:700;color:var(--a)">⚠ Pace N/A</div>
-          <div style="font-size:8px;color:var(--t3);margin-top:2px">one-time event this year</div>
-        </div>`:`<div style="background:${ahead?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${ahead?'rgba(26,135,84,.2)':'rgba(205,61,100,.2)'};border-radius:6px;padding:6px 12px;text-align:center">
-          <div style="font-size:11px;font-weight:700;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'▲ Ahead':'▼ Behind'}</div>
-          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:${ahead?'var(--g)':'var(--r)'}">${ahead?'+':''}${fmt(totalDiff)}</div>
-          <div style="font-size:8px;color:var(--t3)">liquid net worth</div>
-        </div>`}
-      </div>
-      <div style="font-size:11px;line-height:1.5;color:var(--t2);margin-bottom:10px;padding:9px 11px;background:#fff8;border-radius:7px;border-left:3px solid ${unreliable?'var(--a)':ahead?'var(--g)':'var(--r)'}">${plainSummary}</div>
-      <div style="font-size:9.5px;color:var(--t2);line-height:1.6;margin-bottom:10px;padding:8px 10px;background:#fff8;border-radius:6px">
-        <div><b style="color:var(--tx)">How it's calculated</b></div>
-        <div style="font-family:'SF Mono',monospace;font-size:9px;margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:2px 12px">
-          <span style="color:var(--t3)">Starting Liquid (slider)</span><span style="color:var(--tx);font-weight:600">${fmt(jan1Liq)}</span>
-          <span style="color:var(--t3)">Plan liq growth ${curYr}</span><span style="color:var(--tx);font-weight:600">${annualLiqGrowth>=0?'+':''}${fmt(annualLiqGrowth)} (full year)</span>
-          <span style="color:var(--t3)">Pro-rated to ${pctElapsed}%</span><span style="color:var(--tx);font-weight:600">pace ${fmt(planLiq)}</span>
-          <span style="color:var(--t3)">Actual liquid (Monarch)</span><span style="color:var(--tx);font-weight:600">${fmt(impliedLiq)} · <span style="color:${liqDiff>=0?'var(--g)':'var(--r)'};font-weight:700">${liqDiff>=0?'+':''}${fmt(liqDiff)}</span></span>
-        </div>
-      </div>
-      <div class="pf-quad">
-        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Total NW</div>
-          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(monarchSnapshot.netWorth)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">Monarch (incl. home equity)</div>
-        </div>
-        <div style="background:${unreliable?'#fff8':liqDiff>=0?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${unreliable?'var(--bd)':liqDiff>=0?'rgba(26,135,84,.15)':'rgba(205,61,100,.15)'};border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Liquid (est.)</div>
-          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--b)">${fmt(impliedLiq)}</div>
-          ${unreliable?`<div style="font-size:8.5px;color:var(--t2);margin-top:1px">Year-end plan: ${fmt(projRow.liq)}</div>`:`<div style="font-size:8.5px;color:var(--t2);margin-top:1px">Pace: ${fmt(planLiq)} · <span style="color:${liqDiff>=0?'var(--g)':'var(--r)'};font-weight:700">${liqDiff>=0?'+':''}${fmt(liqDiff)}</span></div>`}
-        </div>
-        <div style="background:${diff401>=0?'var(--g-soft)':'var(--r-soft)'};border:1px solid ${diff401>=0?'rgba(26,135,84,.15)':'rgba(205,61,100,.15)'};border-radius:7px;padding:9px 11px${has401k?'':';opacity:.6'}">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">401k${has401k?'':' · not synced'}</div>
-          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmt(live401k)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${has401k?`Pace: ${fmt(plan401)} · <span style="color:${diff401>=0?'var(--g)':'var(--r)'};font-weight:700">${diff401>=0?'+':''}${fmt(diff401)}</span>`:'modeled estimate'}</div>
-        </div>
-        <div style="background:#fff8;border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Home Equity (est.)</div>
-          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmt(Math.max(0,monarchSnapshot.netWorth-(impliedLiq||0)-(live401k||0)))}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">NW − liquid − 401k</div>
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
-        <button onclick="anchorToToday()" style="font-size:11px;font-weight:600;padding:7px 14px;background:var(--a);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">⚓ Anchor plan to today</button>
-        <span style="font-size:9.5px;color:var(--t2);line-height:1.4">Calibrates Jan-1 baseline from real Monarch data. Starting Liquid slider is not changed.</span>
-      </div>
-    </div>`;
-  }
-
-  // ── Risk & Confidence (Monte Carlo, on-demand) ──
-  h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
-      <div style="font-size:13px;font-weight:700;color:var(--tx)">🎲 Risk & Confidence</div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <div style="display:flex;border:1px solid var(--bd);border-radius:7px;overflow:hidden">
-          <button class="mc-mode-btn" data-mode="lognormal" onclick="setMCMode('lognormal')" title="Synthetic lognormal returns calibrated to your assumed rate" style="font-size:9.5px;font-weight:600;padding:5px 9px;border:none;cursor:pointer;font-family:inherit;background:${_mcMode==='lognormal'?'linear-gradient(135deg,#6e66ff,#5048d6)':'var(--s1)'};color:${_mcMode==='lognormal'?'#fff':'var(--t2)'}">Synthetic</button>
-          <button class="mc-mode-btn" data-mode="historical" onclick="setMCMode('historical')" title="Bootstrap real historical S&amp;P 500 return sequences (1928-2023)" style="font-size:9.5px;font-weight:600;padding:5px 9px;border:none;cursor:pointer;font-family:inherit;background:${_mcMode==='historical'?'linear-gradient(135deg,#6e66ff,#5048d6)':'var(--s1)'};color:${_mcMode==='historical'?'#fff':'var(--t2)'}">Historical</button>
-        </div>
-        <button onclick="runGoalsRiskAnalysis()" style="font-size:11px;font-weight:600;padding:6px 13px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Run simulation</button>
-      </div>
-    </div>
-    <div style="font-size:10.5px;color:var(--t2);line-height:1.5;margin-bottom:4px">Runs 800 market scenarios against your plan to show the range of outcomes — not just the single-line projection. <strong>Synthetic</strong> uses a calibrated random distribution; <strong>Historical</strong> replays real market sequences.</div>
-    <div id="goalsRiskOut"></div>
-  </div>`;
-
-  // ── Planning Opportunities (advisory — does not change your plan) ──
-  const _cy=new Date().getFullYear();
-  const _curRow=R.find(r=>r.yr===_cy)||R[0];
-  const annualExp=_curRow.totE||0;
-  const ef6=Math.round(annualExp/2),ef12=Math.round(annualExp);
-  const efHave=P.startingLiquid||0;
-  const efOk=efHave>=ef6;
-  const rothPerSpouse=7000,rothTotal=rothPerSpouse*2; // 2026 IRA limit; couple
-  const ny529Deduct=10000; // NY 529 MFJ state deduction cap
-  const nyMarginalState=0.0685; // approx NYS+NYC marginal for this income
-  const ny529Save=Math.round(ny529Deduct*nyMarginalState);
-  const totalTuition=tT||0;
-  const opps=[
-    {ic:'🛟',co:efOk?'var(--g)':'var(--a)',ti:'Emergency fund',
-     bd:`Target <b>${fmt(ef6)}–${fmt(ef12)}</b> (6–12 mo of ${fmt(annualExp)}/yr expenses). You hold ${fmt(efHave)} liquid — ${efOk?'comfortably covered. Keep this slice in cash/T-bills, separate from invested liquid.':'consider carving out a dedicated cash reserve before investing the rest.'}`},
-    {ic:'🏦',co:'var(--accent)',ti:'Backdoor Roth IRA',
-     bd:`Your income is above the Roth limit, but a <b>backdoor Roth</b> lets each of you contribute <b>${fmt(rothPerSpouse)}/yr</b> (≈${fmt(rothTotal)}/yr combined) to tax-free growth. Over decades this is one of the largest tax-free buckets available to high earners.`},
-    {ic:'🚀',co:'var(--p)',ti:'Mega-backdoor Roth',
-     bd:`If Norm's 401k plan allows after-tax contributions + in-plan conversion, you can add up to <b>~$46k/yr</b> beyond the ${fmt(P.pretax401k||23500)} pre-tax limit, all converting to Roth. Worth confirming with the plan administrator.`},
-    {ic:'🎓',co:'var(--b)',ti:'529 for tuition',
-     bd:`You're projected to pay <b>${fmt(totalTuition)}</b> in yeshiva tuition over the plan. NY 529 contributions are state-tax deductible up to <b>${fmt(ny529Deduct)}/yr</b> (~${fmt(ny529Save)}/yr saved) and grow tax-free; K-12 tuition withdrawals up to $10k/yr are federally qualified. Even short-hold 529 routing of tuition dollars captures the deduction.`},
-    {ic:'📉',co:'var(--g)',ti:'Tax-loss harvesting',
-     bd:`Your taxable account funds the years that draw on savings by realizing gains (taxed at ~${Math.round((P.capGainsTaxRate||.345)*100)}%). Harvesting losses in down years banks carryforwards that offset those future gains — directly lowering the drag in those years.`},
-    {ic:'🛡️',co:'var(--r)',ti:'Insurance gaps',
-     bd:`Two dependents + a self-employed earner (Nancy) and a future suburban home argue for: <b>term life</b> on both incomes, <b>own-occupation disability</b> for Nancy's practice, and an <b>umbrella liability</b> policy. None are in the expense model — add the premiums so the plan reflects true cash flow.`},
-    {ic:'🛬',co:'var(--a)',ti:'De-risk before the home purchase',
-     bd:`The plan grows all liquid at a flat ${Math.round((P.investReturn||.06)*100)}% through ${P.homePurchaseYear}. Money needed for the ${fmt(dp)} down payment in ${P.homePurchaseYear} shouldn't ride the market in the final 1–2 years — shift the down-payment slice to cash/short T-bills to avoid a sequence-of-returns shortfall.`},
-  ];
-  h+=`<details class="polish-fold">
-    <summary>Planning ideas to review <span>${opps.length} topics</span></summary>
-    <div style="font-size:9.5px;color:var(--t3);margin-bottom:12px">General planning ideas; eligibility and amounts need verification. Your plan is unchanged.</div>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      ${opps.map(o=>`<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 11px;background:var(--s2);border:1px solid var(--bd);border-left:3px solid ${o.co};border-radius:7px">
-        <span style="font-size:15px;flex-shrink:0;line-height:1.3">${o.ic}</span>
-        <div>
-          <div style="font-size:11.5px;font-weight:700;color:var(--tx);margin-bottom:2px">${o.ti}</div>
-          <div style="font-size:10.5px;color:var(--t2);line-height:1.5">${o.bd}</div>
-        </div>
-      </div>`).join('')}
-    </div>
-  </details>`;
+  let h=`<div class="refine-goals" style="display:flex;flex-direction:column;gap:14px;padding:2px"><header class="ui-head"><div><h2>Milestones & resilience</h2><p>Home funding, education and the reserves that support them.</p></div></header>`;
 
   // GOAL 1: Home purchase
   h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
@@ -4437,7 +4213,7 @@ function renderGoalsTab(R,P,tT){
     }
     const maxEq=Math.max(...mortRows.map(r=>r.equity));
     const eq10=mortRows[9];const eq20=mortRows[19];const eq30=mortRows[29];
-    h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+    h+=`<details class="polish-fold refine-fold"><summary>Mortgage payoff & amortization</summary><div>
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div>
           <div style="font-size:13px;font-weight:700;color:var(--tx)">🏦 Mortgage</div>
@@ -4502,7 +4278,7 @@ function renderGoalsTab(R,P,tT){
           return`<div title="${r.yr}: ${fmt(r.princPaid)} principal, ${fmt(r.intPaid)} interest" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%">
             <div style="width:100%;background:var(--g);height:${pPct}%;opacity:.8;border-radius:1px 1px 0 0"></div>
             <div style="width:100%;background:var(--r);height:${iPct}%;opacity:.6"></div>
-          </div>`;
+          </div></details>`;
         }).join('')}
       </div>
       <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${P.homePurchaseYear}</span><span>${payoffYr}</span></div>
@@ -4516,7 +4292,7 @@ function renderGoalsTab(R,P,tT){
         <span>🏛 Property tax (${(ptRate*100).toFixed(2)}% of home value, grows as home appreciates)</span>
         <span style="font-family:'SF Mono',monospace"><b style="color:var(--tx)">${fmtF(Math.round(moPropTax0))}/mo</b> @ ${P.homePurchaseYear} → <b style="color:var(--tx)">${fmtF(Math.round(moPropTax30))}/mo</b> @ ${payoffYr}</span>
       </div>
-    </div>`;
+    </div></details>`;
   }
 
   // GOAL 3: Tuition
@@ -4591,6 +4367,23 @@ function renderGoalsTab(R,P,tT){
     </div>
   </div>`;
 
+  // ── Risk & Confidence (Monte Carlo, on-demand) ──
+  h+=`<details class="polish-fold refine-fold"><summary>Risk & confidence simulation</summary><div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
+      <div style="font-size:13px;font-weight:700;color:var(--tx)">🎲 Risk & Confidence</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div style="display:flex;border:1px solid var(--bd);border-radius:7px;overflow:hidden">
+          <button class="mc-mode-btn" data-mode="lognormal" onclick="setMCMode('lognormal')" title="Synthetic lognormal returns calibrated to your assumed rate" style="font-size:9.5px;font-weight:600;padding:5px 9px;border:none;cursor:pointer;font-family:inherit;background:${_mcMode==='lognormal'?'linear-gradient(135deg,#6e66ff,#5048d6)':'var(--s1)'};color:${_mcMode==='lognormal'?'#fff':'var(--t2)'}">Synthetic</button>
+          <button class="mc-mode-btn" data-mode="historical" onclick="setMCMode('historical')" title="Bootstrap real historical S&amp;P 500 return sequences (1928-2023)" style="font-size:9.5px;font-weight:600;padding:5px 9px;border:none;cursor:pointer;font-family:inherit;background:${_mcMode==='historical'?'linear-gradient(135deg,#6e66ff,#5048d6)':'var(--s1)'};color:${_mcMode==='historical'?'#fff':'var(--t2)'}">Historical</button>
+        </div>
+        <button onclick="runGoalsRiskAnalysis()" style="font-size:11px;font-weight:600;padding:6px 13px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Run simulation</button>
+      </div>
+    </div>
+    <div style="font-size:10.5px;color:var(--t2);line-height:1.5;margin-bottom:4px">Runs 800 market scenarios against your plan to show the range of outcomes — not just the single-line projection. <strong>Synthetic</strong> uses a calibrated random distribution; <strong>Historical</strong> replays real market sequences.</div>
+    <div id="goalsRiskOut"></div>
+  </div></details>`;
+
+  h+=`<div class="refine-links"><button class="ui-btn" onclick="setTab('housing')">Explore home affordability →</button><button class="ui-btn" onclick="setSubView('watch')">Review alerts & tax opportunities →</button></div>`;
   h+='</div>';
   ca.innerHTML=h;
 }
@@ -4818,7 +4611,7 @@ function renderNavLive(){
         <polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.6"
           stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
       </svg>
-      <span>${R[0].yr}<i>${UI.money(series[series.length-1])} by ${R[R.length-1].yr}</i></span>
+      <span>Open your financial overview ↗</span>
     </button>`;
 }
 
@@ -4884,7 +4677,7 @@ const SUB_VIEWS={
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','chart','Net worth'],['income','circle','Income & tax'],['cashflow','arrow','Cash flow'],['table','doc','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
-    views:[['overview','circle','Overview'],['spending','card','Spending'],['holdings','chart','Holdings'],['plan','target','Goals'],['watch','bell','Watchlist']]},
+    views:[['overview','circle','Accounts'],['spending','card','Spending'],['holdings','chart','Holdings'],['plan','target','Goals'],['watch','bell','Watchlist']]},
 };
 let _stressMode=false;
 // ── Monte Carlo confidence band overlay (NW chart) ──
