@@ -102,6 +102,10 @@ const recommendationsStore = require('../store/recommendations');
 const intentionsStore = require('../store/intentions');
 const lifeChaptersStore = require('../store/lifeChapters');
 const { asyncHandler } = require('../middleware/asyncHandler');
+// Applied at every point a quality verdict is PERSISTED — the verdict carries
+// the violating sentences in-process for diagnostics, and that prose must
+// never reach stored content (see claimValidator.stripQualityProse).
+const { stripQualityProse } = require('../brain/claimValidator');
 
 // Postgres advisory lock (not an in-memory boolean) so "is a rebuild already
 // running" is answered correctly across replicas, not just within this one
@@ -3095,7 +3099,7 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
     // attempt, never the carried-forward card above: a stale card must never
     // be mistaken for a successful fresh build (see hasPublishableFreshBriefToday
     // in notify/morning.js). null only for builds that predate this contract.
-    chiefBriefQuality: geminiResult?.chiefBriefQuality ?? null,
+    chiefBriefQuality: stripQualityProse(geminiResult?.chiefBriefQuality ?? null),
     // The authoritative 3-tier publishability contract (brain/publishTier.js)
     // derived from chiefBriefQuality above — 'premium_fresh' | 'grounded_usable'
     // | 'hard_failed'. Reflects THIS build's own attempt, same scope as
@@ -3701,7 +3705,7 @@ async function performScopedChiefBriefRebuild(prior, opts = {}) {
     chiefBriefGoalsStale,
     // See the full build's identical field for the contract — always this
     // rebuild's OWN attempt, never the carried-forward card.
-    chiefBriefQuality: chiefResult.chiefBriefQuality ?? null,
+    chiefBriefQuality: stripQualityProse(chiefResult.chiefBriefQuality ?? null),
     publishTier: thisAttemptPublishable ? scopedPublishTier : (chiefBriefStale ? (lastGood?.publishTier ?? derivePublishTier(lastGood?.chiefBriefQuality)) : null),
     errors,
     // builtAt = response PRODUCTION time, and stays the client's "rebuild

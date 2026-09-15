@@ -92,9 +92,27 @@ function checkRecoveryScore(fields, facts) {
   for (const [field, text] of fields) {
     for (const sentence of splitIntoSentences(text)) {
       if (!RECOVERY_CONTEXT_RE.test(sentence) && !/\bscore\b/i.test(sentence)) continue;
-      // "recovery score of 72", "recovery at 72", "72/100", "score is 72"
-      const m = sentence.match(/\b(?:recovery|score)\b[^.\d]{0,20}(\d{1,3})\b(?!\s*(?:%|percent|bpm|ms|am|pm|:))/i)
+      // The number must be TIED to recovery by an explicit linking word, not
+      // merely appear near the word "recovery".
+      //
+      // The old pattern allowed any digits within 20 non-digit characters of
+      // "recovery"/"score", which made "Recovery + Mobility (20-30 min)" read
+      // as "recovery score 20" — a workout NAME followed by a DURATION. That
+      // fired on essentially every recovery-day brief (the plan's own workout
+      // is literally called "Recovery + Mobility"), and because a high-severity
+      // claim violation forces a correction retry that then contradicts again,
+      // it degraded the whole card to grounded fallbacks every single morning.
+      //
+      // Requiring "score"/"at"/"of"/"is"/"reading" between the subject and the
+      // number keeps every real citation ("recovery score of 72", "recovery is
+      // at 72", "score: 72", "72/100") while a bare workout label followed by
+      // a parenthetical can no longer masquerade as one. DURATION_AFTER_RE
+      // additionally rejects a number that is plainly a length of time, so a
+      // phrasing like "recovery work at 20 min" stays safe too.
+      const DURATION_AFTER_RE = /^\s*(?:[-–—]\s*\d{1,3}\s*)?(?:%|percent|bpm|ms|mins?|minutes?|hrs?|hours?|secs?|seconds?|reps?|sets?|km|mi|miles?|am|pm|:)/i;
+      const m = sentence.match(/\b(?:recovery|readiness|score)\b[^.\d]{0,24}?\b(?:score|reading|at|of|is|was|sits? at|came in at)\b[^.\d]{0,8}(\d{1,3})\b/i)
         || sentence.match(/\b(\d{1,3})\s*\/\s*100\b/);
+      if (m && DURATION_AFTER_RE.test(sentence.slice(m.index + m[0].length))) continue;
       if (!m) continue;
       const cited = Number(m[1]);
       if (!Number.isFinite(cited) || cited > 100) continue;
@@ -246,6 +264,11 @@ function causalOverlapRatio(sentence, phrase) {
 }
 const CAUSE_OVERLAP_THRESHOLD = 0.3;
 
+// Explicit disclaimers of causation. A brief saying it does NOT know why
+// recovery moved is the behaviour this whole check is meant to produce, so
+// recognizing that language is part of the contract, not a loophole.
+const NO_CAUSE_CLAIMED_RE = /\b(?:cause|driver|reason|explanation)s?\b[^.]{0,30}\b(?:is|are|isn'?t|aren'?t|remains?|stays?)\b[^.]{0,20}\b(?:unknown|unclear|not clear|uncertain)\b|\b(?:no|without)\s+(?:clear|obvious|eligible|identifiable|apparent|single|specific)?\s*(?:cause|driver|reason|explanation)s?\b|\bcause\b[^.]{0,20}\bisn'?t clear\b|\bunexplained\b|\brather than explain\b|\b(?:can'?t|cannot|couldn'?t|doesn'?t|don'?t)\s+(?:be\s+)?explain(?:ed)?\b|\bnothing\s+eligible\b/i;
+
 function checkRecoveryCause(fields, facts) {
   // Only meaningful once the caller has actually computed eligible drivers —
   // absent facts.recoveryDrivers (an older/partial facts object), stay silent
@@ -286,6 +309,23 @@ function checkRecoveryCause(fields, facts) {
       // best available signal, not a bypass of a concept check that already
       // ran and disagreed.
       const claimedTags = causeConceptTags(sentence);
+      // A sentence that explicitly DISCLAIMS a cause is not asserting one.
+      //
+      // This check's own error message tells the brief to "say the cause is
+      // unknown instead of guessing" — and then flagged it for doing exactly
+      // that. The model wrote "the dip is real but the cause is unknown, no
+      // eligible driver identified today, so it's one to watch rather than
+      // explain", which trips CAUSAL_RE purely on the word "explain" in
+      // "rather than explain". Complying with the contract must not be a
+      // violation of it; combined with the recovery_score false positive
+      // above, this is what degraded the brief to grounded fallbacks every
+      // morning.
+      //
+      // Deliberately narrow: the guard only applies when the sentence names
+      // NO recognized cause concept. "The cause is unknown, though probably
+      // the wine" still names `alcohol` and is still policed — a disclaimer
+      // cannot be used to smuggle an ungrounded attribution past the check.
+      if (claimedTags.length === 0 && NO_CAUSE_CLAIMED_RE.test(sentence)) continue;
       const groundedInDriver = claimedTags.length > 0
         ? claimedTags.some((t) => eligibleTags.has(t))
         : drivers.some((d) => causalOverlapRatio(sentence, d) >= CAUSE_OVERLAP_THRESHOLD);
@@ -1320,6 +1360,12 @@ function assessChiefBriefQuality(result, facts = null, diag = null) {
   // stripped them (see finalizeSafe in services/briefing-ai.js). Carried
   // through onto the persisted quality object so a degraded build can be
   // explained after the fact instead of only counted.
+  // NOTE: these carry the model's own PROSE, which must never be persisted —
+  // the stored quality object is explicitly "safe, non-prose context", so that
+  // a contradiction the pipeline just neutralized can't leak back into stored
+  // state through its own diagnostics. stripQualityProse() below is applied at
+  // every persistence site; this stays in-process for the admin dry-run
+  // diagnostic, which is the only consumer that needs the sentences.
   const violationDetails = Array.isArray(diag?.violationDetails) ? diag.violationDetails : [];
 
   const cb = result?.chiefBrief;
@@ -1391,6 +1437,23 @@ function assessChiefBriefQuality(result, facts = null, diag = null) {
   return { status: degraded ? 'degraded' : 'fresh', reasonCodes, fieldWordCounts, fallbackFields, violatedChecks, violationDetails, neutralizedFields, correlationId, failedAttempt };
 }
 
+/**
+ * The persistable form of a quality verdict: everything EXCEPT the violating
+ * sentences.
+ *
+ * assessChiefBriefQuality carries `violationDetails` (check + field + the
+ * model's actual sentence) so an admin diagnostic can explain a degrade on
+ * demand. That prose must not reach the database: the whole point of
+ * neutralization is that a contradicting sentence never ships, and persisting
+ * it inside the quality object would route it straight back into stored
+ * content. Every write path calls this first.
+ */
+function stripQualityProse(quality) {
+  if (!quality || typeof quality !== 'object') return quality ?? null;
+  const { violationDetails, ...rest } = quality;
+  return rest;
+}
+
 /** Build a targeted retry prompt asking specifically for fuller content on the
  *  fields the quality contract flagged as underfilled/fallback — used for the
  *  ONE bounded quality retry (never an unbounded watcher loop). Deliberately
@@ -1418,6 +1481,7 @@ function buildClaimCorrectionPrompt(basePrompt, violations) {
 }
 
 module.exports = {
+  stripQualityProse,
   validateChiefBriefClaims, buildClaimCorrectionPrompt, neutralizeClaimViolations,
   REQUIRED_BRIEF_FIELDS, groundedFallbackSentence, ensureRequiredFieldsPresent,
   // Chief Brief quality contract — fresh/degraded/failed, the authoritative

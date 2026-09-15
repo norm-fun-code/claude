@@ -1012,7 +1012,6 @@ function createDiagnosticsRouter() {
         qualityFallbackFields: c.chiefBriefQuality?.fallbackFields ?? null,
         qualityNeutralizedFields: c.chiefBriefQuality?.neutralizedFields ?? null,
         qualityViolatedChecks: c.chiefBriefQuality?.violatedChecks ?? null,
-        qualityViolationDetails: c.chiefBriefQuality?.violationDetails ?? null,
         qualityFailedAttempt: c.chiefBriefQuality?.failedAttempt ?? null,
         publishTier: c.publishTier ?? null,
         tierForStoredContent: tierForStoredContent(c),
