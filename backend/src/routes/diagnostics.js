@@ -638,6 +638,46 @@ function createDiagnosticsRouter() {
     });
   }));
 
+  // Is there a usable Monarch session for the family planner to read?
+  //
+  // The planner has no Monarch login of its own — it can only hold a copy of a
+  // session, and sources.config->>'monarchToken' on the monarch_api row is the
+  // one place a working one reaches it. When the planner reports an expired
+  // session there is currently no way to answer "is a good one actually
+  // published?" without opening the database by hand.
+  //
+  // PRESENCE ONLY, never the value. A session token is a live credential: it
+  // does not belong in an HTTP response, a terminal scrollback, or a log, and
+  // an endpoint that could return it would become the easiest way to leak it.
+  // Length is reported because it distinguishes a real token from an empty
+  // string, which is the one failure this is meant to catch.
+  //   GET /api/diag/planner-session
+  router.get('/diag/planner-session', asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT id, status, last_sync_at, last_error, created_at,
+              (config->>'monarchToken') IS NOT NULL
+                AND length(config->>'monarchToken') > 0 AS has_token,
+              coalesce(length(config->>'monarchToken'), 0) AS token_length,
+              (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(config) AS k) AS config_keys
+         FROM sources WHERE id = 'monarch_api'`
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'no monarch_api source row' });
+    const r = rows[0];
+    res.json({
+      id: r.id,
+      hasMonarchToken: r.has_token === true,
+      tokenLength: Number(r.token_length) || 0,
+      // `sources` has no updated_at column; last_sync_at is stamped by
+      // markSync on the same successful run that writes config, so it is the
+      // row's effective last-written time.
+      lastSyncAt: r.last_sync_at,
+      createdAt: r.created_at,
+      status: r.status,
+      lastError: r.last_error,
+      configKeys: r.config_keys || [],
+    });
+  }));
+
   // Scheduler health check — shows whether the scheduler is enabled and when
   // the morning routine will next fire (helps diagnose missing 8:30am briefings).
   // Continuous presence — is the event-driven loop armed, what is pending,
