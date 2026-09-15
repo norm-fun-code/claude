@@ -942,6 +942,16 @@ app.get('/api/wealth/history', requireAuth, async (req, res) => {
   } catch (err) { res.status(503).json({ error: err.message }); }
 });
 
+// Replace the planner's copy of the Monarch session. It holds its own, separate from the one
+// NormOS keeps, so NormOS staying connected does not stop this one expiring — and before this
+// existed the only cure for an expired deploy-time token was a redeploy. The token is
+// verified against Monarch before it is stored, and neither logged nor echoed back.
+app.put('/api/monarch-token', requireAuth, async (req, res) => {
+  try {
+    res.json({ ok: true, ...(await monarchLive.setToken(req.body && req.body.token)) });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
 app.get('/api/monarch-diagnostics', requireAuth, async (req, res) => {
   try {
     res.json(await monarchLive.diagnose());

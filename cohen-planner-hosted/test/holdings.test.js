@@ -130,7 +130,7 @@ describe('holdings transport', () => {
 
   it('turns an expired session into a message worth showing', async () => {
     const live = withToken(async () => ({ ok: false, status: 401, json: async () => ({}) }));
-    await expect(live.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/session expired/i);
+    await expect(live.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/session has expired/i);
   });
 
   it('treats GraphQL errors on a 200 as unavailable, not as an empty portfolio', async () => {
@@ -172,9 +172,94 @@ describe('holdings transport', () => {
     expect(calls[0].variables.input.accountIds).toBeUndefined();
   });
 
-  it('says so plainly when there is no direct Monarch connection', async () => {
+  it('says so plainly when the planner has no Monarch session of its own', async () => {
     const live = createMonarchLive({ db: { query: async () => ({ rows: [{ data: {} }] }) }, fetchImpl: async () => { throw new Error('should not be called'); }, env: {}, now: () => Date.now() });
-    await expect(live.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/direct Monarch connection/i);
+    await expect(live.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/its own Monarch session/i);
+  });
+});
+
+// ── The planner's own Monarch session ────────────────────────────────────
+// The planner keeps a copy of the session separate from the one NormOS holds. NormOS
+// refreshing its copy does nothing for this one, so the planner's expires while NormOS keeps
+// working — and the deploy-time environment variable used to win unconditionally, so a stale
+// one shadowed a good token in the database with no way to correct it short of a redeploy.
+describe('credentials', () => {
+  // Every token this server can reach, and which of them each request was sent under.
+  const server = ({ live: liveTokens = [], env = {}, dbToken = null, stored = null }) => {
+    const sent = [];
+    const data = stored ? { token: stored } : {};
+    const db = { query: async (sql, args) => {
+      if (sql.startsWith('SELECT data')) return { rows: [{ data }] };
+      if (sql.includes('FROM sources')) return { rows: [{ snapshot: null, token: dbToken }] };
+      if (sql.startsWith('INSERT')) Object.assign(data, JSON.parse(args[0]));
+      return { rows: [] };
+    } };
+    const fetchImpl = async (url, opt) => {
+      const token = String(opt.headers.Authorization || '').replace('Token ', '');
+      sent.push(token);
+      if (!liveTokens.includes(token)) return { ok: false, status: 401, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ data: { accounts: [{ id: '1' }] } }) };
+    };
+    return { bridge: createMonarchLive({ db, fetchImpl, env, now: () => Date.now() }), sent, data };
+  };
+
+  it('falls through a rejected credential to one Monarch still accepts', async () => {
+    const { bridge, sent } = server({ live: ['good'], env: { MONARCH_TOKEN: 'stale' }, dbToken: 'good' });
+    const d = await bridge.diagnose();
+    expect(d.checks.find(c => c.name === 'Monarch accepts the session').ok).toBe(true);
+    expect(sent.slice(0, 2)).toEqual(['stale', 'good']);   // in order, stopping at the one that worked
+    expect(sent.slice(2).every(t => t === 'good')).toBe(true); // and the rest never retry the dead one
+  });
+
+  it('remembers the working credential instead of walking the dead one every call', async () => {
+    const { bridge, sent } = server({ live: ['good'], env: { MONARCH_TOKEN: 'stale' }, dbToken: 'good' });
+    await bridge.diagnose();
+    sent.length = 0;
+    await bridge.diagnose();
+    expect(sent[0]).toBe('good');
+  });
+
+  it('reports every credential rejected rather than blaming the last one tried', async () => {
+    const { bridge } = server({ live: [], env: { MONARCH_TOKEN: 'stale' }, dbToken: 'also-stale' });
+    const c = (await bridge.diagnose()).checks.find(x => x.name === 'Monarch accepts the session');
+    expect(c.ok).toBe(false);
+    expect(c.detail).toMatch(/2/);       // says how many were tried
+    expect(c.fix).toBeTruthy();
+  });
+
+  it('a token pasted in at runtime is preferred over the deploy-time one', async () => {
+    const { bridge, sent } = server({ live: ['fresh', 'stale'], env: { MONARCH_TOKEN: 'stale' }, stored: 'fresh' });
+    await bridge.diagnose();
+    expect(sent[0]).toBe('fresh');
+  });
+
+  it('verifies a pasted token against Monarch before storing it', async () => {
+    const { bridge, data } = server({ live: ['good'], env: {} });
+    await expect(bridge.setToken('nope')).rejects.toThrow(/rejected that token/i);
+    expect(data.token).toBeUndefined();          // a token that does not work is never stored
+    expect(await bridge.setToken('good')).toEqual({ accounts: 1 });
+    expect(data.token).toBe('good');
+  });
+
+  it('refuses an empty token rather than storing a blank credential', async () => {
+    const { bridge, data } = server({ live: ['good'], env: {} });
+    await expect(bridge.setToken('   ')).rejects.toThrow(/paste the monarch token/i);
+    expect(data.token).toBeUndefined();
+  });
+
+  it('never returns or stores the token in anything the client can read', async () => {
+    const { bridge } = server({ live: ['s3cret'], env: { MONARCH_TOKEN: 's3cret' } });
+    expect(JSON.stringify(await bridge.status())).not.toContain('s3cret');
+    expect(JSON.stringify(await bridge.diagnose())).not.toContain('s3cret');
+    expect(JSON.stringify(await bridge.setToken('s3cret'))).not.toContain('s3cret');
+  });
+
+  it('sends someone to the planner, not to NormOS, when the session expires', async () => {
+    // "I have never had an issue in NormOS" and "the planner says the token is expired" were
+    // both true at once, and the old copy told them to go and fix the half that worked.
+    const { bridge } = server({ live: [], env: { MONARCH_TOKEN: 'stale' } });
+    await expect(bridge.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/separate copy from NormOS/i);
+    await expect(bridge.holdings({ startDate: 'a', endDate: 'b' })).rejects.not.toThrow(/Reconnect Monarch in NormOS/i);
   });
 });
 
@@ -188,7 +273,7 @@ describe('connection diagnostics', () => {
 
   it('names a missing token as the first thing to fix', async () => {
     const d = await make({}, async () => { throw new Error('should not be called'); }).diagnose();
-    expect(find(d, 'MONARCH_TOKEN present').ok).toBe(false);
+    expect(find(d, 'Monarch session').ok).toBe(false);
     expect(d.ok).toBe(false);
     // and stops there rather than reporting a cascade of downstream failures
     expect(find(d, 'holdings query')).toBeUndefined();
@@ -196,7 +281,7 @@ describe('connection diagnostics', () => {
 
   it('reports a paused sync distinctly from a missing token', async () => {
     const d = await make({ MONARCH_TOKEN: 't' }, async () => { throw new Error('nope'); }, { disabled: true }).diagnose();
-    expect(find(d, 'MONARCH_TOKEN present').ok).toBe(true);
+    expect(find(d, 'Monarch session').ok).toBe(true);
     expect(find(d, 'balance source').kind).toBe('info'); // descriptive, never a red X
     expect(find(d, 'planner sync enabled').ok).toBe(false);
     expect(find(d, 'planner sync enabled').detail).toMatch(/paused/i);
@@ -204,10 +289,12 @@ describe('connection diagnostics', () => {
 
   it('identifies a rejected token by status rather than calling it unreachable', async () => {
     const d = await make({ MONARCH_TOKEN: 'bad' }, async () => ({ ok: false, status: 401, json: async () => ({}) })).diagnose();
-    const c = find(d, 'Monarch accepts the token');
+    const c = find(d, 'Monarch accepts the session');
     expect(c.ok).toBe(false);
     expect(c.detail).toMatch(/401/);
     expect(c.detail).toMatch(/rejected or expired/i);
+    // …and names the remedy, not just the symptom: the old panel diagnosed it and stopped.
+    expect(c.fix).toMatch(/paste it below/i);
   });
 
   it('surfaces the upstream GraphQL message verbatim so a schema mismatch names its field', async () => {
@@ -216,7 +303,7 @@ describe('connection diagnostics', () => {
       if (b.query.includes('NormOS_AccountIds')) return { ok: true, status: 200, json: async () => ({ data: { accounts: [{ id: '1' }] } }) };
       return { ok: true, status: 200, json: async () => ({ errors: [{ message: "Cannot query field 'basis' on type 'AggregateHolding'" }] }) };
     }).diagnose();
-    expect(find(d, 'Monarch accepts the token').ok).toBe(true);
+    expect(find(d, 'Monarch accepts the session').ok).toBe(true);
     expect(find(d, 'holdings query').ok).toBe(false);
     expect(find(d, 'holdings query').detail).toBeTruthy();
   });

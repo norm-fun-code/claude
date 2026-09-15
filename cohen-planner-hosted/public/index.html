@@ -718,8 +718,34 @@ async function runMonarchDiagnostics(){
   el.innerHTML=`<div class="glass-card" style="padding:12px 14px">
     <div style="font-size:11px;font-weight:700;color:var(--tx);margin-bottom:8px">🩺 Monarch connection</div>
     ${rows||'<div style="font-size:11px;color:var(--t3)">No checks returned.</div>'}
-    ${firstFail?`<div style="margin-top:10px;font-size:10.5px;color:var(--t2);line-height:1.55"><strong style="color:var(--tx)">First thing to fix:</strong> ${advEscape(firstFail.name)}. ${advEscape(String(firstFail.detail||''))}</div>`:'<div style="margin-top:10px;font-size:10.5px;color:var(--g)">Everything checks out — try loading again.</div>'}
+    ${firstFail?`<div style="margin-top:10px;font-size:10.5px;color:var(--t2);line-height:1.55"><strong style="color:var(--tx)">First thing to fix:</strong> ${advEscape(firstFail.name)}. ${advEscape(String(firstFail.detail||''))}${firstFail.fix?` ${advEscape(String(firstFail.fix))}`:''}</div>`:'<div style="margin-top:10px;font-size:10.5px;color:var(--g)">Everything checks out — try loading again.</div>'}
+    ${firstFail&&firstFail.fix?`<form onsubmit="event.preventDefault();saveMonarchToken()" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+      <input id="monarchTokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste Monarch session token" aria-label="Monarch session token" style="flex:1;min-width:190px;font-size:11px;padding:8px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--tx);font-family:inherit">
+      <button type="submit" style="font-size:11px;padding:8px 14px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">Save token</button>
+    </form><div id="monarchTokenMsg" style="margin-top:6px;font-size:10.5px;color:var(--t3);line-height:1.5"></div>`:''}
   </div>`;
+}
+
+// Hand the server a fresh Monarch session. The value goes straight into the request body and
+// is cleared from the field on success — it is never put into the plan, a log, or the URL.
+async function saveMonarchToken(){
+  const inp=document.getElementById('monarchTokenInput'), msg=document.getElementById('monarchTokenMsg');
+  if(!inp||!msg)return;
+  const token=inp.value.trim();
+  if(!token){msg.style.color='var(--r)';msg.textContent='Paste the token first.';return}
+  msg.style.color='var(--t3)';msg.textContent='Checking it against Monarch…';
+  try{
+    const r=await fetch('/api/monarch-token',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
+    const d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(d.error||('HTTP '+r.status));
+    inp.value='';
+    msg.style.color='var(--g)';
+    msg.textContent=`Monarch accepted it — ${d.accounts} accounts visible. Loading investments…`;
+    if(typeof loadMonarchInvestments==='function')loadMonarchInvestments();
+  }catch(e){
+    msg.style.color='var(--r)';
+    msg.textContent=e.message;
+  }
 }
 
 async function loadMonarchInvestments(period){
@@ -729,9 +755,9 @@ async function loadMonarchInvestments(period){
   // Don't call render() here — the caller (renderPortfolioTab) already shows loading state
   try{
     const r=await fetch('/api/monarch-investments?period='+_investPeriod);
-    if(!r.ok){const e=await r.json().catch(()=>({}));monarchInvestments=false;showToast('Investments: '+(e.error||'failed'),'red');}
-    else{monarchInvestments=await r.json();}
-  }catch(e){monarchInvestments=false;showToast('Investments fetch error: '+e.message,'red');}
+    if(!r.ok){const e=await r.json().catch(()=>({}));monarchInvestments=false;_investError=e.error||('HTTP '+r.status);showToast('Investments: '+_investError,'red');}
+    else{monarchInvestments=await r.json();_investError=null;}
+  }catch(e){monarchInvestments=false;_investError=e.message;showToast('Investments fetch error: '+e.message,'red');}
   _investLoading=false;
   if(activeTab==='today')render(); // single render once data is ready
 }
@@ -870,6 +896,10 @@ let monarchAccounts=[];
 let monarchInvestments=null; // null=not loaded, false=failed, object=data
 let _investPeriod='1M';
 let _investLoading=false;
+// What the server actually said when holdings failed, so the card reports the cause instead
+// of guessing at one. An expired session and an account with no holdings are different
+// problems with different cures.
+let _investError=null;
 let _lastChartKey='';
 function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};_lastChartKey=''}
 // _projView must be in the key: the projection views share one activeTab but use
@@ -3175,11 +3205,14 @@ function renderPortfolioTab(R,P){
     ca.innerHTML=`<div style="padding:40px;text-align:center">
       <div id="monarchDiag" style="max-width:620px;margin:0 auto 16px;text-align:left"></div>
       <div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:6px">Couldn't load investments</div>
-      <div style="font-size:11px;color:var(--t3);margin-bottom:14px">GetInvestments returned an error. Monarch may not have holdings data for your accounts.</div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:14px;max-width:520px;margin-left:auto;margin-right:auto;line-height:1.55">${advEscape(_investError||'Monarch did not return holdings for your accounts.')}</div>
       <button onclick="runMonarchDiagnostics()" style="padding:7px 14px;background:var(--s2);color:var(--t2);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px">🩺 Diagnose connection</button>
       <button onclick="loadMonarchInvestments()" style="padding:7px 14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px">Retry</button>
     <div class="refine-links"><button class="ui-btn" onclick="setSubView('overview')">Manage accounts & classifications →</button></div></div>`;
     mountAccountDonut();
+    // A session problem is fixed inside the diagnostics panel, so open it rather than
+    // making someone press a button to reach the only thing that helps.
+    if(/session|token|expired/i.test(_investError||''))runMonarchDiagnostics();
     return;
   }
 

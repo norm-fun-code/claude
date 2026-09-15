@@ -195,7 +195,16 @@ function validSnapshot(value) {
   try { extractAccounts(value.accounts); return value; } catch { return null; }
 }
 function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Date.now }) {
-  let pending = null, retryAfter = 0, lastWarning = null;
+  let pending = null, retryAfter = 0, lastWarning = null, goodToken = null;
+  // What to tell someone whose token Monarch no longer accepts. The old wording sent them to
+  // reconnect Monarch in NormOS, which does not touch this server's copy of the session —
+  // following it would leave them exactly where they started, which is why "I've never had an
+  // issue in NormOS" and "the planner says the token is expired" were both true at once.
+  const EXPIRED = 'The planner\'s own Monarch session has expired. It keeps a separate copy from NormOS, so reconnecting there does not refresh this one — paste a fresh token under Diagnose connection.';
+  // The one remedy that actually works, named on every check that fails for want of a
+  // working session, so the panel says what to DO and not only what is wrong.
+  const PASTE = 'Open Monarch in a signed-in browser tab, copy the session token, and paste it below. It is stored here and tried ahead of the deploy-time one.';
+  const NO_TOKEN = 'needs its own Monarch session. Paste a token under Diagnose connection; the NormOS bridge only carries account balances.';
   async function context() {
     const { rows } = await db.query("SELECT data FROM oauth_tokens WHERE key = 'monarch_bridge'");
     const local = rows[0]?.data || {};
@@ -205,12 +214,46 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
       sources = r.rows;
     } catch (e) { if (e.code !== '42P01') throw e; } // Standalone planner DB.
     const snapshots = [local.snapshot, ...sources.map(s => s.snapshot)].map(validSnapshot).filter(Boolean).sort((a,b) => Date.parse(b.asOf)-Date.parse(a.asOf));
-    return { disabled: !!local.disabled, snapshot: snapshots[0] || null, token: env.MONARCH_TOKEN || sources.find(s => s.token)?.token || null, remote: !!(env.NORMOS_URL && env.PLANNER_BRIDGE_TOKEN) };
+    // Every Monarch credential this server can reach, most recently supplied first: one
+    // pasted into the planner, then the deploy's environment variable, then whatever a
+    // sibling source row carries.
+    //
+    // They are candidates rather than a single choice because the planner holds its OWN copy
+    // of the Monarch session. NormOS refreshing its copy does nothing for this one, so the
+    // planner's token expires while NormOS keeps working — and the environment variable that
+    // used to win unconditionally could not be corrected without a redeploy, so a stale one
+    // permanently shadowed a good token sitting in the database. Trying each in turn means a
+    // token pasted in at runtime can rescue an expired deploy-time one.
+    const tokens = [...new Set([local.token, env.MONARCH_TOKEN, ...sources.map(s => s.token)].filter(Boolean))];
+    return { disabled: !!local.disabled, snapshot: snapshots[0] || null, tokens, token: tokens[0] || null,
+      remote: !!(env.NORMOS_URL && env.PLANNER_BRIDGE_TOKEN) };
   }
   async function status() {
     const c = await context();
     return { connected: !c.disabled && !!(c.snapshot || c.token || c.remote), source: c.snapshot?.source || 'normos-api', asOf: c.snapshot?.asOf || null };
   }
+  // Replace the planner's copy of the Monarch session, without a redeploy.
+  //
+  // The session is verified against Monarch BEFORE it is stored: accepting a token that does
+  // not work would replace a diagnosis with a second, identical mystery. Nothing here logs or
+  // returns the token itself.
+  async function setToken(token) {
+    const t = String(token || '').trim();
+    if (!t) throw new Error('Paste the Monarch token.');
+    let r;
+    try { r = await graphql(t, ACCOUNT_IDS_QUERY, {}); }
+    catch (err) { throw new Error(err.name === 'TimeoutError' ? 'Monarch timed out verifying the token.' : 'Monarch is unreachable, so the token could not be verified.'); }
+    if (r.status === 401) throw new Error('Monarch rejected that token. Copy it again from a signed-in Monarch session.');
+    if (!r.ok) throw new Error(`Monarch returned HTTP ${r.status} verifying the token.`);
+    const b = await r.json();
+    if (b.errors) throw new Error('Monarch accepted the token but rejected the query.');
+    await db.query(`INSERT INTO oauth_tokens (key,data) VALUES ('monarch_bridge',$1::jsonb)
+      ON CONFLICT (key) DO UPDATE SET data = oauth_tokens.data || EXCLUDED.data`, [JSON.stringify({ token: t })]);
+    goodToken = t;
+    retryAfter = 0;   // a refresh held off by the dead session may run again immediately
+    return { accounts: (b.data?.accounts || []).length };
+  }
+
   async function setEnabled(enabled) {
     await db.query(`INSERT INTO oauth_tokens (key,data) VALUES ('monarch_bridge',$1::jsonb)
       ON CONFLICT (key) DO UPDATE SET data = oauth_tokens.data || EXCLUDED.data`, [JSON.stringify({ disabled: !enabled })]);
@@ -248,8 +291,8 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     }
     if (!c.remote && c.token && (!snapshot || now() - Date.parse(snapshot.asOf) >= TTL) && now() >= retryAfter) {
       try {
-        const response = await graphql(c.token, QUERY, {});
-        if (!response.ok) throw new Error(response.status === 401 ? 'Monarch session expired. Reconnect Monarch in NormOS.' : response.status === 429 ? 'Monarch is rate-limiting refreshes. Showing the last successful sync.' : 'Monarch refresh is temporarily unavailable.');
+        const response = await authed(c, QUERY, {});
+        if (!response || !response.ok) throw new Error(!response || response.status === 401 ? EXPIRED : response.status === 429 ? 'Monarch is rate-limiting refreshes. Showing the last successful sync.' : 'Monarch refresh is temporarily unavailable.');
         const data = await response.json();
         if (data.errors) throw new Error('Monarch could not return complete balances.');
         const accounts = extractAccounts(data.data?.accounts);
@@ -276,13 +319,32 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     try { console.warn(`Monarch ${label} query rejected:`, errors.map(e => e && e.message).filter(Boolean).join(' | ')); } catch {}
   }
 
-  async function accountIds(token) {
+  async function accountIds(c) {
     try {
-      const r = await graphql(token, ACCOUNT_IDS_QUERY, {});
-      if (!r.ok) return [];
+      const r = await authed(c, ACCOUNT_IDS_QUERY, {});
+      if (!r || !r.ok) return [];
       const b = await r.json();
       return (b.data?.accounts || []).map(a => String(a.id)).filter(Boolean);
     } catch { return []; }
+  }
+
+  // Runs a call against whichever stored credential Monarch still accepts, and remembers it
+  // so the next call starts there rather than walking a dead token every time.
+  //
+  // ONLY a 401 moves on to the next candidate. Any other failure — a timeout, a 429, a
+  // rejected query — is about the request rather than the credential, and retrying it under
+  // a different token would just repeat the same failure while burning rate limit.
+  async function authed(c, query, variables) {
+    const order = goodToken && c.tokens.includes(goodToken)
+      ? [goodToken, ...c.tokens.filter(t => t !== goodToken)] : c.tokens;
+    let rejected = null;
+    for (const t of order) {
+      const r = await graphql(t, query, variables);
+      if (r.status === 401) { if (goodToken === t) goodToken = null; rejected = r; continue; }
+      goodToken = t;
+      return r;
+    }
+    return rejected;   // every credential this server holds was rejected
   }
 
   // One request path for every Monarch GraphQL call, so headers and auth can't drift.
@@ -309,16 +371,16 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
   async function investmentPortfolio({ startDate, endDate }) {
     const c = await context();
     if (c.disabled) throw new Error('Planner sync is paused. Enable NormOS sync to resume.');
-    if (!c.token) throw new Error('Individual holdings need a direct Monarch connection. Reconnect Monarch in NormOS.');
+    if (!c.token) throw new Error(`Individual holdings ${NO_TOKEN}`);
     const ask = async (input) => {
       let response;
       try {
-        response = await graphql(c.token, HOLDINGS_QUERY, { input });
+        response = await authed(c, HOLDINGS_QUERY, { input });
       } catch (err) {
         throw new Error(err.name === 'TimeoutError' ? 'Monarch timed out returning holdings.' : 'Monarch is unreachable for holdings.');
       }
-      if (!response.ok) {
-        throw new Error(response.status === 401 ? 'Monarch session expired. Reconnect Monarch in NormOS.'
+      if (!response || !response.ok) {
+        throw new Error(!response || response.status === 401 ? EXPIRED
           : response.status === 429 ? 'Monarch is rate limiting. Try again shortly.'
           : 'Monarch could not return holdings.');
       }
@@ -338,7 +400,7 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     let body = await ask(window);
     if (body.errors) {
       logGraphqlErrors('holdings (unscoped)', body.errors);
-      const ids = await accountIds(c.token);
+      const ids = await accountIds(c);
       if (!ids.length) throw new Error('Monarch could not return holdings for this account.');
       body = await ask({ ...window, accountIds: ids });
     }
@@ -356,15 +418,15 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
   async function ask(label, query, variables) {
     const c = await context();
     if (c.disabled) throw new Error('Planner sync is paused. Enable NormOS sync to resume.');
-    if (!c.token) throw new Error(`${label} needs a direct Monarch connection. Reconnect Monarch in NormOS.`);
+    if (!c.token) throw new Error(`${label} ${NO_TOKEN}`);
     let response;
     try {
-      response = await graphql(c.token, query, variables);
+      response = await authed(c, query, variables);
     } catch (err) {
       throw new Error(err.name === 'TimeoutError' ? `Monarch timed out returning ${label}.` : `Monarch is unreachable for ${label}.`);
     }
-    if (!response.ok) {
-      throw new Error(response.status === 401 ? 'Monarch session expired. Reconnect Monarch in NormOS.'
+    if (!response || !response.ok) {
+      throw new Error(!response || response.status === 401 ? EXPIRED
         : response.status === 429 ? 'Monarch is rate limiting. Try again shortly.'
         : `Monarch could not return ${label}.`);
     }
@@ -430,7 +492,7 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     // `info` rows describe the setup without passing judgement on it — having no NormOS
     // bridge is perfectly fine when a direct token exists, and flagging it red would send
     // someone chasing a non-problem.
-    const add = (name, ok, detail, kind) => { out.checks.push({ name, ok, detail, kind: kind || 'check' }); return ok; };
+    const add = (name, ok, detail, kind, fix) => { out.checks.push({ name, ok, detail, kind: kind || 'check', fix: fix || null }); return ok; };
     let c;
     try {
       c = await context();
@@ -438,7 +500,10 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
       add('read connection settings', false, err.message);
       return out;
     }
-    add('MONARCH_TOKEN present', !!c.token, c.token ? 'a direct token is configured' : 'no token — holdings and transactions need one; balances can still come from the NormOS bridge');
+    add('Monarch session', !!c.token,
+      c.token ? `${c.tokens.length} stored ${c.tokens.length === 1 ? 'credential' : 'credentials'} to try`
+        : 'none stored — holdings and transactions need one; balances can still come from the NormOS bridge',
+      'check', c.token ? null : PASTE);
     add('balance source', true, c.remote ? 'NormOS bridge' : 'direct Monarch token', 'info');
     add('planner sync enabled', !c.disabled, c.disabled ? 'sync is paused — enable it to resume' : 'enabled');
     if (!c.token || c.disabled) return out;
@@ -446,10 +511,14 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     // Cheapest possible authenticated call: proves the token and headers, nothing else.
     let reachable = false;
     try {
-      const r = await graphql(c.token, ACCOUNT_IDS_QUERY, {});
-      reachable = add('Monarch accepts the token', r.ok,
-        r.ok ? 'authenticated' : `HTTP ${r.status}` + (r.status === 401 ? ' — the token is rejected or expired' : ''));
-      if (r.ok) {
+      const r = await authed(c, ACCOUNT_IDS_QUERY, {});
+      const ok = !!(r && r.ok);
+      reachable = add('Monarch accepts the session', ok,
+        ok ? 'authenticated' : !r || r.status === 401
+          ? `HTTP 401 — rejected or expired; every stored credential was tried (${c.tokens.length})`
+          : `HTTP ${r.status}`,
+        'check', ok ? null : PASTE);
+      if (ok) {
         const b = await r.json();
         if (b.errors) reachable = add('accounts query', false, b.errors.map(e => e && e.message).filter(Boolean).join(' | '));
         else add('accounts query', true, `${(b.data?.accounts || []).length} accounts visible`);
@@ -481,6 +550,6 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     if (!pending) pending = pull().finally(() => { pending = null; });
     return pending;
   }
-  return { status, getSnapshot, setEnabled, holdings, investmentPortfolio, transactionsPage, categories, budgets, recurring, diagnose };
+  return { status, getSnapshot, setEnabled, setToken, holdings, investmentPortfolio, transactionsPage, categories, budgets, recurring, diagnose };
 }
 module.exports = { createMonarchLive, validSnapshot, mapHoldings, mapPerformance, normaliseType, extractHoldingEdges, mapTransaction, mapBudgets, PAGE_SIZE };
