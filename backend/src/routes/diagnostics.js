@@ -480,6 +480,66 @@ function createDiagnosticsRouter() {
     }
   }));
 
+  // Replay the claim validator against an ALREADY-STORED brief.
+  //
+  // The stored chiefBriefQuality records WHICH checks fired but not the
+  // sentences that tripped them, and violations are computed in-flight during
+  // a build. So when every build comes back degraded there is no way to see
+  // what the model actually wrote that the validator rejected — short of
+  // waiting for tomorrow's build and reading logs. This re-runs the real
+  // validateChiefBriefClaims over stored text plus live canonical facts, with
+  // no LLM call, and returns the offending sentences with expected/actual.
+  //   GET /api/diag/validate-stored-brief?id=<briefingId>
+  router.get('/diag/validate-stored-brief', asyncHandler(async (req, res) => {
+    const briefingsStore = require('../store/briefings');
+    const { validateChiefBriefClaims } = require('../brain/claimValidator');
+    const { canonicalFactsFrom, canonicalSpendingMtd } = require('../brain/snapshot');
+    const tz = process.env.TZ || 'America/New_York';
+
+    const rows = await briefingsStore.listBriefings({ kind: 'daily', limit: 40 });
+    const row = req.query.id ? rows.find((r) => r.id === req.query.id) : rows[0];
+    if (!row) return res.status(404).json({ error: 'no briefing row found' });
+
+    const [recovery, effectiveWorkout, commitments, spendingMtd, experiments] = await Promise.all([
+      require('../intelligence/recovery').liveRecovery().catch(() => null),
+      require('../services/workout').getEffectiveWorkout({ tz }).catch(() => null),
+      require('../store/commitments').listActive({ limit: 20 }).catch(() => []),
+      canonicalSpendingMtd(new Date(), tz).catch(() => null),
+      require('../store/experiments').listExperiments().catch(() => []),
+    ]);
+    const facts = canonicalFactsFrom({
+      recovery, effectiveWorkout, commitments, experiments,
+      wealth: spendingMtd ? { spendingMtd } : null,
+      localDate: new Date().toLocaleDateString('en-CA', { timeZone: tz }),
+    });
+
+    const { violations, hasHighSeverity } = validateChiefBriefClaims(
+      { chiefBrief: row.content?.chiefBrief, morningFocus: row.content?.morningFocus }, facts
+    );
+    res.json({
+      briefingId: row.id,
+      generatedAt: row.generated_at,
+      storedQuality: row.content?.chiefBriefQuality?.status ?? null,
+      storedReasonCodes: row.content?.chiefBriefQuality?.reasonCodes ?? null,
+      // The facts the validator checks AGAINST — compare these against what the
+      // prompt actually told the model, which is the likeliest source of a
+      // systematic, every-single-day contradiction.
+      factsUsed: {
+        recoveryScore: facts.recoveryScore ?? null,
+        recoveryBand: facts.recoveryBand ?? null,
+        recoveryPresentationLabel: recovery?.presentation?.label ?? null,
+        effectiveWorkout: facts.effectiveWorkoutLabel ?? facts.effectiveWorkout?.label ?? null,
+        spendingMtd: facts.spendingMtd ?? null,
+      },
+      chiefBrief: row.content?.chiefBrief ?? null,
+      hasHighSeverity,
+      violations: violations.map((v) => ({
+        check: v.check, field: v.field, severity: v.severity,
+        expected: v.expected, actual: v.actual, message: v.message, sentence: v.sentence,
+      })),
+    });
+  }));
+
   // Scheduler health check — shows whether the scheduler is enabled and when
   // the morning routine will next fire (helps diagnose missing 8:30am briefings).
   // Continuous presence — is the event-driven loop armed, what is pending,
