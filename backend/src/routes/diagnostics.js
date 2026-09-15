@@ -651,17 +651,24 @@ function createDiagnosticsRouter() {
   // an endpoint that could return it would become the easiest way to leak it.
   // Length is reported because it distinguishes a real token from an empty
   // string, which is the one failure this is meant to catch.
-  //   GET /api/diag/planner-session
+  // ?id= inspects another wealth source row the same way — `monarch_mcp` holds
+  // the OAuth refresh token the working daily sync actually runs on, and
+  // comparing the two rows is what distinguishes "no session published" from
+  // "NormOS authenticates a completely different way".
+  //   GET /api/diag/planner-session[?id=monarch_mcp]
   router.get('/diag/planner-session', asyncHandler(async (req, res) => {
+    const ALLOWED = new Set(['monarch_api', 'monarch_mcp', 'monarch_mcp_sync', 'monarch']);
+    const id = ALLOWED.has(String(req.query.id || '')) ? String(req.query.id) : 'monarch_api';
     const { rows } = await db.query(
       `SELECT id, status, last_sync_at, last_error, created_at,
               (config->>'monarchToken') IS NOT NULL
                 AND length(config->>'monarchToken') > 0 AS has_token,
               coalesce(length(config->>'monarchToken'), 0) AS token_length,
               (SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys(config) AS k) AS config_keys
-         FROM sources WHERE id = 'monarch_api'`
+         FROM sources WHERE id = $1`,
+      [id]
     );
-    if (!rows[0]) return res.status(404).json({ error: 'no monarch_api source row' });
+    if (!rows[0]) return res.status(404).json({ error: `no ${id} source row` });
     const r = rows[0];
     res.json({
       id: r.id,
