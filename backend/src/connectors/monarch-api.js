@@ -49,11 +49,7 @@ module.exports = {
     // Prefer a pre-minted token (env, then cached) to avoid logging in on the
     // server — Monarch rate-limits login from datacenter IPs (429).
     let token = process.env.MONARCH_TOKEN || ctx.config?.monarchToken || null;
-    let mintedToken = null;
-    if (!token) {
-      token = await login();
-      mintedToken = token;
-    }
+    if (!token) token = await login();
 
     const fetchAll = async (tok) => {
       const txns = await getTransactions(tok, { startDate, endDate });
@@ -81,7 +77,6 @@ module.exports = {
       // weren't handed a fixed env token).
       if (err.response?.status === 401 && hasLogin && !process.env.MONARCH_TOKEN) {
         token = await login();
-        mintedToken = token;
         data = await fetchAll(token);
       } else {
         // Make 429s diagnosable: a login-stage 429 means we fell back to logging
@@ -122,7 +117,19 @@ module.exports = {
     await publishSnapshot(makeSnapshot(data.accounts, {allowMissing:true}));
 
     const metrics = dedupeMetrics([...txnMapped.metrics, ...balMapped.metrics]);
-    const config = mintedToken ? { ...(ctx.config || {}), monarchToken: mintedToken } : undefined;
+    // Publish whichever session actually worked, not only one we happened to mint.
+    //
+    // The family planner has no Monarch login of its own — it can only hold copies — and this
+    // source row is the one place a working session reaches it. Caching only MINTED tokens
+    // meant that whenever NormOS ran on a MONARCH_TOKEN of its own it never signed in, never
+    // minted, and so never published one: it shared its balances with the planner and never a
+    // credential. The planner's separate copy then expired with nothing coming to replace it,
+    // and the only cure was pasting a token in by hand — while a perfectly good session sat
+    // here in the environment, syncing every morning.
+    //
+    // No new exposure: this is the same row, database and trust boundary the planner already
+    // reads `monarchToken` from, and the same value already cached on the minting path.
+    const config = token ? { ...(ctx.config || {}), monarchToken: token } : undefined;
 
     // Reconcile the fetched window against Monarch's current truth: after the
     // fresh docs are upserted, the runner prunes any stored transaction in
