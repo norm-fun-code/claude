@@ -263,6 +263,34 @@ describe('credentials', () => {
     expect(c.detail).toMatch(/published by NormOS/i);
   });
 
+  // NormOS caches a session for the planner ONLY when it has to sign in to mint one. Running
+  // on a fixed token of its own it never signs in, so it publishes balances and never a
+  // session — and then "wait for the next NormOS sync" is advice that can never come true.
+  it('does not promise a session is coming when NormOS only publishes balances', async () => {
+    const { bridge } = server({ live: [], env: { MONARCH_TOKEN: 'stale' } });   // no dbToken
+    const d = await bridge.diagnose();
+    const c = d.checks.find(x => x.name === 'Monarch accepts the session');
+    expect(c.fix).toMatch(/nothing is coming to replace it/i);
+    expect(c.fix).not.toMatch(/normally clears/i);
+    expect(d.checks.find(x => x.name === 'Monarch session').detail).toMatch(/none of them from NormOS/i);
+  });
+
+  it('says it will clear on its own only when NormOS is actually publishing sessions', async () => {
+    const { bridge } = server({ live: [], env: { MONARCH_TOKEN: 'stale' }, dbToken: 'also-dead' });
+    const c = (await bridge.diagnose()).checks.find(x => x.name === 'Monarch accepts the session');
+    expect(c.fix).toMatch(/normally clears at its next sync/i);
+  });
+
+  it('never reports a fresh balance snapshot as though a credential had arrived', async () => {
+    // Balances an hour old beside "every credential was rejected" read as a contradiction,
+    // and sent someone to wait for a session that was never coming.
+    const { bridge } = server({ live: [], env: { MONARCH_TOKEN: 'stale' } });
+    const d = await bridge.diagnose();
+    const c = d.checks.find(x => x.name === 'Monarch accepts the session');
+    expect(c.detail).not.toMatch(/published/i);
+    expect(d.checks.find(x => x.name === 'NormOS balance sync').kind).toBe('info');
+  });
+
   it('a token pasted in at runtime is preferred over the deploy-time one', async () => {
     const { bridge, sent } = server({ live: ['fresh', 'stale'], env: { MONARCH_TOKEN: 'stale' }, stored: 'fresh' });
     await bridge.diagnose();
@@ -294,8 +322,7 @@ describe('credentials', () => {
     // "I have never had an issue in NormOS" and "the planner says the token is expired" were
     // both true at once, and the old copy told them to go and fix the half that worked.
     const { bridge } = server({ live: [], env: { MONARCH_TOKEN: 'stale' } });
-    // Says it normally fixes itself, rather than demanding to be re-credentialled by hand.
-    await expect(bridge.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/NormOS renews its own automatically/i);
+    await expect(bridge.holdings({ startDate: 'a', endDate: 'b' })).rejects.toThrow(/none is arriving on its own/i);
     await expect(bridge.holdings({ startDate: 'a', endDate: 'b' })).rejects.not.toThrow(/Reconnect Monarch in NormOS/i);
   });
 });
@@ -331,7 +358,7 @@ describe('connection diagnostics', () => {
     expect(c.detail).toMatch(/401/);
     expect(c.detail).toMatch(/rejected or expired/i);
     // …and names the remedy, not just the symptom: the old panel diagnosed it and stopped.
-    expect(c.fix).toMatch(/paste it below/i);
+    expect(c.fix).toMatch(/paste one below|paste it below/i);
   });
 
   it('surfaces the upstream GraphQL message verbatim so a schema mismatch names its field', async () => {

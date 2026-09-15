@@ -200,11 +200,16 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
   // reconnect Monarch in NormOS, which does not touch this server's copy of the session —
   // following it would leave them exactly where they started, which is why "I've never had an
   // issue in NormOS" and "the planner says the token is expired" were both true at once.
-  const EXPIRED = 'Every Monarch session the planner can reach has expired. NormOS renews its own automatically and the planner follows it, so this usually clears itself at the next NormOS sync — paste a token under Diagnose connection to fix it now instead of waiting.';
-  // The one remedy that works immediately, named on every check that fails for want of a
-  // working session, so the panel says what to DO and not only what is wrong.
-  const PASTE = 'NormOS renews its Monarch session on its own — this normally clears at its next sync, with nothing to do. To fix it now: open Monarch in a signed-in tab, copy the session token, and paste it below.';
-  const NO_TOKEN = 'needs a Monarch session. NormOS publishes one to the shared database when it syncs; until then, paste a token under Diagnose connection. The NormOS bridge itself carries only account balances.';
+  const EXPIRED = 'Every Monarch session the planner can reach has expired, and none is arriving on its own — see Diagnose connection for which credential failed and what to do.';
+  // Two different situations, and telling someone the wrong one wastes their day.
+  //
+  // NormOS caches a session for the planner ONLY when it has to sign in to mint one. Running
+  // on a fixed MONARCH_TOKEN of its own, it never signs in, so it never publishes a session —
+  // its balances stay fresh while the planner's credential quietly dies with nothing coming
+  // to replace it. Waiting is then the one thing that will not work.
+  const PASTE_NOW = 'Nothing is coming to replace it: NormOS is running on a fixed token of its own, so it never mints a session to publish here. Paste one below — open Monarch in a signed-in tab and copy the session token — or set the planner\'s MONARCH_TOKEN to the value NormOS is using.';
+  const PASTE_OR_WAIT = 'NormOS mints its own session when Monarch rejects one, and the planner follows it, so this normally clears at its next sync. To fix it now: open Monarch in a signed-in tab, copy the session token, and paste it below.';
+  const NO_TOKEN = 'needs a Monarch session, and the planner has none stored. Paste one under Diagnose connection. The NormOS bridge itself carries only account balances.';
   async function context() {
     const { rows } = await db.query("SELECT data FROM oauth_tokens WHERE key = 'monarch_bridge'");
     const local = rows[0]?.data || {};
@@ -226,6 +231,10 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     // fresh one sitting beside it and the planner asked to be re-credentialled by hand while
     // a working session was already in the database. Ahead of both sits a token pasted in
     // deliberately, because that is someone answering this exact question right now.
+    // A session NormOS has published, as distinct from balances it has published. Conflating
+    // the two is how the panel came to say "NormOS last published one in the last hour" right
+    // beside "every stored credential was rejected" — the fresh thing was the balance
+    // snapshot, and no credential had ever arrived at all.
     const fromNormOS = sources.map(s => s.token).filter(Boolean);
     const tokens = [...new Set([local.token, ...fromNormOS, env.MONARCH_TOKEN].filter(Boolean))];
     const origin = new Map();
@@ -233,7 +242,7 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     for (const t of fromNormOS) if (!origin.has(t)) origin.set(t, 'published by NormOS');
     if (env.MONARCH_TOKEN && !origin.has(env.MONARCH_TOKEN)) origin.set(env.MONARCH_TOKEN, 'the planner\'s MONARCH_TOKEN');
     return { disabled: !!local.disabled, snapshot: snapshots[0] || null, tokens, token: tokens[0] || null,
-      origin, normosSyncedAt: snapshots[0]?.asOf || null,
+      origin, normosSyncedAt: snapshots[0]?.asOf || null, normosPublishesToken: fromNormOS.length > 0,
       remote: !!(env.NORMOS_URL && env.PLANNER_BRIDGE_TOKEN) };
   }
   async function status() {
@@ -515,11 +524,16 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
       return h < 1 ? 'in the last hour' : h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
     };
     const synced = ago(c.normosSyncedAt);
+    // Which remedy applies turns entirely on whether NormOS publishes a SESSION here, not on
+    // whether it published balances. If it does not, waiting is the one thing that cannot work.
+    const FIX = c.normosPublishesToken ? PASTE_OR_WAIT : PASTE_NOW;
     add('Monarch session', !!c.token,
-      c.token ? `${c.tokens.length} stored ${c.tokens.length === 1 ? 'credential' : 'credentials'} to try`
-        + (synced ? ` · NormOS last published ${synced}` : '')
+      c.token
+        ? `${c.tokens.length} stored ${c.tokens.length === 1 ? 'credential' : 'credentials'} to try · `
+          + (c.normosPublishesToken ? 'NormOS publishes one here' : 'none of them from NormOS — it publishes balances only')
         : 'none stored — holdings and transactions need one; balances can still come from the NormOS bridge',
-      'check', c.token ? null : PASTE);
+      'check', c.token ? null : FIX);
+    add('NormOS balance sync', true, synced ? `last published ${synced}` : 'no snapshot published yet', 'info');
     add('balance source', true, c.remote ? 'NormOS bridge' : 'direct Monarch token', 'info');
     add('planner sync enabled', !c.disabled, c.disabled ? 'sync is paused — enable it to resume' : 'enabled');
     if (!c.token || c.disabled) return out;
@@ -536,9 +550,8 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
         ok ? `authenticated · using the one ${c.origin.get(goodToken) || 'stored here'}`
           : !r || r.status === 401
             ? `HTTP 401 — rejected or expired; every stored credential was tried (${c.tokens.length})`
-              + (synced ? `. NormOS last published one ${synced}` : '')
             : `HTTP ${r.status}`,
-        'check', ok ? null : PASTE);
+        'check', ok ? null : FIX);
       if (ok) {
         const b = await r.json();
         if (b.errors) reachable = add('accounts query', false, b.errors.map(e => e && e.message).filter(Boolean).join(' | '));
