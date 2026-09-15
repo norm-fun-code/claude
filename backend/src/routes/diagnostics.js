@@ -568,6 +568,19 @@ function createDiagnosticsRouter() {
     if (!prior) return res.status(404).json({ error: 'no prior daily briefing to build context from' });
 
     const ctx = await buildQuickChiefBriefContext(prior);
+    // ?full=1 builds the facts the way the SCHEDULED MORNING build does — from
+    // a real BrainSnapshot — rather than the way the scoped ↻ rebuild does.
+    // That distinction is the whole point: the two paths derive `wealth`
+    // differently, so the morning build can carry a canonical MTD total while
+    // the scoped rebuild carries null (which makes checkSpending silently
+    // skip). Reproducing the morning build's facts is the only way to see a
+    // morning-only degrade without waiting for tomorrow.
+    const full = req.query.full === '1';
+    let brainSnapshot = null;
+    if (full) {
+      const { buildBrainSnapshot } = require('../brain/snapshot');
+      brainSnapshot = await buildBrainSnapshot({ asOf: new Date(), tz }).catch(() => null);
+    }
     const [recovery, effectiveWorkout, commitments, spendingMtd, experiments] = await Promise.all([
       require('../intelligence/recovery').liveRecovery().catch(() => null),
       require('../services/workout').getEffectiveWorkout({ tz }).catch(() => null),
@@ -575,10 +588,13 @@ function createDiagnosticsRouter() {
       canonicalSpendingMtd(new Date(), tz).catch(() => null),
       require('../store/experiments').listExperiments().catch(() => []),
     ]);
+    const wealthForFacts = full && brainSnapshot
+      ? brainSnapshot.wealth?.value ?? null
+      : (spendingMtd ? { spendingMtd } : null);
     const facts = canonicalFactsFrom({
       recovery, effectiveWorkout, commitments, experiments,
       goals: ctx.liveGoals ?? [],
-      wealth: spendingMtd ? { spendingMtd } : null,
+      wealth: wealthForFacts,
       localDate: new Date().toLocaleDateString('en-CA', { timeZone: tz }),
     });
 
@@ -599,11 +615,19 @@ function createDiagnosticsRouter() {
       // VALIDATOR checks against. A mismatch between these two is the single
       // most likely cause of a contradiction that repeats every single day.
       promptRecoveryContext: ctx.recoveryContext ?? null,
+      factsMode: full ? 'full-build (BrainSnapshot)' : 'scoped-rebuild',
       factsChecked: {
         recoveryScore: facts.recoveryScore ?? null,
         recoveryBand: facts.recoveryBand ?? null,
-        spendingMtd: facts.spendingMtd ?? null,
+        // THE number checkSpending compares every cited dollar figure against.
+        spendingTotalMonth: facts.spendingTotalMonth ?? null,
       },
+      // What the PROMPT tells the model about spending, beside the number the
+      // validator checks. Every claim violation is ultimately the model
+      // repeating the prompt and the validator disagreeing with it, so these
+      // two belong side by side.
+      promptSpendingContext: ctx.spendingContext ?? null,
+      canonicalSpendingMtd: spendingMtd ?? null,
       quality: q && {
         status: q.status, reasonCodes: q.reasonCodes, fallbackFields: q.fallbackFields,
         violatedChecks: q.violatedChecks, neutralizedFields: q.neutralizedFields,
