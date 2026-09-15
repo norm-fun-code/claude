@@ -84,7 +84,26 @@
 
   function migrateP(raw){
     if(!raw||typeof raw!=='object')return raw;
-    return migrateObservedOn(migrateChildcare(migrateCompSplit(migrateYearKeys(raw))));
+    return simplifyStripe(migrateObservedOn(migrateChildcare(migrateCompSplit(migrateYearKeys(raw)))));
+  }
+
+  // Convert the currently effective compensation once, retaining the old ledger for recovery.
+  function simplifyStripe(p){
+    if(p.stripeSimplified)return p;
+    const G=typeof module!=='undefined'&&module.exports?require('./stripe-grants.js'):root.StripeGrants;
+    const out={...p,stripeSimplified:true}, c=p.stripeGrants;
+    if(!c)return out;
+    out.stripeGrants={...c,enabled:false,legacyGrantEnabled:!!c.enabled};
+    if(!c.enabled)return out;
+    const M=typeof module!=='undefined'&&module.exports?require('./model.js'):root;
+    const ledger=G.compile(p), sy=p.planStartYear||2026;
+    out.stripeManualLater={...p.stripeManualLater};
+    for(let y=sy;y<=(p.planEndYear||2058);y++){
+      const n=M.normComp(p,y-sy,ledger);
+      if(y-sy<11){out['normCashY'+(y-sy)]=n.cash;out['normStockY'+(y-sy)]=n.stock;}
+      else out.stripeManualLater[y]={cash:n.cash,stock:n.stock};
+    }
+    return out;
   }
 
   // When were these opening balances true? Every plan written before this existed answered
@@ -111,10 +130,10 @@
   // so each one has to shift in lockstep or it would silently re-point at the wrong year.
   function rollForwardParams(P){
     const out={...P};
-    if(P.stripeGrants?.enabled){
+    if(P.stripeGrants?.enabled||(P.stripeSimplified&&P.stripeGrants?.referenceTender>0)){
       const G=typeof module!=='undefined'&&module.exports?require('./stripe-grants.js'):root.StripeGrants;
       const c=JSON.parse(JSON.stringify(P.stripeGrants)), sy=P.planStartYear||2026;
-      const ledger=G.compile(P), next=ledger.prices[sy+1];
+      const ledger={prices:G.pricePath(P,sy-2,(P.planEndYear||2058)+1)}, next=ledger.prices[sy+1];
       for(let y=sy-2;y<=(P.planEndYear||2058)+1;y++)c.years[y]={...G.award(P,y),...c.years[y]};
       for(let y=sy-2;y<=sy;y++){const pr=ledger.prices[y];c.prices[y]={...c.prices[y],tender:pr.tender,grant:pr.grant,valuation:pr.valuation,q409a:pr.q409a,vestFMV:pr.vestFMV};}
       c.reference409a=next.tender*(c.reference409a/c.referenceTender);
@@ -130,6 +149,8 @@
     // already projects for it, so the roll introduces no discontinuity.
     out['normCashY'+last]=Math.round((P['normCashY'+last]??275000)*(1+(P.normGrowth??0.01)));
     out['normStockY'+last]=Math.round((P['normStockY'+last]??150000)*(1+(P.normStockGrowth??P.normGrowth??0.01)));
+    const incoming=P.stripeManualLater?.[(P.planStartYear||2026)+11];
+    if(incoming){out['normCashY'+last]=incoming.cash;out['normStockY'+last]=incoming.stock;}
     // Stripe return assumptions are also indexed off the start year; the vacated final slot
     // inherits the long-term rate, which is what that year would have used anyway.
     for(let i=0;i<STRIPE_RET_YEARS-1;i++)out['stripeRetY'+i]=P['stripeRetY'+(i+1)];
@@ -148,7 +169,7 @@
     return out;
   }
 
-  const api={migrateP,rollForwardParams,migrateYearKeys,migrateCompSplit,migrateChildcare,migrateObservedOn,NORM_YEARS,STRIPE_RET_YEARS};
+  const api={simplifyStripe,migrateP,rollForwardParams,migrateYearKeys,migrateCompSplit,migrateChildcare,migrateObservedOn,NORM_YEARS,STRIPE_RET_YEARS};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlanMigrate=api;
 })(typeof window!=='undefined'?window:this);

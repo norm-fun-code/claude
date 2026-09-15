@@ -191,6 +191,8 @@
     const c={...out.stripeGrants};
     for(const k of FACT_KEYS)if(Object.prototype.hasOwnProperty.call(live,k))c[k]=clone(live[k]);
     if(c.manualComp===undefined&&live.manualComp)c.manualComp=clone(live.manualComp);
+    // Old cases must be converted using their own award assumptions before disabling grants.
+    if(!out.stripeSimplified&&live.legacyGrantEnabled)c.enabled=true;
     out.stripeGrants=c;
     return out;
   }

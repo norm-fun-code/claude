@@ -48,7 +48,7 @@
   // lands each quarter and becomes eligible from that quarter onward.
   function saleWindows(year,{heldValue=0,vestPerQuarter=0,vestByQuarter=null}={},p){
     const c=cfg(p);
-    if(p?.stripeGrants?.enabled){c.electiveCashPerQuarter=0;c.electiveCashAnnualCap=0;}
+    if((p?.stripeGrants?.enabled||p?.stripeSimplified)){c.electiveCashPerQuarter=0;c.electiveCashAnnualCap=0;}
     const free=freelyLiquid(year,p);
     const out=[];
     let eligible=heldValue;          // stock that could be sold, growing as vests land
@@ -59,15 +59,15 @@
       if(free){
         out.push({quarter:q,kind:'open',cap:eligible,
           note:'a liquidity event has occurred, so stock is freely sellable'});
-        if(p?.stripeGrants?.enabled)eligible=0;
+        if((p?.stripeGrants?.enabled||p?.stripeSimplified))eligible=0;
         continue;
       }
       const isTender=c.tenderQuarters.includes(q);
       if(isTender){
         // In grant mode the Q1 tender is February, before the March vest.
-        const available=p?.stripeGrants?.enabled&&q===1?beforeVest:eligible;
+        const available=(p?.stripeGrants?.enabled||p?.stripeSimplified)&&q===1?beforeVest:eligible;
         const cap=c.tenderCapPerEvent==null?available:Math.min(available,c.tenderCapPerEvent);
-        if(p?.stripeGrants?.enabled)eligible-=cap;
+        if((p?.stripeGrants?.enabled||p?.stripeSimplified))eligible-=cap;
         out.push({quarter:q,kind:'tender',cap,
           note:c.tenderCapPerEvent==null
             ?'tender window — uncapped, limited only by vested stock'

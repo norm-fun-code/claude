@@ -198,6 +198,10 @@ function normComp(p,yIdx,ledger){
     return {cash:Math.max(0,base-grantEngine.award(p,yr).cashAlreadyIncluded)+eq.cash,stock:eq.stock,qcaCash:eq.cash};
   }
   if(yIdx<NORM_COMP_YEARS)return{cash:cashAt(yIdx),stock:stockAt(yIdx)};
+  const year=(p.planStartYear||2026)+yIdx, entries=p.stripeManualLater||{};
+  if(entries[year])return {...entries[year]};
+  const prior=Object.keys(entries).map(Number).filter(y=>y<year&&y>(p.planStartYear||2026)+last).sort((a,b)=>b-a)[0];
+  if(prior!=null)return {cash:entries[prior].cash*(1+(p.normGrowth??.01))**(year-prior),stock:entries[prior].stock*(1+(p.normStockGrowth??p.normGrowth??.01))**(year-prior)};
   const n=yIdx-last;
   return{
     cash:cashAt(last)*(1+(p.normGrowth??0.01))**n,
@@ -432,6 +436,7 @@ function run(p,rets,compiledGrants){
   let tSNew=0,tSSold=0,tSRet=0,tSHold=0,tSGainTax=0;
   const R=[];
   const grantLedger=grantEngine.active(p)?(compiledGrants||grantEngine.compile(p)):null;
+  const simplePrices=p.stripeSimplified&&p.stripeGrants?.referenceTender>0?grantEngine.pricePath(p,sy-1,ey+1):null;
   for(let yr=sy;yr<=ey;yr++){
     const nk=kids.filter(k=>yr>=k).length;
     const yIdx=yr-sy;
@@ -537,7 +542,7 @@ function run(p,rets,compiledGrants){
     // real cash outflow) is the gap the retention policy decides how to close.
     const dpThis=(yr===p.homePurchaseYear)?cashToClose(p.homePrice,p).total:0;
     const netCash=surp-dpThis;
-    const sr=grantLedger?grantLedger.prices[yr+1].tender/grantLedger.prices[yr].tender-1:stripeReturn(p,yIdx);
+    const sr=grantLedger?grantLedger.prices[yr+1].tender/grantLedger.prices[yr].tender-1:simplePrices?simplePrices[yr+1].tender/simplePrices[yr].tender-1:stripeReturn(p,yIdx);
     const gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate;
     // A negative balance is an unfunded shortfall, not a leveraged position. Compounding it
     // at the portfolio's expected return would model an unlimited margin loan accruing at
@@ -548,7 +553,7 @@ function run(p,rets,compiledGrants){
     const liquidityModule=typeof module!=='undefined'&&module.exports?require('./liquidity.js'):window.PlannerLiquidity;
     const marketNet=eqYear?eqYear.market*(1-vestRate):normStockNet;
     const vestByQuarter=eqYear?Array.from({length:4},(_,q)=>futureEvents.filter(e=>e.quarter===q+1).reduce((s,e)=>s+e.market*(1-vestRate),0)):null;
-    const markRate=grantLedger&&yIdx>0?grantLedger.prices[yr].tender/grantLedger.prices[yr-1].tender-1:0;
+    const markRate=yIdx>0?(grantLedger?grantLedger.prices[yr].tender/grantLedger.prices[yr-1].tender-1:simplePrices?simplePrices[yr].tender/simplePrices[yr-1].tender-1:0):0;
     const saleBudget=liquidityModule.raisableInYear(yr,{heldValue:lotsValue(lots)*(1+markRate),vestPerQuarter:normStockNet/4,vestByQuarter},p);
     // Only the vests still AHEAD of the observation date are in play. The ones that already
     // landed were sold or kept months ago, and either way their effect is inside the opening
@@ -573,7 +578,7 @@ function run(p,rets,compiledGrants){
     // The Feb-yr tender: everything carried in from last year is re-marked by LAST year's
     // return. Year 0 gets none — the opening balance is already the most recent mark, and
     // the next tender falls in the following row.
-    const marked=grantLedger?markRate:(yIdx>0?stripeReturn(p,yIdx-1):0);
+    const marked=grantLedger?markRate:(yIdx>0?(simplePrices?simplePrices[yr].tender/simplePrices[yr-1].tender-1:stripeReturn(p,yIdx-1)):0);
     const stripePreGrowth=lotsValue(lots);
     if(marked)for(const L of lots)L.v*=(1+marked);
     const stripeAppr=lotsValue(lots)-stripePreGrowth;
