@@ -433,6 +433,53 @@ function createDiagnosticsRouter() {
     }
   });
 
+  // Chief-brief call probe — exercises the EXACT option set the real
+  // chief-brief generation uses (Structured Outputs + adaptive thinking +
+  // the pinned chief model), which /diag/gemini deliberately does not.
+  //
+  // Reason this exists: when every morning brief comes back `degraded` with
+  // all four fields replaced by grounded fallbacks, the generation call is
+  // failing — but /diag/gemini keeps reporting the provider healthy, because
+  // a plain generateText() call really IS healthy. The difference is the
+  // options. Without this probe the only way to see the real error is
+  // reading server logs, which is not available from a phone at 8am.
+  //   GET /api/diag/chief-brief-call
+  router.get('/diag/chief-brief-call', asyncHandler(async (req, res) => {
+    const t0 = Date.now();
+    const ai = require('../services/briefing-ai');
+    const cfg = ai.chiefCallConfig();
+    try {
+      const out = await llm.generateText({
+        system: 'Return only JSON matching the schema.',
+        prompt: 'Produce a one-line chief-of-staff brief for a person whose recovery is 50/100 (yellow) with a Recovery + Mobility session planned.',
+        maxTokens: cfg.maxTokens,
+        model: cfg.model,
+        outputSchema: cfg.schema,
+        effort: cfg.effort,
+        provider: 'anthropic',
+        returnMeta: true,
+      });
+      const text = typeof out === 'string' ? out : out.text;
+      let parsed = null;
+      let parseError = null;
+      try { parsed = JSON.parse(text); } catch (e) { parseError = e.message; }
+      res.json({
+        ok: !parseError, ms: Date.now() - t0, config: { model: cfg.model, effort: cfg.effort, maxTokens: cfg.maxTokens },
+        stopReason: typeof out === 'string' ? null : out.stopReason,
+        replyLen: text ? text.length : 0,
+        parsedKeys: parsed ? Object.keys(parsed) : null,
+        parseError,
+      });
+    } catch (err) {
+      res.json({
+        ok: false, ms: Date.now() - t0, config: { model: cfg.model, effort: cfg.effort, maxTokens: cfg.maxTokens },
+        errorName: err?.constructor?.name || null,
+        status: err.response?.status ?? err.status ?? null,
+        error: (err.response?.data?.error?.message || err.message || '').slice(0, 500),
+      });
+    }
+  }));
+
   // Scheduler health check — shows whether the scheduler is enabled and when
   // the morning routine will next fire (helps diagnose missing 8:30am briefings).
   // Continuous presence — is the event-driven loop armed, what is pending,
@@ -821,6 +868,17 @@ function createDiagnosticsRouter() {
         isPublishableRow: briefingsStore.isPublishableRow(c),
         chiefBriefStale: c.chiefBriefStale ?? null,
         qualityStatus: c.chiefBriefQuality?.status ?? null,
+        // WHY it came out degraded. Without these, a run of degraded builds is
+        // indistinguishable between "the generation call failed" and "the
+        // claim validator rejected every field" — two completely different
+        // faults with identical symptoms on the card. `failedAttempt` names
+        // the generation failure mode (refusal / max_tokens / parse / shape /
+        // network) when that was the cause.
+        qualityReasonCodes: c.chiefBriefQuality?.reasonCodes ?? null,
+        qualityFallbackFields: c.chiefBriefQuality?.fallbackFields ?? null,
+        qualityNeutralizedFields: c.chiefBriefQuality?.neutralizedFields ?? null,
+        qualityViolatedChecks: c.chiefBriefQuality?.violatedChecks ?? null,
+        qualityFailedAttempt: c.chiefBriefQuality?.failedAttempt ?? null,
         publishTier: c.publishTier ?? null,
         tierForStoredContent: tierForStoredContent(c),
         tierIsPublishable: isPublishableTier(tierForStoredContent(c)),

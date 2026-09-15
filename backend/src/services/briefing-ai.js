@@ -952,7 +952,20 @@ function filterActionableEmails(emails) {
   });
 }
 
+/** The EXACT option set the chief-brief call uses, exposed so a diagnostic can
+ *  reproduce it without duplicating (and drifting from) these values. Every
+ *  field here is the same constant the real call passes. */
+function chiefCallConfig() {
+  return {
+    model: CHIEF_MODEL,
+    effort: CHIEF_EFFORT,
+    maxTokens: chiefInitialMaxTokens(),
+    schema: CHIEF_JSON_SCHEMA,
+  };
+}
+
 module.exports = {
+  chiefCallConfig,
   generateBriefing, generateChiefBrief, generateWisdomInsights,
   buildChiefBriefPrompt, buildWisdomPrompt, extractJson,
   findFalseGoalCompletions, rewriteFalseGoalCompletions,
