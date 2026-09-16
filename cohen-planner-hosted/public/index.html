@@ -1488,19 +1488,34 @@ function toggleExpRow(yr){
   if(_expOpenYears.has(yr))_expOpenYears.delete(yr);else _expOpenYears.add(yr);
   render();
 }
+// The labels for the twelve lines inside living. LIV_KEYS owns the ORDER; this owns how each
+// one reads. A key with no label here would still render — as its own key — rather than
+// vanishing, because a line silently missing from a breakdown is how a total stops adding up.
+const LIV_LABEL={groceries:'Groceries',dining:'Dining',shopping:'Shopping',vacations:'Vacations',
+  auto:'Auto',insurance:'Insurance',misc:'Misc',entertainment:'Entertainment',charity:'Charity',
+  medical:'Medical',transit:'Transit',utilities:'Utilities & phone'};
 function expDetailRow(r,span,stub){
-  const part=(label,v,note)=>v?`<div class="exp-part"><span title="${advEscape(note||'')}">${label}</span><strong>${fmt(v)}</strong></div>`:'';
+  // A zero component shows as a dash rather than disappearing: a year with no tuition read
+  // as a year whose breakdown was missing a line, which is the opposite of the point.
+  const part=(label,v,note,cls)=>`<div class="exp-part${cls?' '+cls:''}"><span${note?` title="${advEscape(note)}"`:''}>${label}</span><strong${v?'':' class="exp-zero"'}>${v?fmt(v):'—'}</strong></div>`;
   const signed=v=>(v>0?'+':'−')+fmt(Math.abs(v));
+  const keys=typeof LIV_KEYS!=='undefined'?LIV_KEYS:Object.keys(r.livParts||{});
+  const lp=r.livParts||{};
+  const livRows=keys.filter(k=>lp[k]).sort((a,b)=>lp[b]-lp[a]);
   return `<tr class="exp-detail"><td colspan="${span}"><div class="exp-detail-in">
     <div class="exp-parts">
       ${part('Housing',r.h,'Rent, or mortgage + property tax + insurance + maintenance once the home is bought')}
-      ${part('Living',r.liv,'Groceries, dining, shopping, vacations, transit, utilities, charity, medical and misc, including each child\'s share')}
-      ${part('Childcare',r.cc,'')}
-      ${part('Tuition',r.tu,r.kiy?`${r.kiy} ${r.kiy===1?'kid':'kids'} in school`:'')}
+      ${part('Living',r.liv,'Everyday spending — opened out below, including each child\'s share')}
+      ${part('Childcare',r.cc,'A flat monthly rate per child, from birth until school starts')}
+      ${part('Tuition',r.tu,r.kiy?`${r.kiy} ${r.kiy===1?'kid':'kids'} in school`:'No child is in school this year')}
       ${r.eAdj?`<div class="exp-part"><span title="A one-off for this year alone — not inflated, not repeated">One-off</span><strong style="color:var(--a)">${signed(r.eAdj)}</strong></div>`:''}
-      <div class="exp-part exp-part-total"><span>Total</span><strong>${fmt(r.totE)}</strong></div>
+      ${part('Total',r.totE,'','exp-part-total')}
     </div>
-    <p>${stub?`${r.yr} is a part year — this covers the ${Math.round(r.stubFrac*100)}% still ahead of the opening date. The whole year costs ${fmt(r.totEFull)}.`:'These are the four components the engine sums; they add to the total exactly.'}${r.ptax?` Property tax within housing: ${fmt(r.ptax)}.`:''}</p>
+    ${livRows.length?`<div class="exp-liv">
+      <div class="exp-liv-head">Inside living · ${fmt(r.liv)}, largest first</div>
+      <div class="exp-liv-grid">${livRows.map(k=>`<div><span>${advEscape(LIV_LABEL[k]||k)}</span><strong>${fmt(lp[k])}</strong></div>`).join('')}</div>
+    </div>`:''}
+    <p>${stub?`${r.yr} is a part year — this covers the ${Math.round(r.stubFrac*100)}% still ahead of the opening date. The whole year costs ${fmt(r.totEFull)}.`:'Every figure here is summed from the ones beneath it, so the parts add to the total exactly.'}${r.ptax?` Property tax within housing: ${fmt(r.ptax)}.`:''}</p>
   </div></td></tr>`;
 }
 function expAdjSet(year,val){

@@ -290,6 +290,12 @@ function yearRemaining(p){
   return Math.min(1,Math.max(0,(end-on)/(end-start)));
 }
 
+// The twelve lines inside "living", in the order they are read. Named here rather than at
+// each call site, because a surface that invented its own order would put charity beside
+// groceries in one place and not another.
+const LIV_KEYS=['groceries','dining','shopping','vacations','auto','insurance',
+  'misc','entertainment','charity','medical','transit','utilities'];
+
 // ── One-off spending, in the year it happens ─────────────────────────────────
 // Everything else on the expense side is a LEVEL or a RATE: a monthly rent, a grocery
 // baseline, an inflation assumption. All of them apply to every year, so there was no way to
@@ -546,7 +552,15 @@ function run(p,rets,compiledGrants){
     let ch=p.baseCharity*inf,md=p.baseMedical*inf,tr=p.baseTransit*inf,ut=p.baseUtilsPhoneNet*inf;
     if(sub){au+=p.suburbAutoBoost*inf;ins+=p.suburbInsBoost*inf;ut+=p.suburbUtilBoost*inf;tr*=.4}
     for(const kb of kids){if(yr<kb)continue;const a=yr-kb,c=kidCost(a);gr+=c.g*inf;di+=c.d*inf;sh+=c.s*inf;md+=c.m*inf;mi+=c.x*inf;en+=c.e*inf;va+=c.v*inf}
-    let liv=gr+di+sh+va+au+ins+mi+en+ch+md+tr+ut;
+    // Living is twelve things, and reporting only their sum meant the largest line on the
+    // expense side was the one nobody could see inside. Kept as parts from here on: each is
+    // scaled and rounded on its own, and the total is their SUM — so the figures printed
+    // beneath the heading add up to the heading, which is the rule everywhere else here.
+    const livRaw={groceries:gr,dining:di,shopping:sh,vacations:va,auto:au,insurance:ins,
+      misc:mi,entertainment:en,charity:ch,medical:md,transit:tr,utilities:ut};
+    const roundParts=(o,f)=>{const out={};for(const k of LIV_KEYS)out[k]=Math.round(o[k]*f);return out};
+    const sumParts=o=>LIV_KEYS.reduce((t,k)=>t+o[k],0);
+    let liv=sumParts(roundParts(livRaw,1));
     // Childcare — a single flat monthly rate from birth through the year before yeshiva
     // starts (previously modeled 3 separate phases: nanny hourly rate at birth, nanny
     // hourly through a configurable end-age, then daycare-or-continued-nanny depending on
@@ -566,8 +580,11 @@ function run(p,rets,compiledGrants){
     // rather than recovered by dividing totE by stubFrac downstream: that division is off by
     // the rounding on four components, and a total that disagrees with the year beside it by
     // a few hundred dollars is exactly the kind of thing this table exists to rule out.
+    const livFullParts=roundParts(livRaw,1);
     const hFull=h,livFull=liv,ccFull=cc;
-    if(stub<1){h*=stub;liv*=stub;cc*=stub}
+    if(stub<1){h*=stub;cc*=stub}
+    const livParts=stub<1?roundParts(livRaw,stub):livFullParts;
+    liv=sumParts(livParts);
     tC+=cc;
     let tu=0;
     for(let ki=0;ki<kids.length;ki++){
@@ -705,7 +722,7 @@ function run(p,rets,compiledGrants){
     R.push({yr,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
-      liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
+      liv:Math.round(liv),livParts,livFullParts,cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
       // What the WHOLE calendar year costs, stub or not. On a full year it equals totE.
       totEFull,
       surp:Math.round(surp),
@@ -996,7 +1013,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_KEYS,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

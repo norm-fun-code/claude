@@ -253,3 +253,58 @@ describe('the breakdown row inside a scrolling table', () => {
     expect(css).toMatch(/\.exp-part-total\{padding-left:0;border-left:0;grid-column:1\/-1/);
   });
 });
+
+// ── Inside living ───────────────────────────────────────────────────────────
+// Living is twelve lines and usually the largest of the four, so handing over only its sum
+// was the same defect one level down: a total nobody can see inside.
+describe('living opens out into its twelve lines', () => {
+  const P = plan();
+
+  it('sums to the living total exactly, in every year of the plan', () => {
+    // Each part is scaled and rounded on its own and the total is their SUM, rather than the
+    // total being rounded separately — otherwise the figures printed under a heading differ
+    // from the heading by a dollar or two, which is how a reader learns not to trust any of it.
+    for (const obs of [null, '2026-09-16']) {
+      for (const r of M.run(plan({ observedOn: obs })).R) {
+        expect(M.LIV_KEYS.reduce((s, k) => s + r.livParts[k], 0)).toBe(r.liv);
+        expect(r.h + r.liv + r.cc + r.tu + r.eAdj).toBe(r.totE);
+      }
+    }
+  });
+
+  it('covers every line the engine actually adds up', () => {
+    expect(M.LIV_KEYS).toEqual(['groceries', 'dining', 'shopping', 'vacations', 'auto',
+      'insurance', 'misc', 'entertainment', 'charity', 'medical', 'transit', 'utilities']);
+    expect(Object.keys(yr(P, 2027).livParts).sort()).toEqual([...M.LIV_KEYS].sort());
+  });
+
+  it('scales with the stub year, like the total it belongs to', () => {
+    const full = yr(plan({ observedOn: null }), 2026);
+    const stub = yr(plan({ observedOn: '2026-09-16' }), 2026);
+    expect(stub.livParts.groceries).toBeLessThan(full.livParts.groceries);
+    expect(stub.liv).toBe(M.LIV_KEYS.reduce((s, k) => s + stub.livParts[k], 0));
+    // …and the unscaled parts are kept too, for the full-year question.
+    expect(M.LIV_KEYS.reduce((s, k) => s + stub.livFullParts[k], 0)).toBe(full.liv);
+  });
+
+  it('reaches the advisor as well as the table', () => {
+    const e = T.getProjection({ P, from: 2027, to: 2027 }).years[0].expenses;
+    expect(Object.values(e.livingBreakdown).reduce((a, b) => a + b, 0)).toBe(e.living);
+    expect(T.getProjection({ P, from: 2027, to: 2027 }).notes.expenses)
+      .toMatch(/livingBreakdown sums to living the same way/);
+  });
+
+  it('is labelled in the UI from the engine\'s own order, and an unlabelled key still shows', () => {
+    // A key present in the engine but missing from the label map must render as itself, not
+    // vanish — a line silently dropped from a breakdown is how a total stops adding up.
+    expect(html).toContain("const keys=typeof LIV_KEYS!=='undefined'?LIV_KEYS:Object.keys(r.livParts||{});");
+    expect(html).toContain('${advEscape(LIV_LABEL[k]||k)}');
+    for (const k of M.LIV_KEYS) expect(html).toMatch(new RegExp(`${k}:'`));
+  });
+
+  it('shows a zero component as a dash rather than dropping the line', () => {
+    // A year with no tuition read as a breakdown that was missing one, which is the opposite
+    // of what opening it is for.
+    expect(html).toContain('<strong${v?\'\':\' class="exp-zero"\'}>${v?fmt(v):\'—\'}</strong>');
+  });
+});

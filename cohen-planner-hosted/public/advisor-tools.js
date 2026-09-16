@@ -181,7 +181,11 @@
           cashAvailable:r.inc,normCash:r.normCash,normStock:r.normStock,nancyGross:r.nancyG},
         // The four components and the one-off, which SUM to total — exactly, because the
         // engine sums the rounded parts rather than rounding the raw sum.
-        expenses:{housing:r.h,living:r.liv,childcare:r.cc,tuition:r.tu,
+        expenses:{housing:r.h,living:r.liv,
+          // Living is twelve lines and it is usually the largest of the four. Handing over
+          // only its sum is the same defect one level down: a total nobody can see inside.
+          livingBreakdown:r.livParts||undefined,
+          childcare:r.cc,tuition:r.tu,
           oneOffAdjustment:r.eAdj||0,total:r.totE,
           fullYearTotal:r.totEFull,
           kidsInSchool:r.kiy,propertyTaxWithinHousing:r.ptax},
@@ -191,7 +195,7 @@
         stripe:{soldForCash:r.sSold,retained:r.sRet,shareOfNetWorth:r.sPct},
       })),
       notes:{
-        expenses:'housing + living + childcare + tuition + oneOffAdjustment = total, exactly. Housing is rent, or mortgage + property tax + insurance + maintenance once the home is bought. Living is groceries, dining, shopping, vacations, transit, utilities, charity, medical and misc, including each child\'s share.',
+        expenses:'housing + living + childcare + tuition + oneOffAdjustment = total, exactly, and livingBreakdown sums to living the same way. Housing is rent, or mortgage + property tax + insurance + maintenance once the home is bought. Living is opened out in livingBreakdown — groceries, dining, shopping, vacations, auto, insurance, misc, entertainment, charity, medical, transit and utilities — each already including that year\'s share for every child.',
         oneOffAdjustment:'A signed dollar amount for that single year (expenseAdjY0…Y10), for a one-time cost like a baby\'s first year or a renovation. It is not inflated and not spread across the year.',
         fullYearTotal:'What the whole calendar year costs. It differs from total only in a stub year, where total covers just the months the plan models.',
         cashGap:'Shortfall against CASH pay alone — how much of that year\'s vest must be sold. Closing it consumes no accumulated wealth. Never call it a deficit.',
