@@ -452,56 +452,62 @@ app.get('/api/monarch/sync/status', requireAuth, async (req, res) => {
 
 // Classified, aggregated spending. The accounting lives in public/spending.js and runs the
 // same code the browser would, so server and client can never disagree about what a
-// transfer is.
+// transfer is — and one code path serves both readers of the ledger, the Spending tab and
+// the advisor's get_spending tool, so they cannot disagree about coverage either.
+async function spendingReport({ startDate, endDate, committed } = {}) {
+  const [ledger, categories, status, meta] = await Promise.all([
+    monarchSync.ledger({ startDate, endDate }),
+    monarchSync.localCategories(),
+    monarchSync.status(),
+    loadAccountMeta(),
+  ]);
+  // Account classes let the classifier see the DESTINATION of a transfer. Money arriving
+  // in a non-cash account is saving; without this every contribution filed under a generic
+  // "Transfer" category vanishes into the transfer bucket.
+  const accountClasses = {};
+  try {
+    const snap = await monarchLive.getSnapshot();
+    const MA = require('./monarch-accounts');
+    for (const a of snap.accounts || []) {
+      const id = a.id != null ? String(a.id) : null;
+      if (!id) continue;
+      accountClasses[id] = Accounts.classifyAccount({
+        id, name: a.displayName || a.name || '', institution: a.institution || '',
+        category: a.category || '', subtype: a.subtype || '',
+        balance: MA.parseBalance(MA.rawBalanceOf(a)),
+      }, meta.merged).cls;
+    }
+  } catch (e) { /* balances unavailable: fall back to name-based classification only */ }
+  const summary = Spending.summarize(ledger, categories, { accountClasses });
+  const cov = Spending.coverage(summary.months, endDate, status.windows || {});
+  // Discretionary pace. Computed here rather than in the browser because it needs the
+  // raw dated ledger, not the monthly rollup — comparing to "typical at this point"
+  // means comparing to the same DAY of prior months, which a monthly total cannot do.
+  const catIndex = Spending.indexCategories(categories);
+  const pace = Pace.pace(ledger, catIndex, {
+    asOf: endDate,
+    classify: t => Spending.classify(t, catIndex, { accountClasses }),
+    committedCategories: committed,
+  });
+  return {
+    startDate, endDate, status, coverage: cov, pace,
+    months: summary.months.map(m => ({ ...m, byCategory: undefined })),
+    totals: summary.totals, counts: summary.counts,
+    rolling: {
+      m3: Spending.rollingAverage(summary.months, 3, null, endDate, status.windows || {}),
+      m6: Spending.rollingAverage(summary.months, 6, null, endDate, status.windows || {}),
+      m12: Spending.rollingAverage(summary.months, 12, null, endDate, status.windows || {}),
+    },
+  };
+}
+
 app.get('/api/monarch/spending', requireAuth, async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
     const endDate = req.query.end || today;
     const startDate = req.query.start || new Date(Date.now() - (Number(req.query.months) || 12) * 30.44 * 864e5).toISOString().slice(0, 10);
-    const [ledger, categories, status, meta] = await Promise.all([
-      monarchSync.ledger({ startDate, endDate }),
-      monarchSync.localCategories(),
-      monarchSync.status(),
-      loadAccountMeta(),
-    ]);
-    // Account classes let the classifier see the DESTINATION of a transfer. Money arriving
-    // in a non-cash account is saving; without this every contribution filed under a generic
-    // "Transfer" category vanishes into the transfer bucket.
-    const accountClasses = {};
-    try {
-      const snap = await monarchLive.getSnapshot();
-      const MA = require('./monarch-accounts');
-      for (const a of snap.accounts || []) {
-        const id = a.id != null ? String(a.id) : null;
-        if (!id) continue;
-        accountClasses[id] = Accounts.classifyAccount({
-          id, name: a.displayName || a.name || '', institution: a.institution || '',
-          category: a.category || '', subtype: a.subtype || '',
-          balance: MA.parseBalance(MA.rawBalanceOf(a)),
-        }, meta.merged).cls;
-      }
-    } catch (e) { /* balances unavailable: fall back to name-based classification only */ }
-    const summary = Spending.summarize(ledger, categories, { accountClasses });
-    const cov = Spending.coverage(summary.months, endDate, status.windows || {});
-    // Discretionary pace. Computed here rather than in the browser because it needs the
-    // raw dated ledger, not the monthly rollup — comparing to "typical at this point"
-    // means comparing to the same DAY of prior months, which a monthly total cannot do.
-    const catIndex = Spending.indexCategories(categories);
-    const pace = Pace.pace(ledger, catIndex, {
-      asOf: endDate,
-      classify: t => Spending.classify(t, catIndex, { accountClasses }),
-      committedCategories: req.query.committed ? String(req.query.committed).split(',') : undefined,
-    });
-    res.json({
-      startDate, endDate, status, coverage: cov, pace,
-      months: summary.months.map(m => ({ ...m, byCategory: undefined })),
-      totals: summary.totals, counts: summary.counts,
-      rolling: {
-        m3: Spending.rollingAverage(summary.months, 3, null, endDate, status.windows || {}),
-        m6: Spending.rollingAverage(summary.months, 6, null, endDate, status.windows || {}),
-        m12: Spending.rollingAverage(summary.months, 12, null, endDate, status.windows || {}),
-      },
-    });
+    res.json(await spendingReport({ startDate, endDate,
+      committed: req.query.committed ? String(req.query.committed).split(',') : undefined }));
   } catch (err) { res.status(503).json({ error: err.message }); }
 });
 
@@ -1245,7 +1251,14 @@ async function buildMonitorContext(today) {
       ctx.spending = { completeMonths: cov.completeMonths.slice(-6), monthlyExpense: avg };
       ctx.sources.spending = 'ok';
     } else {
-      ctx.sources.spending = `only ${cov.completeMonths.length} complete months`;
+      // Two different shortfalls, said differently. "0 complete months" over a ledger holding
+      // two years of records is false in the way that matters: it reads as no transaction
+      // history, and the advice that follows is "go and import your transactions". What is
+      // actually missing is the end-to-end coverage confirmation, and the records are there.
+      const withRecords = sum.months.filter(m => m.month !== cov.partial).length;
+      ctx.sources.spending = withRecords
+        ? `${withRecords} months of records, but only ${cov.completeMonths.length} verified complete — the transactions ARE imported; run a full import to confirm coverage. get_spending reads them either way.`
+        : 'no transactions imported yet';
     }
     // Pace is a different question from the divergence check above: this month against
     // the household's OWN recent months at the same day, rather than against the plan.
@@ -1416,7 +1429,9 @@ async function runPlannerTool(name, input) {
   const planRes = await db.query('SELECT state FROM planner_state WHERE id = 1');
   const raw = planRes.rows[0] && planRes.rows[0].state;
   const P = raw && raw.P ? migrateP(raw.P) : null;
-  if (!P && name !== 'lookup_tax_rule')
+  // get_spending reads the ledger, not the plan, so a household that has imported
+  // transactions before saving a plan can still be told what it spends.
+  if (!P && name !== 'lookup_tax_rule' && name !== 'get_spending')
     return { error: 'No plan is saved yet, so nothing can be computed against it.' };
 
   switch (name) {
@@ -1442,6 +1457,57 @@ async function runPlannerTool(name, input) {
       const prioritized = Monitors.prioritize(detection.alerts, states, { today, limit: 3 });
       // briefingInput deliberately carries the skips and failures alongside the findings.
       return { ...Monitors.briefingInput(detection, prioritized), sources: ctx.sources };
+    }
+    // The ledger, digested. The raw report carries every category of every month, which is
+    // both too large for a tool result and the wrong shape for the question — what a category
+    // costs is a per-month figure, so it is aggregated here rather than left to the model to
+    // add up. The month in progress is kept out of the averages and reported separately.
+    case 'get_spending': {
+      const endDate = new Date().toISOString().slice(0, 10);
+      const n = Math.max(1, Math.min(60, Number(input && input.months) || 24));
+      const startDate = new Date(Date.now() - n * 30.44 * 864e5).toISOString().slice(0, 10);
+      const r = await spendingReport({ startDate, endDate });
+      const partial = r.coverage.partial;
+      const closed = r.months.filter(m => m.month !== partial);
+      const verified = new Set(r.coverage.completeMonths || []);
+      const agg = new Map();
+      for (const m of closed) for (const c of (m.categories || [])) {
+        const a = agg.get(c.id) || { name: c.name, total: 0, refunds: 0, months: 0 };
+        a.total += c.net; a.refunds += c.refunds; a.months++; agg.set(c.id, a);
+      }
+      const divisor = closed.length || 1;
+      return {
+        period: { from: r.startDate, to: r.endDate },
+        // Stated as two different facts, because they are: how much history exists, and how
+        // much of it was imported end-to-end. Reporting only the verified count made a ledger
+        // holding years of records read as "0 months of transaction history synced".
+        coverage: {
+          monthsWithRecords: closed.length,
+          verifiedCompleteMonths: closed.filter(m => verified.has(m.month)).length,
+          firstMonth: r.coverage.first, lastClosedMonth: closed.length ? closed[closed.length - 1].month : null,
+          monthInProgress: partial,
+          fractionOfCurrentMonthElapsed: r.coverage.fractionElapsed,
+          note: 'Averages below divide by closed months only. A month is "verified" when its import was confirmed to span the whole month; an unverified month holds real records whose completeness was not confirmed.',
+        },
+        monthly: closed.map(m => ({ month: m.month, income: Math.round(m.income || 0),
+          spending: Math.round(m.expense || 0), verified: verified.has(m.month) })),
+        currentMonthSoFar: partial
+          ? (() => { const p = r.months.find(m => m.month === partial);
+              return p ? { month: partial, income: Math.round(p.income || 0), spending: Math.round(p.expense || 0) } : null; })()
+          : null,
+        categoriesPerMonth: [...agg.entries()]
+          .map(([id, a]) => ({ id, name: a.name, perMonth: Math.round(a.total / divisor),
+            total: Math.round(a.total), refunds: Math.round(a.refunds), monthsSeen: a.months }))
+          .sort((x, y) => y.total - x.total).slice(0, 30),
+        trailingAveragePerMonth: { m3: r.rolling.m3, m6: r.rolling.m6, m12: r.rolling.m12,
+          note: 'Null means the window is not fully covered by verified months, not that spending was zero.' },
+        excluded: { transfers: Math.round(r.totals.transfer || 0),
+          cardPayments: Math.round(r.totals.cardPayment || 0),
+          investmentContributions: Math.round(r.totals.investment || 0),
+          hiddenInMonarch: Math.round(r.totals.hidden || 0),
+          note: 'Excluded from spending deliberately: moving money between their own accounts is not consumption, and the purchases a card payment settles are already counted.' },
+        pace: r.pace,
+      };
     }
     case 'get_tax_position': {
       const today = new Date().toISOString().slice(0, 10);
@@ -1487,6 +1553,13 @@ ${staleness.coversCurrentYear ? '' : 'IT IS NOW OUT OF DATE — say so before qu
 ALERTS. get_alerts is the only source of truth about whether something is wrong. Explain
 what it found; never report a condition it did not detect. When it says a check was
 SKIPPED, say that the area was not checked and why — do not let silence imply it is clear.
+
+SPENDING. get_spending reads the imported transaction ledger — real categorised amounts,
+month by month. Call it before any claim about what a category costs or whether spending has
+drifted. Never tell the user to export a report from Monarch or paste their spending in:
+you can read it. If its coverage says months are unverified, that is a confirmation that is
+missing, NOT the records — say the figures are from imported records whose completeness is
+unconfirmed, and use them.
 
 CHANGES. You never modify the plan. propose_changes and record_decision stage something for
 the user to accept or discard; say plainly that nothing has been changed.

@@ -368,6 +368,13 @@
       input_schema:{type:'object',properties:{},required:[]},
     },
     {
+      name:'get_spending',
+      description:'Return what was ACTUALLY spent and earned, from the imported transaction ledger: month-by-month income and spending, the category rollup per month, trailing averages, and this month\'s pace against the household\'s own recent months. Call this before any claim about what a category costs, whether spending has drifted, or how the plan\'s cost inputs compare with reality — you have this data, so never ask the user to export a report from Monarch. Amounts are net of refunds; transfers between their own accounts and credit-card payments are excluded on purpose and reported separately so you can say so. Read `coverage` before you compare: `months` is what the ledger holds, `completeMonths` is the subset whose import was verified end-to-end, and the month in progress is a fraction of a month, never a data point.',
+      input_schema:{type:'object',properties:{
+        months:{type:'integer',description:'How many months of history to read. Defaults to 24.'},
+      },required:[]},
+    },
+    {
       name:'get_tax_position',
       description:'Return projected liability against withholding and estimated payments, the safe-harbour test, and screened opportunities. Items marked requiresConfirmation have an eligibility question a professional must settle — present those as questions to ask, never as savings to count.',
       input_schema:{type:'object',properties:{},required:[]},

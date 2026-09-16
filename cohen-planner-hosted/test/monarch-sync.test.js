@@ -217,6 +217,37 @@ describe('transaction sync', () => {
     expect(new Date(endDate) - new Date(startDate)).toBe(45 * 864e5);
   });
 
+  // Only backfill recorded coverage windows, so a household kept current by the Catch-up
+  // button alone accumulated years of records and zero verified months. Downstream that reads
+  // as "0 complete months of transaction history", and the advice that follows is to go and
+  // import transactions that are already sitting in the ledger.
+  it('records coverage for every whole month a catch-up completely spans', async () => {
+    db = fakeDb();
+    sync = createMonarchSync({ db, live: fakeLive([raw('t1', { date: '2026-03-05' })]) });
+    // 2026-02-15 .. 2026-04-01: February and April are clipped, March is whole.
+    await sync.incremental({ lookbackDays: 45, today: '2026-04-01' });
+    const s = await sync.state();
+    expect(Object.keys(s.windows)).toEqual(['2026-03']);
+    const w = s.windows['2026-03'];
+    expect(w.startDate <= '2026-03-01' && w.endDate >= '2026-03-31').toBe(true);
+  });
+
+  it('leaves a backfill\'s own window alone rather than overwriting its row count', async () => {
+    setup([raw('t1', { date: '2026-03-05' })]);
+    await sync.backfill({ startDate: '2026-03-01', endDate: '2026-03-31' });
+    const before = (await sync.state()).windows['2026-03'];
+    expect(before.count).toBe(1);
+    await sync.incremental({ lookbackDays: 45, today: '2026-04-01' });
+    expect((await sync.state()).windows['2026-03']).toEqual(before);
+  });
+
+  it('records nothing for a catch-up that failed', async () => {
+    db = fakeDb();
+    sync = createMonarchSync({ db, live: fakeLive([raw('t1')], { fail: () => true }) });
+    await sync.incremental({ lookbackDays: 45, today: '2026-04-01' });
+    expect((await sync.state()).windows).toEqual({});
+  });
+
   it('reports freshness and history coverage', async () => {
     setup([raw('t1', { date: '2026-01-10' }), raw('t2', { date: '2026-03-05', pending: true })]);
     await sync.backfill({ startDate: '2026-01-01', endDate: '2026-03-31' });

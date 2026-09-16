@@ -204,7 +204,24 @@ function createMonarchSync({ db, live, now = Date.now }) {
     try {
       const r = await pullWindow(from, to);
       const removed = await reconcileDeletions(from, to, r.seen);
-      await saveState({ lastSyncAt: new Date(now()).toISOString(), lastError: null });
+      // Record coverage for every calendar month this pull COMPLETELY spans. Only backfill
+      // did this, so a household kept current by catch-up alone accumulated years of records
+      // and zero verified months — which reads downstream as "0 complete months of history",
+      // and the advisor then tells you to go and export a CSV from Monarch.
+      //
+      // A 45-day lookback finishes the month before it on any day after the 15th, and the
+      // month in progress never qualifies. Existing windows are left alone: a backfill's
+      // record carries a row count this one cannot.
+      const s = await state();
+      const windows = { ...s.windows };
+      for (const [ms, me] of monthChunks(from, to)) {
+        const key = ms.slice(0, 7);
+        const lastDay = new Date(Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5, 7)), 0))
+          .toISOString().slice(0, 10);
+        if (windows[key] || ms > key + '-01' || me < lastDay) continue;
+        windows[key] = { syncedAt: new Date(now()).toISOString(), count: null, startDate: from, endDate: to };
+      }
+      await saveState({ windows, lastSyncAt: new Date(now()).toISOString(), lastError: null });
       return { written: r.written, removed, from, to, error: null };
     } catch (err) {
       await saveState({ lastError: { at: new Date(now()).toISOString(), message: err.message, window: `${from}..${to}` } });

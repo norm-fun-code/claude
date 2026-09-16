@@ -235,8 +235,20 @@ describe('The tool schemas tell the model the right things',()=>{
 
   it('offers every tool the advisor needs',()=>{
     expect(Object.keys(byName).sort()).toEqual([
-      'compare_alternatives','compute','get_alerts','get_tax_position',
+      'compare_alternatives','compute','get_alerts','get_spending','get_tax_position',
       'lookup_tax_rule','propose_changes','record_decision'].sort());
+  });
+
+  // The advisor told the household it could see balances but not transactions, and to go and
+  // export a category report from Monarch — while 6,149 imported transactions sat in the
+  // ledger the Spending tab was already drawing. It had no tool to reach them.
+  it('lets the advisor read the transaction ledger, and says not to ask for an export',()=>{
+    expect(byName.get_spending).toBeTruthy();
+    expect(byName.get_spending.description).toMatch(/never ask the user to export a report/i);
+    // Coverage is two facts, not one: what the ledger holds, and what was verified.
+    expect(byName.get_spending.description).toMatch(/completeMonths/);
+    // Transfers and card payments are excluded on purpose; the advisor has to be able to say so.
+    expect(byName.get_spending.description).toMatch(/transfers|credit-card payments/i);
   });
 
   it('tells the model not to do arithmetic itself',()=>{
