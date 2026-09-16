@@ -46,6 +46,7 @@ function createPlannerAccountsRouter({
     next();
   }
   require('./planner-holdings').installHoldingsRoute(router,{db,api,env,now,authorize});
+  require('./planner-transactions').installTransactionsRoute(router,{db,api,env,now,authorize});
   router.get('/accounts', authorize, async (req,res) => {
     try {
       if(!pending)pending=read().finally(()=>{pending=null;});
