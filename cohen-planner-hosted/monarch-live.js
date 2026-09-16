@@ -8,19 +8,9 @@
 //   GET <NORMOS_URL>/integrations/planner/accounts
 //   Authorization: Bearer <PLANNER_BRIDGE_TOKEN>
 //
-// That is the whole integration. NormOS owns the Monarch session — one place that signs in,
-// refreshes and backs off — and publishes the balances it observed. The planner used to keep
-// a second copy of that session, which is the mistake this file exists to have undone: two
-// copies of one credential means one of them is always the stale one, and the planner's copy
-// was the one that could never refresh itself. Reintroducing any direct Monarch call here
-// recreates that, whatever it is for.
-//
-// `PLANNER_BRIDGE_TOKEN` is scoped to this single endpoint. It is not a Monarch token and not
-// the NormOS API token, and it never reaches the browser.
-//
-// What the bridge carries is ACCOUNT BALANCES. Individual holdings, transactions, categories,
-// budgets and recurring charges are not on it, so the planner no longer reads them at all
-// rather than keeping a credential alive to fetch them behind the scenes.
+// NormOS owns the upstream session. This module reads balances; holdings-bridge.js
+// reads individual positions using the same dedicated read-only bridge credential.
+// No Monarch credential is stored or copied into the planner.
 
 const { extractAccounts } = require('./monarch-accounts');
 const DAY = 24 * 60 * 60 * 1000;
@@ -162,7 +152,7 @@ function createMonarchLive({ db, fetchImpl = fetch, env = process.env, now = Dat
     try { c = await context(); }
     catch (err) { add('read connection settings', false, err.message); return out; }
 
-    const SET_ENV = 'Copy NORMOS_URL and PLANNER_BRIDGE_TOKEN from the NormOS service into this one. PLANNER_BRIDGE_TOKEN is scoped to the accounts endpoint — it is not a Monarch token and not the NormOS API token.';
+    const SET_ENV = 'Copy NORMOS_URL and PLANNER_BRIDGE_TOKEN from the NormOS service into this one. PLANNER_BRIDGE_TOKEN is scoped to the planner read-only endpoints — it is not a Monarch token and not the NormOS API token.';
     const configured = add('NormOS bridge configured', c.configured,
       c.configured ? `${c.url} · PLANNER_BRIDGE_TOKEN is set`
         : !c.url && !c.hasToken ? 'NORMOS_URL and PLANNER_BRIDGE_TOKEN are both unset'

@@ -528,10 +528,15 @@ app.get('/api/accounts/overview', requireAuth, async (req, res) => {
       holdings: false, // set below only if holdings actually return
       transactions: (syncStatus.transactions || 0) > 0, transactionsAsOf: syncStatus.lastSyncAt,
     });
-    // Position-level holdings came from a direct Monarch session this server no longer has.
-    // Stated as a settled fact, not a failure to retry: nothing about it will change.
-    const holdings = [];
-    caps.holdings = { available: false, detail: 'Not carried by the NormOS account bridge, which publishes account balances only.', asOf: null };
+    let holdings=[];
+    try {
+      const portfolio=await withTimeout(readHoldings('1M'),1500,null);
+      if(!portfolio)throw new Error('Holdings refresh pending');
+      holdings=portfolio.holdings;
+      caps.holdings={available:true,detail:`${holdings.length} positions${portfolio.stale?' · last saved snapshot':''}`,asOf:portfolio.asOf};
+    } catch {
+      caps.holdings={available:false,detail:'Individual holdings could not be refreshed from NormOS.',asOf:null};
+    }
 
     res.json({
       asOf: snapshotAsOf, warning, partial: sourcePartial,
@@ -686,10 +691,14 @@ app.get('/api/monarch-diagnostics', requireAuth, async (req, res) => {
   }
 });
 
-// Individual holdings are no longer available. They were read straight from Monarch's
-// GraphQL API on a session this server kept for itself; the NormOS account bridge carries
-// account balances and nothing else, so there is no credential here to read them with. The
-// Holdings view now works from classified account balances alone.
+const readHoldings = require('./holdings-bridge').createHoldingsBridge({db});
+app.get('/api/monarch-investments', requireAuth, async (req,res) => {
+  res.set('Cache-Control','no-store');
+  const period=req.query.period||'1M';
+  if(!['1W','1M','3M','YTD','1Y'].includes(period))return res.status(400).json({error:'Choose a valid holdings period.'});
+  try{res.json(await readHoldings(period));}
+  catch(err){res.status(503).json({error:err.message});}
+});
 
 function num(v) {
   if (typeof v === 'number') return v;
