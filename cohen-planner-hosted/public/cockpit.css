@@ -261,3 +261,29 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
 .cp-delta[data-dir="up"]{color:#72dfbd}
 .cp-delta[data-dir="down"]{color:#f0918f}
 .cp-delta[data-dir="flat"]{color:var(--t2)}
+
+/* ── The year turning ──────────────────────────────────────────────────────
+   Offered, never taken: this card states what closed and what it cost, and the roll-forward
+   stays behind a button. */
+.cp-yearend{border:1px solid rgba(224,138,60,.35);background:linear-gradient(180deg,rgba(224,138,60,.07),transparent 60%)}
+.cp-ye-head,.cp-ye-row{display:grid;grid-template-columns:minmax(120px,1.4fr) repeat(3,minmax(80px,1fr));
+  gap:10px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--bd)}
+.cp-ye-head{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--t3);border-bottom-color:var(--bd)}
+.cp-ye-head small,.cp-ye-row small{grid-column:1/-1;font-size:10.5px;color:var(--t3);line-height:1.45;margin-top:2px}
+.cp-ye-row em,.cp-ye-row strong{font-style:normal;text-align:right;font-variant-numeric:tabular-nums;font-size:12px}
+.cp-ye-head em,.cp-ye-head strong{text-align:right;font-weight:600}
+.cp-ye-row em{color:var(--t2)}
+.cp-ye-row strong{color:var(--tx)}
+.cp-ye-row[data-kind="unobservable"] strong,.cp-ye-row[data-kind="unknown"] strong{color:var(--t3);font-weight:500;font-size:11px}
+.cp-ye-verdict{font-size:12px;line-height:1.55;margin-top:10px;font-variant-numeric:tabular-nums}
+.cp-ye-verdict[data-dir="up"]{color:#72dfbd}
+.cp-ye-verdict[data-dir="down"]{color:#f0918f}
+.cp-ye-verdict[data-dir="flat"]{color:var(--t2)}
+.cp-ye-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.cp-yearend .cp-primary{background:#e08a3c;border-color:#e08a3c;color:#12202f;font-weight:600}
+@media(max-width:640px){
+  .cp-ye-head{display:none}
+  .cp-ye-row{grid-template-columns:1fr auto;gap:4px 10px}
+  .cp-ye-row em:first-of-type::before{content:'planned ';color:var(--t3);font-size:10px}
+  .cp-ye-row em:last-of-type::before{content:'actual ';color:var(--t3);font-size:10px}
+}

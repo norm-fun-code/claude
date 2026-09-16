@@ -171,6 +171,7 @@ function renderCockpit(R){
       <label class="cp-scrub" for="cp-year-range">Explore a year<input id="cp-year-range" type="range" min="${R[0].yr}" max="${end.yr}" value="${selected.yr}" oninput="cockpitSelectYear(Number(this.value))"><output id="cp-range-label">${selected.yr}</output></label>
       <div class="cp-year-grid" id="cp-year-grid"></div>
       <div id="cp-bridge"></div>
+      <div id="cp-year-end"></div>
       <details class="cp-evidence"><summary>Show me why</summary><p>These are year-end estimates from your saved plan assumptions. Net worth here is modeled liquid investments, Stripe, home equity and retirement, less the revolving balance your plan carries. That balance is held flat rather than paid down — right for cards cleared monthly, wrong for a term loan, which would need its own amortisation. The account balances above are separate observations; this chart is not a historical performance record.</p><button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button></details></section>
       <section class="cp-card"><div class="cp-section-head"><div><h3>Explore your plan</h3></div></div><div class="cp-decisions">
       <button onclick="cockpitGo('housing')"><span>01 / HOME</span><strong>Find your buying range</strong><small>Timing, down payment & funding →</small></button>
@@ -400,6 +401,7 @@ function cockpitSelectYear(year){
     b.classList.toggle('is-current',Number(b.firstElementChild.textContent)===year);
 
   cockpitRenderBridge(R,year);
+  cockpitRenderYearEnd(R);
 }
 
 // ── Why the two big numbers differ ───────────────────────────────────────────
@@ -409,6 +411,70 @@ function cockpitSelectYear(year){
 // add up, and separates the difference that can be fixed (the plan's opening figures are
 // stale) from the two that cannot (the projection models fewer things; today is not 31
 // December).
+// ── The year turning ─────────────────────────────────────────────────────
+// On 1 January a plan built last year is describing a year that has finished, and every
+// figure on every screen quietly becomes a projection of the past. This offers the moment
+// and never takes it: a year boundary is a bad time to be surprised by your own plan having
+// changed underneath you.
+//
+// The scorecard comes first and the roll-forward second, because rolling forward overwrites
+// the very projection the closing year has to be scored against.
+function cockpitRenderYearEnd(R){
+  const host=document.getElementById('cp-year-end');
+  if(!host||!window.PlannerYearEnd)return;
+  const due=PlannerYearEnd.rollForwardDue(P,new Date());
+  if(!due){host.innerHTML='';return}
+  const e=advEscape,d=_ovw,s=d&&d.summary;
+  const available=!!s&&!d.error&&d.capabilities?.balances?.available===true;
+  // Drift is measured from when the ACTUALS were read — d.asOf — not from the plan's own
+  // opening observation. The two sides of this card are the projection for a closed year and
+  // the balances standing now; how far apart those are is a property of the balances.
+  const card=PlannerYearEnd.scorecard({year:due.closingYear,R,observed:s,
+    accountsAvailable:available,observedOn:d&&d.asOf?String(d.asOf).slice(0,10):null});
+
+  const rows=card&&card.available?card.lines.map(l=>`<div class="cp-ye-row" data-kind="${l.kind}">
+    <span>${e(l.label)}</span>
+    <em class="ui-num">${l.planned==null?'—':UI.money(l.planned,{exact:true})}</em>
+    <em class="ui-num">${l.actual==null?'—':UI.money(l.actual,{exact:true})}</em>
+    <strong class="ui-num">${l.diff==null?(l.kind==='unobservable'?'not observable':'not reported'):UI.money(l.diff,{exact:true,signed:true})}</strong>
+    <small>${e(l.note)}</small>
+  </div>`).join(''):'';
+
+  const behind=due.yearsBehind>1?`${due.yearsBehind} years`:'a year';
+  host.innerHTML=`<section class="cp-card cp-yearend">
+    <div class="cp-section-head"><div><h3>${due.closingYear} has closed</h3></div></div>
+    <p>This plan still describes ${due.closingYear}, so every projection on screen is ${behind} behind. Rolling it forward shifts each assumption a year and re-reads your opening balances from the accounts. Your ${due.closingYear} plan is saved as a snapshot first, so this comparison survives it.</p>
+    ${card&&card.available?`
+      <div class="cp-ye-head"><span>${due.closingYear}</span><em>Planned</em><em>Actual</em><strong>Difference</strong><small></small></div>
+      <div class="cp-ye-rows">${rows}</div>
+      <p class="cp-ye-verdict" data-dir="${card.diff===0?'flat':card.diff>0?'up':'down'}">${e(card.verdict)}${
+        card.driftDays!=null&&Math.abs(card.driftDays)>=3
+          ? ` · balances read ${Math.abs(card.driftDays)} days ${card.driftDays>0?'after':'before'} the year closed, so the two sides are not quite the same day`
+          : ''}${card.complete?'':' · one pool was not reported, and is left out of the total rather than counted as zero'}</p>`
+      :`<p class="cp-ye-verdict" data-dir="flat">${e((card&&card.reason)||'No scorecard for this year.')}</p>`}
+    <div class="cp-ye-actions">
+      <button class="cp-primary" onclick="cockpitRollForward(${due.closingYear})">Roll forward to ${due.currentYear}</button>
+      <button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button>
+    </div>
+  </section>`;
+}
+
+// Snapshot, then advance. Never the other way round: rolling forward rewrites the projection
+// the closing year is scored against, and a comparison you can only make once is not one.
+async function cockpitRollForward(closingYear){
+  try{
+    await saveSnapshot(true,`${closingYear} plan · as it stood when ${closingYear} closed`);
+    P=PlanMigrate.rollForwardParams(P);
+    // The new opening is whatever the accounts report now, by the same rules as every other
+    // day — not a figure typed at the boundary.
+    syncOpeningFromAccounts();
+    markDirty();buildControls();render();savePlannerState();
+    showToast(`Rolled forward. ${closingYear} is saved as a snapshot.`,'green');
+  }catch(err){
+    showToast('Could not roll forward: '+err.message,'red');
+  }
+}
+
 function cockpitRenderBridge(R,year){
   const host=document.getElementById('cp-bridge');
   if(!host||!window.PlannerBridge)return;
