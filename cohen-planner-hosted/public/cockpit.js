@@ -198,6 +198,7 @@ function renderCockpit(R){
       <div class="cp-chart"><canvas id="cockpitTrajectory" aria-label="Projected wealth and liquid investments by year" role="img"></canvas></div>
       <div class="cp-pins" id="cp-pins"></div>
       <label class="cp-scrub" for="cp-year-range">Explore a year<input id="cp-year-range" type="range" min="${R[0].yr}" max="${end.yr}" value="${selected.yr}" oninput="cockpitSelectYear(Number(this.value))"><output id="cp-range-label">${selected.yr}</output></label>
+      <div class="cp-grid-head" id="cp-grid-head">${selected.yr} year-end · projected, not what you hold today</div>
       <div class="cp-year-grid" id="cp-year-grid"></div>
       <div id="cp-bridge"></div>
       <div id="cp-year-end"></div>
@@ -430,6 +431,7 @@ function cockpitSelectYear(year){
   const hero=document.getElementById('cp-hero');
   if(hero&&hero.dataset.source==='projected')hero.textContent=UI.money(deflate(cpNw(row),row.yr));
 
+  set('cp-grid-head',year+' year-end · projected, not what you hold today');
   const grid=document.getElementById('cp-year-grid');
   if(grid)grid.innerHTML=[['Liquid investments',row.liq],['Vested Stripe',row.sEnd],
     ['Home equity',row.eq]].map(([label,value])=>

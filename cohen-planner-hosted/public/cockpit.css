@@ -300,3 +300,9 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
 .ui-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0 0 0 0);white-space:nowrap;border:0}
 @media(max-width:700px){.spend-scope-month select{max-width:100%;width:100%}}
+
+/* The projected year-end grid says which year it is, because "Vested Stripe" also appears
+   above it as an observed balance — the same name, a different figure, and previously
+   nothing between them. */
+.cp-grid-head{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--y);
+  margin:14px 0 6px}
