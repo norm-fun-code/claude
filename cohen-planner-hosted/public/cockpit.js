@@ -574,23 +574,22 @@ function mountSpendingCharts({rows,months,asOf,verified}){
     const ltm=window.PlannerSpending
       ? PlannerSpending.rollingSeries(months,12,{skip:[asOf.slice(0,7)]})
       : months.map(()=>null);
-    const first=ltm.findIndex(Boolean),last=ltm.length-1-[...ltm].reverse().findIndex(Boolean);
-    const points=ltm.filter(Boolean).length;
+    // The axis is the last twelve CLOSED months, full stop — no control, no trimming to
+    // whatever happens to have a window. Like the bars next door it is one fixed, obvious
+    // period, so the shape means the same thing every time it is looked at. Each point is
+    // still the average of the twelve months ENDING there, which is why the series behind it
+    // reaches two years back while the axis shows one.
+    const closed=months.filter(m=>m.month!==asOf.slice(0,7));
+    const from=Math.max(0,closed.length-12);
+    const series=closed.slice(from).map(m=>ltm[months.indexOf(m)]||null);
+    const points=series.filter(Boolean).length;
     const note=document.getElementById('spendLtmNote');
-    // Drift needs two windows to be drift. Exactly one — which is what loading twelve months of
-    // history gives you, since only the last month has a full year behind it — draws a single
-    // point, and a single point with no marker draws NOTHING: an empty grid with one tick on
-    // it. Say what is missing and where the lever is instead.
-    if(points<2){
+    if(!points){
+      // Nothing to draw at all. Saying why beats an empty grid that reads as a run rate of zero.
       ltmCanvas.closest('.spend-ltm-wrap').style.display='none';
-      if(note)note.textContent=points
-        ? 'There is only one trailing twelve-month window in the records so far, so there is nothing yet to compare it against. Once a thirteenth month is imported this shows how the run rate has moved.'
-        : 'Twelve consecutive months of records are needed before a trailing average exists. Import more history and this shows how the run rate has moved.';
+      if(note)note.textContent='Twelve consecutive months of records are needed before a trailing average exists. Import more history and this shows how the run rate has moved.';
     }else{
-      // Trimmed to the months that have a window: the ones before the first full year, and the
-      // month in progress on the end, are not a run rate of zero. Leaving them in would squash
-      // the part that has something to say and hang a blank tick off each end.
-      const span=ltm.slice(first,last+1),lab=months.slice(first,last+1).map(m=>monthLabel(m.month));
+      const span=series,lab=closed.slice(from).map(m=>monthLabel(m.month));
       const line=(key,label,color)=>({label,data:span.map(p=>p?p[key]:null),
         borderColor:color,backgroundColor:color,borderWidth:2.5,tension:.35,
         // A point with nothing either side of it is a line segment of zero length, which draws

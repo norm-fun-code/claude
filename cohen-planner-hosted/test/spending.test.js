@@ -544,11 +544,13 @@ describe('the rolling LTM series', () => {
     expect(barChart).not.toMatch(/12-month average/);
   });
 
-  it('starts where the first full window closes rather than drawing empty months', () => {
+  it('puts the last twelve closed months on the axis, with no control over it', () => {
+    // One fixed, obvious period, like the bars next door — so the shape means the same thing
+    // every time it is looked at, and nothing has to be chosen first.
     const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
-    expect(cockpit).toContain('const first=ltm.findIndex(Boolean)');
-    expect(cockpit).toContain('const first=ltm.findIndex(Boolean),last=ltm.length-1-[...ltm].reverse().findIndex(Boolean);');
-    expect(cockpit).toContain('ltm.slice(first,last+1)');
+    expect(cockpit).toContain("const closed=months.filter(m=>m.month!==asOf.slice(0,7));");
+    expect(cockpit).toContain('const from=Math.max(0,closed.length-12);');
+    expect(cockpit).toContain('closed.slice(from).map(m=>ltm[months.indexOf(m)]||null)');
     // Nothing to draw is said in words, not shown as a flat line at zero.
     expect(cockpit).toContain('spendLtmNote');
   });
@@ -567,10 +569,13 @@ describe('the drift chart when the history is too short to drift', () => {
   const src = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 
-  it('needs two windows before it draws anything, and says so when it has one', () => {
-    expect(src).toContain('const points=ltm.filter(Boolean).length;');
-    expect(src).toContain('if(points<2){');
-    expect(src).toMatch(/only one trailing twelve-month window/i);
+  it('says so in words when there is no window at all, rather than drawing an empty grid', () => {
+    expect(src).toContain('const points=series.filter(Boolean).length;');
+    // Named `series`, not `window`: a local `window` shadows the global one and puts the
+    // `window.PlannerSpending` read three lines above it in the temporal dead zone.
+    expect(src).not.toMatch(/\bconst window=/);
+    expect(src).toContain('if(!points){');
+    expect(src).toMatch(/Twelve consecutive months of records are needed/);
   });
 
   it('marks a point that has no neighbour to join, rather than drawing a zero-length line', () => {
