@@ -1606,7 +1606,7 @@ const todayMarker={
     if(!pt||v==null)return;
     // `v` is already in thousands, which is what fmtK expects. Scaling it here is what
     // turned $1.28M into $1284M the last time this existed.
-    const text='Today · '+fmtK(v);
+    const text=(chart.$anchorIsToday===false?'Start · ':'Today · ')+fmtK(v);
     const ctx=chart.ctx, area=chart.chartArea;
     ctx.save();
     ctx.font='600 11px Inter, system-ui, sans-serif';
@@ -1847,9 +1847,24 @@ function render(){
       `</tr>`}).join('')}</tbody></table></div>`;return}
   if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';
   const ctx=document.getElementById('cv').getContext('2d');const opts=chartOpts();
-  // Prepend planStartYear-1 as a synthetic starting point showing initial liquid
+  // The anchor point is the balance the projection starts from, and it is labelled for WHEN
+  // that balance was true — not "2025".
+  //
+  // The plan already starts from today: `observedOn` records when the accounts were read,
+  // and the first year is a stub covering only the months still ahead of it. But the anchor
+  // was drawn at planStartYear-1 regardless, so a balance observed in September 2026 sat on
+  // the 2025 tick, claiming to be a year-end it has nothing to do with. It is the right
+  // number in the wrong place, which is worse than either.
+  //
+  // With no observation date the plan does open on 1 January, and then the prior year-end is
+  // exactly what that point is.
   const sy0=P.planStartYear||2026;
-  const nwLabels=[String(sy0-1),...labels];
+  const obsOn=/^\d{4}-\d{2}-\d{2}/.test(String(P.observedOn||''))?String(P.observedOn).slice(0,10):null;
+  const anchorIsToday=!!obsOn&&Number(obsOn.slice(0,4))===sy0;
+  const anchorLabel=anchorIsToday
+    ?new Date(obsOn+'T00:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'})
+    :String(sy0-1);
+  const nwLabels=[anchorLabel,...labels];
   // The prior-year anchor for the TOTAL line is the plan's whole opening position, not just
   // its cash. Anchoring Total NW at startingLiquid dropped Stripe and the entire 401(k) from
   // the left-hand point, so the line began below where the plan actually starts and the
@@ -1935,7 +1950,8 @@ function render(){
     // accounts the rest of this screen is built on — so it drifted from everything around
     // it, and a pin that disagrees with its own chart is worse than no pin. Today's position
     // is on the Overview, observed and dated, which is where it belongs.
-    if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po,plugins:[todayMarker]})}
+    if(charts.main)charts.main.$anchorIsToday=anchorIsToday;
+    if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po,plugins:[todayMarker]});charts.main.$anchorIsToday=anchorIsToday}
   } else {
     if(_projView==='cashflow'){
       // Bars are net flow against TOTAL after-tax pay — the honest "did the year pay for

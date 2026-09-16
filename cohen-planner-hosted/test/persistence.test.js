@@ -184,3 +184,30 @@ describe('The live nav rail',()=>{
     expect(src).toContain('try{renderNavLive()}catch(e){}');
   });
 });
+
+// ── The trajectory's anchor point ────────────────────────────────────────
+// The chart prepends the balance the projection starts from. It used to be labelled
+// planStartYear-1 unconditionally, so a balance observed in September 2026 sat on the 2025
+// tick claiming to be a year-end it has nothing to do with — the right number in the wrong
+// place, which is worse than either. The plan already starts from today, via observedOn and
+// the stub year; only the label disagreed.
+describe('the trajectory anchor is labelled for when the balance was true', () => {
+  const src = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('const sy0=P.planStartYear||2026;'), src.indexOf('const nwLabels=') + 200);
+
+  it('uses the observation date when the plan opens mid-year', () => {
+    expect(fn).toContain('anchorIsToday=!!obsOn&&Number(obsOn.slice(0,4))===sy0');
+    expect(fn).toContain("toLocaleDateString(undefined,{month:'short',day:'numeric'})");
+  });
+
+  it('keeps the prior year-end when there is no observation, where it is correct', () => {
+    // A plan built from 1 January figures really does open at the prior year-end.
+    expect(fn).toContain(':String(sy0-1);');
+  });
+
+  it('only calls the marker "Today" when the anchor really is today', () => {
+    expect(src).toContain("chart.$anchorIsToday===false?'Start · ':'Today · '");
+    // …and the flag has to survive the chart-reuse path, or a stale one outlives its chart.
+    expect(src).toContain('if(charts.main)charts.main.$anchorIsToday=anchorIsToday;');
+  });
+});
