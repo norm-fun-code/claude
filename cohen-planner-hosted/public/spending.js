@@ -22,7 +22,9 @@
     CARD_PAYMENT:'cardPayment', // settles a card balance — NOT spending, the purchases were
     INVESTMENT:'investment',  // money moved into/out of brokerage — saving, not consumption
     REFUND:'refund',          // money back on a prior expense — nets DOWN a category
-    EXCLUDED:'excluded',      // hidden from reports, or a split parent whose children we have
+    EXCLUDED:'excluded',      // kept for callers that still name it
+    HIDDEN:'hidden',          // hidden from reports in Monarch — its own decision, not ours
+    SPLIT_PARENT:'splitParent',// a parent whose children we hold, so counting it would double
   };
 
   // System categories Monarch ships. Matched on its stable `systemCategory` slug where
@@ -67,8 +69,21 @@
 
     // Explicitly hidden, or a split parent we also hold the children for — counting both
     // would double the amount.
-    if(txn.hideFromReports)return KIND.EXCLUDED;
-    if(txn.isSplitTransaction&&o.hasSplitChildren!==false)return KIND.EXCLUDED;
+    if(txn.hideFromReports)return KIND.HIDDEN;
+    // ── Split transactions ───────────────────────────────────────────────
+    // A split parent must be counted EXACTLY once: either it, or its children, never both.
+    //
+    // This used to drop every parent, on the assumption that the children were in the data.
+    // Nothing set that flag and nothing checked it, so when the feed carries parents only —
+    // which is what the NormOS bridge delivers — the money left the totals in silence. It
+    // showed up as one category short: rent $37,494 against Monarch's $43,189, everything
+    // else agreeing to the cent, and no line anywhere saying $5,695 had been set aside.
+    //
+    // So the default is now to COUNT the parent, which is right whenever children are absent,
+    // and a caller that really does hold the children says so. Either way the amount is
+    // reported rather than quietly removed — `splitParents` in the summary — so a double
+    // count would be as visible as the shortfall was not.
+    if(txn.isSplitTransaction&&o.hasSplitChildren===true)return KIND.SPLIT_PARENT;
 
     if(SYSTEM_CARD_PAYMENT.has(sys)||NAME_CARD_PAYMENT.test(name))return KIND.CARD_PAYMENT;
 
@@ -114,7 +129,7 @@
     const o=opts||{};
     const cats=indexCategories(categories);
     const months=new Map();
-    const totals={expense:0,income:0,transfer:0,cardPayment:0,investment:0,refund:0,excluded:0};
+    const totals={expense:0,income:0,transfer:0,cardPayment:0,investment:0,refund:0,excluded:0,hidden:0,splitParents:0};
     const counts={...totals};
     const flagged=[];
 
@@ -133,7 +148,12 @@
       m.count++;
       if(t.pending)m.pending++;
 
-      if(kind===KIND.EXCLUDED){totals.excluded+=Math.abs(amt);continue}
+      if(kind===KIND.HIDDEN||kind===KIND.SPLIT_PARENT||kind===KIND.EXCLUDED){
+        totals.excluded+=Math.abs(amt);
+        if(kind===KIND.HIDDEN)totals.hidden+=Math.abs(amt);
+        if(kind===KIND.SPLIT_PARENT)totals.splitParents+=Math.abs(amt);
+        continue;
+      }
 
       if(kind===KIND.EXPENSE||kind===KIND.REFUND){
         const spend=spendOf(t); // negative for a refund, which is exactly the netting we want

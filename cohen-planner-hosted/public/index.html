@@ -3124,8 +3124,10 @@ function renderSpendingTab(R,P){
       ${bucket('Card payments',tot.cardPayment,cnt.cardPayment,'var(--t3)','not spending')}
       ${bucket('Investments',tot.investment,cnt.investment,'#6772e5','saved, not spent')}
       ${bucket('Refunds',tot.refund,cnt.refund,'var(--a)','netted into categories')}
+      ${tot.hidden?bucket('Hidden in Monarch',tot.hidden,null,'var(--t3)','excluded there, so excluded here'):''}
+      ${tot.splitParents?bucket('Split parents',tot.splitParents,null,'var(--a)','children counted instead'):''}
     </div>
-    <div style="font-size:9.5px;color:var(--t3);margin-top:7px;line-height:1.5">Transfers and card payments are excluded from spending on purpose — moving money between your own accounts is not consumption, and the purchases a card payment settles are already counted. ${cnt.excluded?`${cnt.excluded} rows were hidden from reports or are split parents whose children are counted instead.`:''}</div>
+    <div style="font-size:9.5px;color:var(--t3);margin-top:7px;line-height:1.5">Transfers and card payments are excluded from spending on purpose — moving money between your own accounts is not consumption, and the purchases a card payment settles are already counted.${tot.splitParents?` Split parents hold ${money(tot.splitParents)} that is counted through their children instead — if a category reads low against Monarch, this is the figure to check.`:''}${tot.hidden?` ${money(tot.hidden)} is hidden from reports in Monarch, so it is out here too.`:''}</div>
   </div></details>`;
 
   // ── Rolling averages, only where coverage permits ──

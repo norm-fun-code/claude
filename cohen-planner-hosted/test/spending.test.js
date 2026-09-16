@@ -17,7 +17,7 @@ const CATS = [
 ];
 const tx = (o) => ({ id: 'x', date: '2026-03-05', amount: -100, categoryId: '1', accountId: 'a1', ...o });
 const cats = S.indexCategories(CATS);
-const kindOf = (o) => S.classify(tx(o), cats);
+const kindOf = (o, opts) => S.classify(tx(o), cats, opts);
 
 // ── The three ways a household ledger double-counts ──────────────────────
 describe('double counting', () => {
@@ -42,17 +42,36 @@ describe('double counting', () => {
     expect(totals.cardPayment).toBe(200); // tracked, but not as spending
   });
 
-  it('a split parent is excluded so its children are not counted twice', () => {
+  it('a split parent is excluded when the children really are present', () => {
+    // Counting both is the hazard this rule exists for — but only a caller that holds the
+    // children can know, so it says so rather than the classifier assuming it.
     const { totals } = S.summarize([
       tx({ id: 'parent', amount: -300, isSplitTransaction: true }),
       tx({ id: 'c1', amount: -100 }), tx({ id: 'c2', amount: -200 }),
-    ], CATS);
+    ], CATS, { hasSplitChildren: true });
     expect(totals.expense).toBe(300);
+    expect(totals.splitParents).toBe(300);   // reported, never silently removed
   });
 
-  it('respects hideFromReports', () => {
-    expect(kindOf({ hideFromReports: true })).toBe(S.KIND.EXCLUDED);
-    expect(S.summarize([tx({ hideFromReports: true })], CATS).totals.expense).toBe(0);
+  it('counts a split parent when its children are NOT in the feed', () => {
+    // The NormOS bridge delivers parents only. Dropping them lost $5,695 of rent in silence,
+    // showing up as one category short against Monarch and no line saying why.
+    const { totals } = S.summarize([
+      tx({ id: 'parent', amount: -5695.03, isSplitTransaction: true }),
+      tx({ id: 'other', amount: -37494 }),
+    ], CATS);
+    expect(totals.expense).toBeCloseTo(43189.03, 2);
+    expect(totals.splitParents).toBe(0);
+  });
+
+  it('separates what Monarch hid from what we set aside ourselves', () => {
+    // One is the provider's decision and one is ours; lumping them made ours invisible.
+    expect(kindOf({ hideFromReports: true })).toBe(S.KIND.HIDDEN);
+    expect(kindOf({ isSplitTransaction: true }, { hasSplitChildren: true })).toBe(S.KIND.SPLIT_PARENT);
+    const t = S.summarize([tx({ hideFromReports: true })], CATS).totals;
+    expect(t.expense).toBe(0);
+    expect(t.hidden).toBe(t.excluded);
+    expect(t.splitParents).toBe(0);
   });
 
   it('every transaction lands in exactly one bucket, so buckets reconcile to the ledger', () => {
