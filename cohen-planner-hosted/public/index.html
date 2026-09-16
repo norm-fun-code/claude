@@ -719,47 +719,8 @@ async function runMonarchDiagnostics(){
     <div style="font-size:11px;font-weight:700;color:var(--tx);margin-bottom:8px">🩺 Monarch connection</div>
     ${rows||'<div style="font-size:11px;color:var(--t3)">No checks returned.</div>'}
     ${firstFail?`<div style="margin-top:10px;font-size:10.5px;color:var(--t2);line-height:1.55"><strong style="color:var(--tx)">First thing to fix:</strong> ${advEscape(firstFail.name)}. ${advEscape(String(firstFail.detail||''))}${firstFail.fix?` ${advEscape(String(firstFail.fix))}`:''}</div>`:'<div style="margin-top:10px;font-size:10.5px;color:var(--g)">Everything checks out — try loading again.</div>'}
-    ${firstFail&&firstFail.fix?`<form onsubmit="event.preventDefault();saveMonarchToken()" style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
-      <input id="monarchTokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste Monarch session token" aria-label="Monarch session token" style="flex:1;min-width:190px;font-size:11px;padding:8px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--tx);font-family:inherit">
-      <button type="submit" style="font-size:11px;padding:8px 14px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">Save token</button>
-    </form><div id="monarchTokenMsg" style="margin-top:6px;font-size:10.5px;color:var(--t3);line-height:1.5"></div>`:''}
+    ${firstFail&&firstFail.fix?`<div style="margin-top:8px;font-size:10.5px;color:var(--t2);line-height:1.55">${advEscape(String(firstFail.fix))}</div>`:''}
   </div>`;
-}
-
-// Hand the server a fresh Monarch session. The value goes straight into the request body and
-// is cleared from the field on success — it is never put into the plan, a log, or the URL.
-async function saveMonarchToken(){
-  const inp=document.getElementById('monarchTokenInput'), msg=document.getElementById('monarchTokenMsg');
-  if(!inp||!msg)return;
-  const token=inp.value.trim();
-  if(!token){msg.style.color='var(--r)';msg.textContent='Paste the token first.';return}
-  msg.style.color='var(--t3)';msg.textContent='Checking it against Monarch…';
-  try{
-    const r=await fetch('/api/monarch-token',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
-    const d=await r.json();
-    if(!r.ok||!d.ok)throw new Error(d.error||('HTTP '+r.status));
-    inp.value='';
-    msg.style.color='var(--g)';
-    msg.textContent=`Monarch accepted it — ${d.accounts} accounts visible. Loading investments…`;
-    if(typeof loadMonarchInvestments==='function')loadMonarchInvestments();
-  }catch(e){
-    msg.style.color='var(--r)';
-    msg.textContent=e.message;
-  }
-}
-
-async function loadMonarchInvestments(period){
-  if(_investLoading)return; // prevent concurrent fetches causing jump/flicker
-  if(period){_investPeriod=period;monarchInvestments=null;}
-  _investLoading=true;
-  // Don't call render() here — the caller (renderPortfolioTab) already shows loading state
-  try{
-    const r=await fetch('/api/monarch-investments?period='+_investPeriod);
-    if(!r.ok){const e=await r.json().catch(()=>({}));monarchInvestments=false;_investError=e.error||('HTTP '+r.status);showToast('Investments: '+_investError,'red');}
-    else{monarchInvestments=await r.json();_investError=null;}
-  }catch(e){monarchInvestments=false;_investError=e.message;showToast('Investments fetch error: '+e.message,'red');}
-  _investLoading=false;
-  if(activeTab==='today')render(); // single render once data is ready
 }
 
 async function syncMonarch({quiet=false}={}){
@@ -893,13 +854,6 @@ let _sensiPreset='all';
 let _sensiDeltas={};
 let monarchSnapshot=null; // {netWorth, retirement, assets, liabilities, syncedAt}
 let monarchAccounts=[];
-let monarchInvestments=null; // null=not loaded, false=failed, object=data
-let _investPeriod='1M';
-let _investLoading=false;
-// What the server actually said when holdings failed, so the card reports the cause instead
-// of guessing at one. An expired session and an account with no holdings are different
-// problems with different cures.
-let _investError=null;
 let _lastChartKey='';
 function destroyCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};_lastChartKey=''}
 // _projView must be in the key: the projection views share one activeTab but use
@@ -3168,337 +3122,65 @@ function renderMonarchAccountsCard(){
   </details>`;
 }
 
+// ── Holdings, from account balances ────────────────────────────────────────
+// This view used to read position-level holdings — tickers, cost basis, gainers and losers —
+// straight from Monarch's API, on a session this server kept for itself. That session is gone
+// on purpose: the planner holds no Monarch credential, and the NormOS account bridge carries
+// account balances and nothing else.
+//
+// So the view is built from what is actually observed: classified account balances. It does
+// not pretend a position-level breakdown is loading, or temporarily unavailable, or one retry
+// away. Every figure below is a real number from the last NormOS snapshot, and the three
+// things NormOS can say about that snapshot — stale, warning, partial — are shown BESIDE the
+// balances rather than in place of them. None of them is a reason to blank the view.
 function renderPortfolioTab(R,P){
   const ca=document.getElementById('chartArea');
-  destroyCharts();
-  document.getElementById('summaries').innerHTML='';
-
+  if(!ca)return;
   if(!monarchAccounts||monarchAccounts.length===0){
     ca.innerHTML=`<div style="padding:40px;text-align:center;color:var(--t2)">
       <div style="font-size:32px;margin-bottom:12px">📊</div>
-      <div style="font-size:14px;font-weight:600;color:var(--tx);margin-bottom:6px">Portfolio view needs Monarch</div>
-      <div style="font-size:11px;color:var(--t3);margin-bottom:16px">Connect Monarch to see your investment holdings here.</div>
-      <button class="ui-btn ui-btn-primary" onclick="connectMonarch()">Connect accounts</button>
+      <div style="font-size:14px;font-weight:600;color:var(--tx);margin-bottom:6px">Holdings need account balances</div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:16px">They arrive from NormOS. Nothing has been published yet.</div>
+      <div id="monarchDiag" style="max-width:620px;margin:0 auto 14px;text-align:left"></div>
+      <button class="ui-btn ui-btn-primary" onclick="runMonarchDiagnostics()">Diagnose connection</button>
     </div>`;
     return;
   }
-
-
-
-  // Auto-load investments on first visit (guard prevents concurrent re-entry)
-  if(monarchInvestments===null){
-    if(!_investLoading)loadMonarchInvestments();
-    ca.innerHTML=`<div style="padding:2px">
-      <div class="skel" style="height:16px;width:180px;margin-bottom:14px"></div>
-      <div class="pf-kpis">${[0,0,0,0].map(()=>`<div class="glass-card" style="padding:12px"><div class="skel" style="height:9px;width:60%;margin-bottom:9px"></div><div class="skel" style="height:18px;width:80%;margin-bottom:7px"></div><div class="skel" style="height:8px;width:50%"></div></div>`).join('')}</div>
-      <div class="pf-split">
-        <div class="glass-card" style="padding:18px;display:flex;align-items:center;justify-content:center"><div class="skel" style="width:150px;height:150px;border-radius:50%"></div></div>
-        <div class="glass-card" style="padding:16px">${[0,0,0,0,0].map(()=>`<div style="display:flex;justify-content:space-between;margin-bottom:14px"><div class="skel" style="height:11px;width:34%"></div><div class="skel" style="height:11px;width:18%"></div></div>`).join('')}</div>
-      </div>
-      <div class="glass-card" style="padding:14px">${[0,0,0,0,0,0].map(()=>`<div class="skel" style="height:13px;width:100%;margin-bottom:10px"></div>`).join('')}</div>
-      <div style="text-align:center;font-size:10px;color:var(--t3);margin-top:14px">Loading investments from Monarch…</div>
-    </div>`;
-    return;
-  }
-
-  if(monarchInvestments===false){
-    ca.innerHTML=`<div style="padding:40px;text-align:center">
-      <div id="monarchDiag" style="max-width:620px;margin:0 auto 16px;text-align:left"></div>
-      <div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:6px">Couldn't load investments</div>
-      <div style="font-size:11px;color:var(--t3);margin-bottom:14px;max-width:520px;margin-left:auto;margin-right:auto;line-height:1.55">${advEscape(_investError||'Monarch did not return holdings for your accounts.')}</div>
-      <button onclick="runMonarchDiagnostics()" style="padding:7px 14px;background:var(--s2);color:var(--t2);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px">🩺 Diagnose connection</button>
-      <button onclick="loadMonarchInvestments()" style="padding:7px 14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px">Retry</button>
-    <div class="refine-links"><button class="ui-btn" onclick="setSubView('overview')">Manage accounts & classifications →</button></div></div>`;
-    mountAccountDonut();
-    // A session problem is fixed inside the diagnostics panel, so open it rather than
-    // making someone press a button to reach the only thing that helps.
-    if(/session|token|expired/i.test(_investError||''))runMonarchDiagnostics();
-    return;
-  }
-
-  const inv=monarchInvestments;
-  const holdings=inv.holdings||[];
-  const totalVal=inv.totalValue||0;
-
-  // Period selector
-  const periods=['1W','1M','3M','YTD','1Y'];
-  const periodBtns=periods.map(p=>`<button class="pf-period${_investPeriod===p?' is-active':''}" aria-pressed="${_investPeriod===p}" onclick="loadMonarchInvestments('${p}')">${p}</button>`).join('');
-
-  // Stripe account from Monarch accounts list
-  const stripeAcct=monarchAccounts.find(a=>a.name.toLowerCase().includes('stripe'));
-  const stripeBalance=stripeAcct&&stripeAcct.balance>0?stripeAcct.balance:0;
-
-  // Donut data — top 8 holdings + Stripe (if present) + Other
-  const maxHoldings=stripeBalance>0?8:9;
-  const top=holdings.slice(0,maxHoldings);
-  const otherVal=holdings.slice(maxHoldings).reduce((s,h)=>s+h.value,0);
-  const donutTotal=totalVal+(stripeBalance||0);
-  const donutLabels=[
-    ...top.map(h=>h.ticker),
-    ...(stripeBalance>0?['Stripe']:[]),
-    ...(otherVal>0?['Other']:[]),
-  ];
-  const donutData=[
-    ...top.map(h=>h.value),
-    ...(stripeBalance>0?[stripeBalance]:[]),
-    ...(otherVal>0?[otherVal]:[]),
-  ];
-  const donutColors=[
-    '#14b8a6','#0073e6','#1a8754','#bf6900','#cd3d64','#0891b2','#7c3aed','#059669','#d97706',
-    '#a855f7','#94a3b8',
-  ];
-  // Stripe always gets its own distinct purple
-  if(stripeBalance>0){
-    const stripeIdx=donutLabels.indexOf('Stripe');
-    if(stripeIdx>=0)donutColors[stripeIdx]='#6772e5';
-  }
-
-  // Asset mix by kind of security. Answers a different question from the per-holding
-  // donut — not "what do I own most of" but "how much of this is index vs single names
-  // vs crypto vs an illiquid private position".
-  const TYPE_META={equity:['Single stocks','#cd3d64'],etf:['ETFs','#14b8a6'],mutual_fund:['Mutual funds','#0073e6'],
-    cash:['Cash','#8898aa'],crypto:['Crypto','#bf6900'],bond:['Bonds','#059669'],option:['Options','#a855f7']};
-  const typeTot={};
-  for(const h of holdings){
-    const t=h.securityType||'other';
-    typeTot[t]=(typeTot[t]||0)+(h.value||0);
-  }
-  const mixSeries=Object.entries(typeTot).filter(([,v])=>v>0)
-    .map(([t,v])=>[(TYPE_META[t]||[t.replace(/_/g,' '),'#94a3b8'])[0],v,(TYPE_META[t]||['','#94a3b8'])[1]]);
-  if(stripeBalance>0)mixSeries.push(['Stripe (private)',stripeBalance,'#6772e5']);
-  mixSeries.sort((a,b)=>b[1]-a[1]);
-  const mixLabels=mixSeries.map(x=>x[0]),mixData=mixSeries.map(x=>x[1]),mixColors=mixSeries.map(x=>x[2]);
-
-  function colorPct(v){return v>0?'var(--g)':v<0?'var(--r)':'var(--t3)';}
-  function signFmt(v){if(!Number.isFinite(v))return'—';const s=v>=0?'+':'';return s+fmt(v);}
-  function signPct(v){if(!Number.isFinite(v))return'—';const s=v>=0?'+':'';return s+v.toFixed(2)+'%';}
-
-  const typeLabel={equity:'Equity',etf:'ETF',mutual_fund:'Fund',cash:'Cash',crypto:'Crypto',bond:'Bond',option:'Option'};
-
-  const periodIsReturn=inv.periodMetric!=='current_holdings_growth';
-  const periodLabel=periodIsReturn?'Portfolio Return':'Holdings Growth';
-  const periodSub=periodIsReturn
-    ? signPct(inv.periodChangePct)+' · contribution-aware'
-    : signPct(inv.periodChangePct)+' · current positions repriced';
-
+  // The same grouping the accounts card uses, so one set of balances is never described two
+  // different ways on two screens.
+  const catLabel={cash:'Cash & Savings',investment:'Investments',retirement:'Retirement',other_asset:'Other Assets',other:'Other',liability:'Liabilities'};
+  const by={};
+  for(const a of monarchAccounts){const c=a.category||'other';(by[c]=by[c]||[]).push(a)}
+  const groups=Object.entries(by)
+    .map(([k,list])=>({k,label:catLabel[k]||k,total:list.reduce((s,a)=>s+(Number(a.balance)||0),0),n:list.length}))
+    .sort((a,b)=>b.total-a.total);
+  // Assets minus debts: the figure at the top is what these accounts are worth together.
+  const total=groups.reduce((s,g)=>s+g.total,0);
+  const snap=monarchSnapshot||{};
+  const when=snap.syncedAt?new Date(snap.syncedAt).toLocaleString():'an unknown time';
+  const note=(txt,tone)=>`<div style="font-size:11px;color:${tone||'var(--t3)'};line-height:1.55;margin-top:8px">${advEscape(txt)}</div>`;
   ca.innerHTML=`<div style="padding:2px">
-  <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:6px">
-    <div style="font-size:13px;font-weight:700;color:var(--tx)">Portfolio · Holdings</div>
-    <div style="display:flex;gap:4px;align-items:center">
-      <span style="font-size:9px;color:var(--t3);margin-right:4px">Period:</span>${periodBtns}
-    </div>
-  </div>
-
-  <div class="pf-kpis pf-summary">
-    ${[
-      {l:'Total Value',v:fmt(totalVal),s:'investment portfolio',c:'var(--accent)'},
-      {l:periodLabel,v:signFmt(inv.periodChange),s:periodSub,c:colorPct(inv.periodChange)},
-      {l:'All-time Return',v:signFmt(inv.allTimeChange||0),s:signPct(inv.allTimePct||0)+' total',c:colorPct(inv.allTimeChange||0)},
-
-    ].map(k=>`<div class="kpi"><div class="kpi-l">${k.l}</div><div class="kpi-v" style="color:${k.c};font-size:14px">${k.v}</div><div class="kpi-s">${k.s}</div></div>`).join('')}
-  </div>
-
-  ${mixData.length>1?`<details class="polish-fold refine-fold pf-mix"><summary>Allocation by asset class</summary>
-    <div class="pf-mix-bar" aria-hidden="true">${mixSeries.map(([,v,col])=>`<span style="flex:${v};background:${col}"></span>`).join('')}</div>
-    <div class="pf-mix-key">${mixSeries.map(([lb,v,col])=>`<div><span class="portfolio-holding-swatch" style="background:${col}"></span><span>${lb}</span><strong>${fmt(v)}</strong></div>`).join('')}</div>
-  </details>`:''}
-
-  <div class="pf-split">
-    <div class="glass-card" style="padding:14px">
-      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:10px">Allocation by Holding</div>
-      <div style="height:250px;position:relative"><canvas id="portfolioDonut"></canvas></div><div id="portfolioHoldingLegend" class="portfolio-holding-legend" aria-label="Allocation by holding details"></div>
-    </div>
-    <div class="glass-card" style="padding:14px">
-      <div class="pf-cols2">
-        <div>
-          <div style="font-size:8.5px;font-weight:700;color:var(--g);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">▲ Top Gainers (period)</div>
-          ${(inv.topGainers||[]).length===0?`<div style="font-size:10px;color:var(--t3)">No movers this period</div>`:(inv.topGainers||[]).map(h=>`
-          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--bd)">
-            <div>
-              <span style="font-size:10.5px;font-weight:600;color:var(--tx);font-family:'SF Mono',monospace">${advEscape(h.ticker||"")}</span>
-              <span style="font-size:8px;color:var(--t3);margin-left:4px">${typeLabel[h.securityType]||''}</span>
-            </div>
-            <div style="text-align:right">
-              <div style="font-size:10px;font-family:'SF Mono',monospace;font-weight:600;color:var(--g)">${signFmt(h.periodChange)}</div>
-              <div style="font-size:8.5px;color:var(--g)">${signPct(h.periodChangePct)}</div>
-            </div>
-          </div>`).join('')}
-        </div>
-        <div>
-          <div style="font-size:8.5px;font-weight:700;color:var(--r);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">▼ Top Losers (period)</div>
-          ${(inv.topLosers||[]).length===0?`<div style="font-size:10px;color:var(--t3)">No losers this period</div>`:(inv.topLosers||[]).map(h=>`
-          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--bd)">
-            <div>
-              <span style="font-size:10.5px;font-weight:600;color:var(--tx);font-family:'SF Mono',monospace">${advEscape(h.ticker||"")}</span>
-              <span style="font-size:8px;color:var(--t3);margin-left:4px">${typeLabel[h.securityType]||''}</span>
-            </div>
-            <div style="text-align:right">
-              <div style="font-size:10px;font-family:'SF Mono',monospace;font-weight:600;color:var(--r)">${signFmt(h.periodChange)}</div>
-              <div style="font-size:8.5px;color:var(--r)">${signPct(h.periodChangePct)}</div>
-            </div>
-          </div>`).join('')}
-        </div>
+    <div class="ui-head" style="margin-bottom:14px"><div>
+      <span class="ui-eyebrow">WHERE THE MONEY SITS</span>
+      <h2>${UI.money(total)}</h2>
+    </div></div>
+    ${snap.stale?note('These balances are more than 24 hours old — NormOS has not published newer ones. They are still the last good figures.','var(--y)'):''}
+    ${snap.warning?note(snap.warning+' These are the last known good balances.','var(--y)'):''}
+    ${snap.partial?note(`${(snap.missingAccounts||[]).length} account(s) returned no balance, so this total is short by an unknown amount. Every other account below is valid.`,'var(--y)'):''}
+    <div class="pf-split">
+      <div class="glass-card" style="padding:18px;display:flex;align-items:center;justify-content:center"><canvas id="acctDonut" style="max-height:220px"></canvas></div>
+      <div class="glass-card" style="padding:16px">
+        ${groups.map(g=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--bd)">
+          <span style="font-size:12px;color:var(--t2)">${advEscape(g.label)} <span style="color:var(--t3)">· ${g.n}</span></span>
+          <b class="ui-num" style="font-size:12px;color:var(--tx)">${UI.money(g.total)}</b>
+        </div>`).join('')||'<div style="font-size:11px;color:var(--t3)">No accounts classified yet.</div>'}
       </div>
     </div>
-  </div>
-
-  <details class="pf-detail glass-card"><summary>All holdings <span>${holdings.length} positions · values &amp; price changes</span></summary>
-  <div class="pf-scroll">
-   <div style="min-width:620px">
-    <div style="display:grid;grid-template-columns:90px 70px 1fr 90px 90px 90px 90px;gap:0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);padding:7px 12px;border-bottom:1px solid var(--bd);background:rgba(255,255,255,.45)">
-      <div>Ticker</div><div>Type</div><div>Value</div><div style="text-align:right">% Portfolio</div><div style="text-align:right">Position Δ$</div><div style="text-align:right">Price Δ%</div><div style="text-align:right">All-time Δ%</div>
-    </div>
-    ${holdings.map((h,i)=>{
-      const pct=totalVal>0?(h.value/totalVal*100):0;
-      const isCash=h.securityType==='cash';
-      const rowBg=i%2===0?'transparent':'rgba(10,37,64,.025)';
-      return`<div style="display:grid;grid-template-columns:90px 70px 1fr 90px 90px 90px 90px;align-items:center;padding:5px 12px;border-bottom:1px solid var(--bd);background:${rowBg}">
-        <div style="font-size:10.5px;font-weight:600;color:${isCash?'var(--t2)':'var(--tx)'};font-family:'SF Mono',monospace">${advEscape(h.ticker||"")}</div>
-        <div style="font-size:8.5px;color:var(--t3)">${typeLabel[h.securityType]||h.securityType||'—'}</div>
-        <div>
-          <div style="font-size:10px;font-family:'SF Mono',monospace;font-weight:500;color:var(--tx)">${fmt(h.value)}</div>
-          <div style="height:4px;background:rgba(10,37,64,.07);border-radius:3px;margin-top:3px;max-width:120px"><div style="height:100%;width:${Math.min(100,pct*2)}%;background:${isCash?'var(--t4)':'linear-gradient(90deg,#6e66ff,#5048d6)'};border-radius:3px"></div></div>
-        </div>
-        <div style="text-align:right;font-size:9.5px;font-family:'SF Mono',monospace;color:var(--t2)">${pct.toFixed(1)}%</div>
-        <div style="text-align:right;font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${isCash?'var(--t3)':colorPct(h.periodChange)}">${isCash?'—':signFmt(h.periodChange)}</div>
-        <div style="text-align:right;font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${isCash?'var(--t3)':colorPct(h.periodChangePct)}">${isCash?'—':signPct(h.periodChangePct)}</div>
-        <div style="text-align:right;font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${isCash?'var(--t3)':colorPct(h.allTimePct)}">${isCash?'—':signPct(h.allTimePct)}</div>
-      </div>`;
-    }).join('')}
-   </div>
-  </div>
-  </details>
-  <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings sourced from Monarch. Period: ${inv.periodStart} → ${inv.periodEnd}. ${periodIsReturn?'Portfolio return is Monarch’s contribution-aware performance for this window.':'Monarch did not provide portfolio performance, so growth reprices today’s positions over the window and does not adjust for deposits or withdrawals.'} Holding movers show price movement applied to today’s position size.</div>
-
-  ${(()=>{
-    // ── Portfolio analysis blurb ─────────────────────────────────────────────
-    const observations=[];
-    const flags=[];
-
-    // Concentration — only single-name positions (equity/crypto/option/bond) carry
-    // concentration risk. A diversified fund/ETF (e.g. an S&P 500 fund) being a large
-    // slice is normal allocation, not single-stock risk, so it's tracked separately.
-    const isDiversified=h=>h.securityType==='etf'||h.securityType==='mutual_fund';
-    const topFund=holdings.find(isDiversified);
-    const topFundPct=totalVal>0&&topFund?(topFund.value/totalVal*100):0;
-    if(topFund&&topFundPct>15)observations.push({c:'var(--t2)',t:`${topFund.ticker} (diversified fund) is ${topFundPct.toFixed(0)}% of portfolio — broad-market exposure, not single-stock risk.`});
-
-    const singleNames=holdings.filter(h=>!isDiversified(h)&&h.securityType!=='cash');
-    const topSingle=singleNames[0];
-    const topSinglePct=totalVal>0&&topSingle?(topSingle.value/totalVal*100):0;
-    if(topSingle){
-      if(topSinglePct>25)flags.push({c:'var(--a)',t:`⚠ ${topSingle.ticker} is ${topSinglePct.toFixed(0)}% of portfolio — heavy single-stock concentration.`});
-      else observations.push({c:'var(--g)',t:`✓ Largest single-stock position (${topSingle.ticker}) is ${topSinglePct.toFixed(0)}% — concentration is manageable.`});
-    }
-
-    const top3Single=singleNames.slice(0,3);
-    const top3SinglePct=totalVal>0?top3Single.reduce((s,h)=>s+h.value,0)/totalVal*100:0;
-    if(top3SinglePct>40)flags.push({c:'var(--a)',t:`Top 3 single-stock positions (${top3Single.map(h=>h.ticker).join(', ')}) = ${top3SinglePct.toFixed(0)}% of portfolio.`});
-
-    // Cash drag
-    const cashHoldings=holdings.filter(h=>h.securityType==='cash');
-    const cashVal=cashHoldings.reduce((s,h)=>s+h.value,0);
-    const cashPct=totalVal>0?cashVal/totalVal*100:0;
-    if(cashPct>12)flags.push({c:'var(--r)',t:`Cash is ${cashPct.toFixed(0)}% of investment portfolio — potential drag on long-run returns.`});
-    else if(cashPct>0)observations.push({c:'var(--t2)',t:`Cash position: ${cashPct.toFixed(0)}% — within normal range.`});
-
-    // Stripe account
-    if(stripeBalance>0){
-      const stripePct=donutTotal>0?stripeBalance/donutTotal*100:0;
-      observations.push({c:'#6772e5',t:`Stripe account: ${fmt(stripeBalance)} (${stripePct.toFixed(1)}% of total including accounts).`});
-    }
-
-    // Period performance
-    const periodPct=inv.periodChangePct||0;
-    if(Math.abs(periodPct)>5)observations.push({c:colorPct(periodPct),t:`${periodPct>0?'Strong':'Weak'} period: ${signPct(periodPct)} over ${_investPeriod}. ${periodPct>0?'Broad momentum intact.':'Monitor for continuation.'}`});
-
-    // All-time
-    const allPct=inv.allTimePct||0;
-    if(allPct>0)observations.push({c:'var(--g)',t:`All-time return: ${signPct(allPct)} — portfolio is in the green overall.`});
-    else if(allPct<0)flags.push({c:'var(--r)',t:`Portfolio is down ${signPct(allPct)} all-time — cost-basis is above current value.`});
-
-    // Type diversity
-    const types=[...new Set(holdings.filter(h=>h.securityType!=='cash').map(h=>h.securityType))];
-    const typeNames=types.map(t=>({equity:'Equities',etf:'ETFs',mutual_fund:'Funds',bond:'Bonds',crypto:'Crypto',option:'Options'}[t]||t));
-    if(types.length>=2)observations.push({c:'var(--t2)',t:`Spread across ${typeNames.join(', ')} — ${holdings.length} total positions.`});
-
-    const allItems=[...flags,...observations];
-    if(allItems.length===0)return'';
-    return`<details class="polish-fold refine-fold"><summary>Portfolio context</summary><div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        ${allItems.map(o=>`<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 10px;background:rgba(10,37,64,.03);border-radius:7px;border-left:2px solid ${o.c}">
-          <div style="font-size:11px;color:${o.c};line-height:1.45">${o.t}</div>
-        </div>`).join('')}
-      </div>
-    </div></details>`;
-  })()}
-
-  ${(()=>{
-    // ── Tax-loss harvesting scanner ─────────────────────────────────────────
-    // allTimeChange = unrealized gain/loss vs. cost basis (Monarch's variation_dollars).
-    const lossHoldings=holdings.filter(h=>h.securityType!=='cash'&&(h.allTimeChange||0)<0).sort((a,b)=>a.allTimeChange-b.allTimeChange);
-    if(lossHoldings.length===0)return'';
-    const totalLoss=lossHoldings.reduce((s,h)=>s+h.allTimeChange,0); // negative
-    const taxRate=P.capGainsTaxRate??.345;
-    const estSavings=Math.abs(totalLoss)*taxRate;
-    return`<div class="glass-card" style="padding:14px;margin-bottom:10px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3)">🧾 Tax-Loss Harvesting Opportunities</div>
-        <div style="font-size:10px;color:var(--t2)">Est. tax savings if harvested: <strong style="color:var(--g)">${fmt(estSavings)}</strong></div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px">
-        ${lossHoldings.map(h=>{
-          const pct=totalVal>0?(h.value/totalVal*100):0;
-          return`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:rgba(205,61,100,.05);border-radius:7px;border-left:2px solid var(--r)">
-            <div>
-              <span style="font-size:11px;font-weight:600;color:var(--tx);font-family:'SF Mono',monospace">${advEscape(h.ticker||'')}</span>
-              <span style="font-size:8.5px;color:var(--t3);margin-left:5px">${typeLabel[h.securityType]||''} · ${pct.toFixed(1)}% of portfolio</span>
-            </div>
-            <div style="text-align:right">
-              <div style="font-size:10.5px;font-weight:700;color:var(--r);font-family:'SF Mono',monospace">${fmt(h.allTimeChange)}</div>
-              <div style="font-size:8.5px;color:var(--t3)">~${fmt(Math.abs(h.allTimeChange)*taxRate)} tax savings</div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-      <div style="font-size:9px;color:var(--t3);line-height:1.5">Unrealized loss vs. cost basis (all-time), at your ${(taxRate*100).toFixed(1)}% capital-gains rate. Harvesting realizes the loss to offset gains elsewhere — but the IRS wash-sale rule disallows the deduction if you buy the same or a "substantially identical" security within 30 days before or after the sale. Consider a similar (not identical) fund if you want to stay invested.</div>
-    </div>`;
-  })()}
-
-  <div class="refine-links"><button class="ui-btn" onclick="setSubView('overview')">Manage accounts & classifications →</button></div>
+    ${note(`Observed ${when}, through the NormOS account bridge.`)}
+    ${note('Individual securities — cost basis, gainers and losers — are not carried by the bridge, which publishes account balances only. Monarch itself still shows them.')}
+    <div class="refine-links"><button class="ui-btn" onclick="setSubView('overview')">Manage accounts & classifications →</button></div>
   </div>`;
   mountAccountDonut();
-
-
-  if(donutData.length>0){
-    const legend=document.getElementById('portfolioHoldingLegend');
-    if(legend)legend.innerHTML=donutLabels.map((label,i)=>{
-      const value=donutData[i],pct=donutTotal>0?value/donutTotal*100:0;
-      return `<div class="portfolio-holding-legend-row"><span class="portfolio-holding-swatch" style="background:${donutColors[i]}"></span><span class="portfolio-holding-name">${advEscape(label)}</span><strong>${fmt(value)}</strong><small>${pct.toFixed(1)}%</small></div>`;
-    }).join('');
-    const dCtx=document.getElementById('portfolioDonut').getContext('2d');
-    charts.main=new Chart(dCtx,{
-      type:'doughnut',
-      data:{labels:donutLabels,datasets:[{data:donutData,backgroundColor:donutColors.slice(0,donutData.length),borderWidth:2,borderColor:'rgba(255,255,255,.85)',hoverOffset:7,hoverBorderColor:'#fff'}]},
-      options:{
-        responsive:true,maintainAspectRatio:false,cutout:'62%',
-        plugins:{
-          legend:{display:false},
-          tooltip:{..._GLASS_TOOLTIP,callbacks:{label:ctx=>`  ${ctx.label}: ${fmt(ctx.raw)} (${donutTotal>0?(ctx.raw/donutTotal*100).toFixed(1):'0'}%)`}},
-          datalabels:{
-            color:'#fff',
-            font:{size:10,weight:'bold',family:"'Inter',sans-serif"},
-            formatter:(val,ctx)=>{
-              const pct=donutTotal>0?val/donutTotal*100:0;
-              return pct>=5?pct.toFixed(0)+'%':'';
-            },
-            anchor:'center',align:'center',
-          }
-        }
-      },
-      plugins:[ChartDataLabels]
-    });
-  }
 }
 
 // ── Housing: an affordability tool, not a report ───────────────────────────

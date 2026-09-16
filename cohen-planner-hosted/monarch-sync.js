@@ -20,7 +20,15 @@
 
 const SYNC_KEY = 'monarch_tx_sync';
 
+// Transactions, categories and budgets came from a direct Monarch session the planner no
+// longer holds; the NormOS account bridge publishes account balances only. The READ paths
+// below (ledger, localCategories, status, setOverride) work entirely from what was already
+// stored and are untouched — Spending still renders every transaction ever synced. The three
+// paths that need a live feed refuse in a sentence rather than crashing on a method that is
+// not there, and start working again unchanged the day a feed exists.
+const NO_FEED = 'No transaction feed. The planner reads account balances from the NormOS bridge and holds no Monarch session, so stored transactions can be read but not refreshed.';
 function createMonarchSync({ db, live, now = Date.now }) {
+  const needFeed = (fn) => { if (typeof (live || {})[fn] !== 'function') throw new Error(NO_FEED); };
 
   // ── Schema ───────────────────────────────────────────────────────────────
   async function initSchema() {
@@ -127,6 +135,7 @@ function createMonarchSync({ db, live, now = Date.now }) {
   // Pages until the reported total is covered. The page cap is a guard against a totalCount
   // that never converges — an infinite loop against a paid API is worse than a short read.
   async function pullWindow(startDate, endDate, { maxPages = 200 } = {}) {
+    needFeed('transactionsPage');
     const seen = new Set();
     let offset = 0, total = null, pages = 0, written = 0;
     while (pages < maxPages) {
@@ -202,6 +211,7 @@ function createMonarchSync({ db, live, now = Date.now }) {
   }
 
   async function syncCategories() {
+    needFeed('categories');
     await initSchema();
     const cats = await live.categories();
     for (const c of cats) {
@@ -218,6 +228,7 @@ function createMonarchSync({ db, live, now = Date.now }) {
   }
 
   async function syncBudgets({ startDate, endDate }) {
+    needFeed('budgets');
     await initSchema();
     const { rows } = await live.budgets({ startDate, endDate });
     for (const b of rows) {

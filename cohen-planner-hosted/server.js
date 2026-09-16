@@ -385,234 +385,18 @@ app.get('/api/debug/db', requireDebug, async (req, res) => {
   }
 });
 
-// ── Monarch OAuth2 + MCP ─────────────────────────────────────────────────────
-const MONARCH_AUTH = 'https://api.monarch.com';
-const MONARCH_MCP  = 'https://api.monarch.com/mcp';
+// The planner holds no Monarch credential of any kind. What stood here was the retired MCP
+// OAuth flow — dynamic client registration, an authorize/callback pair, a refresh-token
+// rotation guard and a JSON-RPC transport — all of it keeping a Monarch session in
+// oauth_tokens and speaking to api.monarch.com directly. Balances come from the NormOS
+// account bridge now, so none of it has anything left to authenticate.
 
 const RETIREMENT_SUBTYPES = new Set([
   '401k','403b','457b','traditional_ira','roth_ira','roth401k',
   'sep_ira','simple_ira','pension','retirement','defined_benefit','defined_contribution',
 ]);
 
-async function monarchOAuthRow() {
-  const r = await db.query("SELECT data FROM oauth_tokens WHERE key='monarch'");
-  return r.rows[0]?.data ?? null;
-}
 
-// Multiple requests (concurrent tabs, or the advisor endpoint fetching both a Monarch
-// snapshot and its tool schema) can all see an expired cached token at once. Without
-// dedup, each independently POSTs the same refresh_token — if Monarch rotates refresh
-// tokens (single-use), the second call invalidates what the first call just received,
-// silently breaking one of the two concurrent requests. Share one in-flight refresh.
-let _refreshInFlight = null;
-
-async function getMonarchAccessToken() {
-  const stored = await monarchOAuthRow();
-  if (!stored) return null;
-  // Return cached access token if still valid (5-min buffer)
-  if (stored.expires_at && Date.now() < stored.expires_at - 5 * 60 * 1000) {
-    return stored.access_token;
-  }
-  // Try refresh_token
-  if (!stored.refresh_token) return null;
-  if (_refreshInFlight) return _refreshInFlight;
-  _refreshInFlight = (async () => {
-    try {
-      const r = await fetch(`${MONARCH_AUTH}/oauth/token/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          refresh_token: stored.refresh_token,
-          client_id: stored.client_id,
-          resource: MONARCH_MCP,
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!r.ok) {
-        // Only a definitive auth rejection (4xx — e.g. invalid_grant, revoked token) means
-        // the refresh token itself is dead and reconnect is required. A 5xx or network
-        // hiccup is transient — clearing tokens then would force a full re-authorization
-        // for what might just be a momentary Monarch outage, so leave them in place to
-        // retry on the next request.
-        if (r.status >= 400 && r.status < 500) {
-          await db.query("DELETE FROM oauth_tokens WHERE key='monarch'");
-        } else {
-          console.error('Monarch token refresh transient failure:', r.status);
-        }
-        return null;
-      }
-      const tokens = await r.json();
-      const updated = {
-        ...stored,
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token || stored.refresh_token,
-        expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
-      };
-      await db.query(
-        "INSERT INTO oauth_tokens(key,data) VALUES('monarch',$1) ON CONFLICT(key) DO UPDATE SET data=$1,updated_at=NOW()",
-        [JSON.stringify(updated)]
-      );
-      return updated.access_token;
-    } catch (e) {
-      console.error('Monarch token refresh error:', e.message);
-      return null;
-    } finally {
-      _refreshInFlight = null;
-    }
-  })();
-  return _refreshInFlight;
-}
-
-function parseSSEorJSON(text) {
-  // Streamable-HTTP MCP may return either a JSON body or an SSE stream.
-  const trimmed = text.trimStart();
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    return JSON.parse(trimmed);
-  }
-  // SSE: collect the last `data:` line that parses as JSON
-  let result = null;
-  for (const line of text.split('\n')) {
-    const l = line.trim();
-    if (l.startsWith('data:')) {
-      const payload = l.slice(5).trim();
-      if (!payload || payload === '[DONE]') continue;
-      try { result = JSON.parse(payload); } catch { /* skip */ }
-    }
-  }
-  if (result === null) throw new Error('No JSON found in MCP response');
-  return result;
-}
-
-let _mcpSessionId = null;
-
-async function callMonarchMCP(accessToken, method, params = {}) {
-  const headers = {
-    'Authorization': `Bearer ${accessToken}`,
-    'Content-Type': 'application/json',
-    'Accept': 'application/json, text/event-stream',
-  };
-  if (_mcpSessionId) headers['Mcp-Session-Id'] = _mcpSessionId;
-
-  const r = await fetch(MONARCH_MCP, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    signal: AbortSignal.timeout(15000),
-  });
-  // Capture session id if the server assigns one
-  const sid = r.headers.get('mcp-session-id');
-  if (sid) _mcpSessionId = sid;
-
-  if (!r.ok) {
-    const body = await r.text().catch(() => '');
-    throw new Error(`MCP ${r.status}: ${body.slice(0, 200)}`);
-  }
-  const text = await r.text();
-  return parseSSEorJSON(text);
-}
-
-// Start OAuth flow — registers client dynamically, redirects to Monarch auth page
-app.get('/api/monarch-connect', requireAuth, async (req, res) => {
-  try {
-    const redirectUri = `${req.protocol}://${req.get('host')}/api/monarch-callback`;
-
-    // Get or register OAuth client (re-register if redirect URI changed)
-    const clientRow = await db.query("SELECT data FROM oauth_tokens WHERE key='monarch_client'");
-    const storedClient = clientRow.rows[0]?.data;
-    let clientId = (storedClient && storedClient.redirect_uri === redirectUri) ? storedClient.client_id : null;
-    if (!clientId) {
-      const reg = await fetch(`${MONARCH_AUTH}/oauth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_name: 'Cohen Financial Planner',
-          redirect_uris: [redirectUri],
-          grant_types: ['authorization_code', 'refresh_token'],
-          response_types: ['code'],
-          token_endpoint_auth_method: 'none',
-          scope: 'mcp:read',
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!reg.ok) throw new Error('Client registration failed: ' + reg.status);
-      const regData = await reg.json();
-      clientId = regData.client_id;
-      await db.query(
-        "INSERT INTO oauth_tokens(key,data) VALUES('monarch_client',$1) ON CONFLICT(key) DO UPDATE SET data=$1",
-        [JSON.stringify({ client_id: clientId, redirect_uri: redirectUri })]
-      );
-    }
-
-    // PKCE
-    const codeVerifier  = crypto.randomBytes(32).toString('base64url');
-    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
-    const state = crypto.randomBytes(16).toString('hex');
-
-    req.session.monarchOAuth = { codeVerifier, state, clientId, redirectUri };
-
-    const url = new URL(`${MONARCH_AUTH}/oauth/authorize/`);
-    url.searchParams.set('response_type', 'code');
-    url.searchParams.set('client_id', clientId);
-    url.searchParams.set('redirect_uri', redirectUri);
-    url.searchParams.set('scope', 'mcp:read');
-    url.searchParams.set('code_challenge', codeChallenge);
-    url.searchParams.set('code_challenge_method', 'S256');
-    url.searchParams.set('state', state);
-    url.searchParams.set('resource', MONARCH_MCP); // RFC 8707 — required per MCP OAuth spec
-
-    res.redirect(url.toString());
-  } catch (err) {
-    console.error('Monarch connect error:', err);
-    res.redirect('/?monarch_error=' + encodeURIComponent(err.message));
-  }
-});
-
-// OAuth callback — exchanges code for tokens
-app.get('/api/monarch-callback', requireAuth, async (req, res) => {
-  const { code, state, error } = req.query;
-  const oauthState = req.session.monarchOAuth;
-
-  if (error)   return res.redirect('/?monarch_error=' + encodeURIComponent(error));
-  if (!oauthState || state !== oauthState.state) return res.redirect('/?monarch_error=state_mismatch');
-  if (!code)   return res.redirect('/?monarch_error=no_code');
-
-  try {
-    const r = await fetch(`${MONARCH_AUTH}/oauth/token/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: oauthState.redirectUri,
-        client_id: oauthState.clientId,
-        code_verifier: oauthState.codeVerifier,
-        resource: MONARCH_MCP,
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!r.ok) {
-      const err = await r.text();
-      return res.redirect('/?monarch_error=' + encodeURIComponent('Token exchange failed: ' + err.slice(0, 100)));
-    }
-    const tokens = await r.json();
-    await db.query(
-      "INSERT INTO oauth_tokens(key,data) VALUES('monarch',$1) ON CONFLICT(key) DO UPDATE SET data=$1,updated_at=NOW()",
-      [JSON.stringify({
-        client_id: oauthState.clientId,
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
-      })]
-    );
-    delete req.session.monarchOAuth;
-    res.redirect('/?monarch_connected=1');
-  } catch (err) {
-    res.redirect('/?monarch_error=' + encodeURIComponent(err.message));
-  }
-});
-
-// Account sync uses the same direct/import source as NormOS; old OAuth is not health.
 app.get('/api/monarch-status', requireAuth, async (req, res) => {
   try { res.set('Cache-Control', 'no-store').json(await monarchLive.status()); }
   catch { res.status(503).json({ connected: false, error: 'NormOS connection unavailable' }); }
@@ -624,52 +408,6 @@ app.post('/api/monarch-enable', requireAuth, async (req, res) => {
 app.post('/api/monarch-disconnect', requireAuth, async (req, res) => {
   try { await monarchLive.setEnabled(false); res.json({ ok: true }); }
   catch { res.status(503).json({ error: 'Could not pause sync' }); }
-});
-
-// Debug: list available MCP tools + schemas
-app.get('/api/monarch-tools', requireDebug, async (req, res) => {
-  try {
-    const accessToken = await getMonarchAccessToken();
-    if (!accessToken) return res.status(401).json({ error: 'Not connected' });
-    await monarchMCPHandshake(accessToken);
-    const list = await callMonarchMCP(accessToken, 'tools/list');
-    res.json(list?.result ?? list);
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
-});
-
-// Probe: discover portfolio/holdings tools and try calling them
-app.get('/api/monarch-probe-portfolio', requireDebug, async (req, res) => {
-  try {
-    const accessToken = await getMonarchAccessToken();
-    if (!accessToken) return res.status(401).json({ error: 'Not connected' });
-    await monarchMCPHandshake(accessToken);
-
-    // 1. Get full tool list
-    const list = await callMonarchMCP(accessToken, 'tools/list');
-    const allTools = (list?.result?.tools ?? list?.tools ?? []).map(t => t.name ?? t);
-
-    // 2. Try each likely portfolio tool name
-    const candidates = [
-      'GetPortfolio','GetAccountHoldings','GetHoldings','GetInvestments',
-      'GetSecurities','GetPositions','GetInvestmentAccounts',
-      'get_portfolio','get_account_holdings','get_holdings','get_investments',
-    ];
-    const results = {};
-    for (const name of candidates) {
-      if (!allTools.includes(name)) { results[name] = 'NOT_IN_TOOL_LIST'; continue; }
-      try {
-        const r = await callMonarchMCP(accessToken, 'tools/call', { name, arguments: {} });
-        results[name] = { ok: true, preview: JSON.stringify(unwrapMCPResult(r)).slice(0, 500) };
-      } catch(e) {
-        results[name] = { ok: false, error: e.message };
-      }
-    }
-    res.json({ allTools, results });
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
 });
 
 // Which Monarch precondition is actually failing. Booleans and upstream messages only —
@@ -790,12 +528,10 @@ app.get('/api/accounts/overview', requireAuth, async (req, res) => {
       holdings: false, // set below only if holdings actually return
       transactions: (syncStatus.transactions || 0) > 0, transactionsAsOf: syncStatus.lastSyncAt,
     });
-    let holdings = [];
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      holdings = await monarchLive.holdings({ startDate: today, endDate: today });
-      caps.holdings = { available: true, detail: `${holdings.length} positions`, asOf: today };
-    } catch (err) { caps.holdings = { available: false, detail: err.message, asOf: null }; }
+    // Position-level holdings came from a direct Monarch session this server no longer has.
+    // Stated as a settled fact, not a failure to retry: nothing about it will change.
+    const holdings = [];
+    caps.holdings = { available: false, detail: 'Not carried by the NormOS account bridge, which publishes account balances only.', asOf: null };
 
     res.json({
       asOf: snapshotAsOf, warning, partial: sourcePartial,
@@ -942,16 +678,6 @@ app.get('/api/wealth/history', requireAuth, async (req, res) => {
   } catch (err) { res.status(503).json({ error: err.message }); }
 });
 
-// Replace the planner's copy of the Monarch session. It holds its own, separate from the one
-// NormOS keeps, so NormOS staying connected does not stop this one expiring — and before this
-// existed the only cure for an expired deploy-time token was a redeploy. The token is
-// verified against Monarch before it is stored, and neither logged nor echoed back.
-app.put('/api/monarch-token', requireAuth, async (req, res) => {
-  try {
-    res.json({ ok: true, ...(await monarchLive.setToken(req.body && req.body.token)) });
-  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
-});
-
 app.get('/api/monarch-diagnostics', requireAuth, async (req, res) => {
   try {
     res.json(await monarchLive.diagnose());
@@ -960,62 +686,10 @@ app.get('/api/monarch-diagnostics', requireAuth, async (req, res) => {
   }
 });
 
-// Individual holdings, read through the same direct Monarch connection the balance bridge
-// already uses. This does NOT go through the Monarch MCP connector, which is paused
-// upstream — the shaping below is the original MCP-era implementation, re-pointed at the
-// GraphQL source. If the query fails for any reason the response degrades to the same 503
-// the stub returned, so Holdings falls back to the account-level view rather than erroring.
-app.get('/api/monarch-investments', requireAuth, async (req, res) => {
-  try {
-    const now = new Date();
-    const end = req.query.end || now.toISOString().slice(0, 10);
-    // YTD has no fixed day-count — handle it before the lookup so it can't fall through
-    // to the `?? 30` default (periodDays['YTD'] is intentionally null, and `??` treats
-    // null the same as "missing", which previously silently aliased YTD to 1M).
-    const isYTD = req.query.period === 'YTD';
-    const periodDays = { '1W': 7, '1M': 30, '3M': 90, '1Y': 365 };
-    const pd = isYTD ? null : (periodDays[req.query.period] ?? 30);
-    const start = req.query.start || (isYTD
-      ? `${now.getFullYear()}-01-01`
-      : new Date(now.getTime() - pd * 864e5).toISOString().slice(0, 10));
-
-    const portfolio = await monarchLive.investmentPortfolio({ startDate: start, endDate: end });
-    const holdings = portfolio.holdings;
-
-    const totalValue = holdings.reduce((s, h) => s + h.value, 0);
-    // Monarch calculates contribution-aware performance for the requested window. The
-    // holding fields describe each security's price movement and cannot be summed into a
-    // portfolio return. If performance is absent, show current-holdings price growth and
-    // label it explicitly rather than fabricating a return.
-    const priceGrowth = holdings.reduce((s, h) => s + (Number.isFinite(h.periodChange) ? h.periodChange : 0), 0);
-    const hasReturn = !!portfolio.performance;
-    const periodChange = hasReturn ? portfolio.performance.totalChangeDollars : priceGrowth;
-    const periodChangePct = hasReturn
-      ? portfolio.performance.totalChangePercent
-      : (totalValue - priceGrowth > 0 ? priceGrowth / (totalValue - priceGrowth) * 100 : 0);
-    const allTimeChange = holdings.reduce((s, h) => s + h.allTimeChange, 0);
-    const withMoves = holdings.filter(h => h.securityType !== 'cash' && Number.isFinite(h.periodChange) && h.periodChange !== 0);
-    const byMove = [...withMoves].sort((a, b) => b.periodChange - a.periodChange);
-
-    res.json({
-      periodStart: start,
-      periodEnd: end,
-      totalValue,
-      periodChange: Math.round(periodChange * 100) / 100,
-      periodChangePct: Math.round(periodChangePct * 100) / 100,
-      periodMetric: hasReturn ? 'return' : 'current_holdings_growth',
-      allTimeChange: Math.round(allTimeChange * 100) / 100,
-      allTimePct: totalValue - allTimeChange > 0 ? Math.round(allTimeChange / (totalValue - allTimeChange) * 10000) / 100 : 0,
-      holdings,
-      topGainers: byMove.slice(0, 5).filter(h => h.periodChange > 0),
-      topLosers: byMove.slice(-5).reverse().filter(h => h.periodChange < 0),
-    });
-  } catch (err) {
-    // Never surface a raw upstream error: the messages thrown above are already written for
-    // the user, and anything else is an implementation detail.
-    res.status(503).json({ error: err.message || 'Individual holdings are unavailable right now. Account balances remain available.' });
-  }
-});
+// Individual holdings are no longer available. They were read straight from Monarch's
+// GraphQL API on a session this server kept for itself; the NormOS account bridge carries
+// account balances and nothing else, so there is no credential here to read them with. The
+// Holdings view now works from classified account balances alone.
 
 function num(v) {
   if (typeof v === 'number') return v;
@@ -1024,47 +698,6 @@ function num(v) {
 }
 
 // Unwrap a FastMCP tool result into its parsed JSON payload
-function unwrapMCPResult(toolResult) {
-  let payload = toolResult?.result?.structuredContent?.result
-    ?? (toolResult?.result?.content ?? []).find(b => b.type === 'text')?.text
-    ?? toolResult?.result
-    ?? null;
-  // Parse JSON strings, possibly double-wrapped as {result: "..."}
-  for (let i = 0; i < 2; i++) {
-    if (typeof payload === 'string') {
-      try { payload = JSON.parse(payload); } catch { break; }
-    }
-    if (payload && typeof payload === 'object' && typeof payload.result === 'string') {
-      try { payload = JSON.parse(payload.result); continue; } catch { break; }
-    }
-    break;
-  }
-  return payload;
-}
-
-async function monarchMCPHandshake(accessToken) {
-  _mcpSessionId = null;
-  await callMonarchMCP(accessToken, 'initialize', {
-    protocolVersion: '2024-11-05',
-    capabilities: {},
-    clientInfo: { name: 'cohen-financial-planner', version: '1.0.0' },
-  });
-  // Fire-and-forget initialized notification
-  try {
-    const nh = {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/event-stream',
-    };
-    if (_mcpSessionId) nh['Mcp-Session-Id'] = _mcpSessionId;
-    await fetch(MONARCH_MCP, {
-      method: 'POST', headers: nh,
-      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
-      signal: AbortSignal.timeout(8000),
-    });
-  } catch { /* notifications may 202/204 with empty body — ignore */ }
-}
-
 // Resolve a promise but give up (with a fallback) after `ms` so a slow Monarch
 // handshake can never hang the advisor response.
 const withTimeout = (p, ms, fallback) =>

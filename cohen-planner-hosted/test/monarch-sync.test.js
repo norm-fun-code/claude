@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { createMonarchSync, monthChunks } = require('../monarch-sync.js');
-const { mapTransaction } = require('../monarch-live.js');
 
 // A small stand-in for the Postgres calls this module makes. It implements the specific
 // statements rather than SQL generally — enough to exercise idempotency, pending→posted,
@@ -91,10 +90,14 @@ function fakeLive(rows, { pageSize = 2, fail = null } = {}) {
   };
 }
 
-const raw = (id, over = {}) => mapTransaction({
-  id, date: '2026-03-05', amount: -100, category: { id: '1', name: 'Groceries' },
-  account: { id: 'a1', displayName: 'Chase' }, merchant: { id: 'm', name: 'Store' },
-  pending: false, updatedAt: '2026-03-06T00:00:00Z', tags: [], ...over,
+// The flat row the sync stores. This used to be built by a Monarch-specific shaper in
+// monarch-live.js; with no Monarch client left, the shape IS the contract a feed must meet,
+// so the fixture states it directly rather than deriving it from a provider's payload.
+const raw = (id, over = {}) => ({
+  id: String(id), date: '2026-03-05', amount: -100, merchant: 'Store', plaidName: '', notes: '',
+  categoryId: '1', categoryName: 'Groceries', accountId: 'a1', accountName: 'Chase',
+  pending: false, hideFromReports: false, isRecurring: false, isSplitTransaction: false,
+  tags: [], updatedAt: '2026-03-06T00:00:00Z', createdAt: null, ...over,
 });
 
 describe('monthChunks', () => {
@@ -171,7 +174,7 @@ describe('transaction sync', () => {
     await sync.pullWindow('2026-03-01', '2026-03-31');
     await sync.setOverride('t1', { userKind: 'transfer', userCategoryId: '99' });
     // provider re-categorises it; sync runs again
-    sync = createMonarchSync({ db, live: fakeLive([raw('t1', { category: { id: '7', name: 'Shopping' } })]) });
+    sync = createMonarchSync({ db, live: fakeLive([raw('t1', { categoryId: '7', categoryName: 'Shopping' })]) });
     await sync.pullWindow('2026-03-01', '2026-03-31');
     const row = db.tx.get('t1');
     expect(row.category_id).toBe('7');        // provider value refreshed

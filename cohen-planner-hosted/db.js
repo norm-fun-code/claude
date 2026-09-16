@@ -159,6 +159,16 @@ async function initSchema() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+
+  // A credential kept after the code that used it is gone is a credential nobody is
+  // watching. The planner no longer authenticates to Monarch at all — balances come from
+  // the NormOS account bridge — so the stored Monarch OAuth grant and any session cached
+  // beside the bridge snapshot are deleted here rather than left behind in the database.
+  //
+  // 'monarch_bridge' itself stays: it holds the last account snapshot and the paused flag,
+  // which are data, not credentials. Only the `token` key inside it goes.
+  await pool.query("DELETE FROM oauth_tokens WHERE key = 'monarch'");
+  await pool.query("UPDATE oauth_tokens SET data = data - 'token' WHERE key = 'monarch_bridge' AND data ? 'token'");
 }
 
 module.exports = { pool, query: (...args) => pool.query(...args), initSchema };
