@@ -560,25 +560,44 @@ function mountSpendingCharts({rows,months,asOf,verified}){
   const legend=document.getElementById('spendCategoryLegend');
   legend.innerHTML=slices.length?slices.map((r,i)=>`<div><span class="spend-key" style="background:${palette[i]}"></span><span>${advEscape(r.name)}</span><strong>${dollars(r.net)}</strong><small>${(r.net/total*100).toFixed(1)}%</small></div>`).join(''):'<p>No positive category spending in this period.</p>';
   charts.spendingCategories=new Chart(document.getElementById('spendCategoryChart'),{type:'doughnut',data:{labels:slices.map(r=>r.name),datasets:[{data:slices.map(r=>r.net),backgroundColor:palette,borderColor:'#111b2b',borderWidth:4,hoverOffset:5}]},options:{responsive:true,maintainAspectRatio:false,cutout:'72%',plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.label}: ${dollars(c.raw)} (${(c.raw/total*100).toFixed(1)}%)`}}}}});
-  // The trailing twelve-month line, over the bars it explains. Same axis, because it is a
-  // per-month average rather than a twelve-month total — a total would be twelve times taller
-  // and need a second axis, and a second axis is the easiest way to make two series look
-  // related when they are not.
-  const ltm=window.PlannerSpending
-    ? PlannerSpending.rollingSeries(months,12,{skip:[asOf.slice(0,7)]})
-    : months.map(()=>null);
-  const hasLtm=ltm.some(Boolean);
-  const ltmLine=(key,label,color)=>({label,type:'line',
-    data:ltm.map(p=>p?p[key]:null),
-    borderColor:color,backgroundColor:color,borderWidth:2.5,tension:.35,
-    pointRadius:0,pointHoverRadius:4,fill:false,spanGaps:false,order:0,
-    // A line-shaped key in the legend: with the default square, "Income · 12-month average"
-    // was indistinguishable from "Income", which is the one distinction the chart is making.
-    pointStyle:'line'});
   charts.spendingMonths=new Chart(document.getElementById('spendMonthlyChart'),{type:'bar',data:{labels:months.map(m=>monthLabel(m.month)+(m.month===asOf.slice(0,7)?' · partial':verified.includes(m.month)?'':' *')),datasets:[
-    {label:'Income',data:months.map(m=>m.income||0),backgroundColor:'#72cbb0',borderRadius:4,order:1,pointStyle:'rect'},
-    {label:'Spending',data:months.map(m=>m.expense||0),backgroundColor:'#a798ef',borderRadius:4,order:1,pointStyle:'rect'},
-    ...(hasLtm?[ltmLine('income','Income · 12-month average','#1f8a6a'),ltmLine('expense','Spending · 12-month average','#5b45c9')]:[])]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#bdc9dc',font:{size:12},usePointStyle:true,boxWidth:14,boxHeight:10,padding:14}},tooltip:{callbacks:{label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}`}}},scales:{x:{ticks:{color:'#aabbd0',maxRotation:60,minRotation:45,autoSkipPadding:12,font:{size:11}},grid:{display:false}},y:{ticks:{color:'#aabbd0',callback:v=>fmt(v)},grid:{color:'#27364b'}}}}});
+    {label:'Income',data:months.map(m=>m.income||0),backgroundColor:'#72cbb0',borderRadius:4},
+    {label:'Spending',data:months.map(m=>m.expense||0),backgroundColor:'#a798ef',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#bdc9dc',font:{size:12}}},tooltip:{callbacks:{label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}`}}},scales:{x:{ticks:{color:'#aabbd0',maxRotation:60,minRotation:45,autoSkipPadding:12,font:{size:11}},grid:{display:false}},y:{ticks:{color:'#aabbd0',callback:v=>fmt(v)},grid:{color:'#27364b'}}}}});
+
+  // ── Drift: the trailing twelve-month run rate, on its own ──
+  // A separate chart rather than lines over the bars. A single month is noise at this scale and
+  // the bars carry it; what this one is for is the direction the run rate has been moving, and
+  // that reads far better without twenty-odd bars behind it. The axis is a per-month average,
+  // not a twelve-month total, so the numbers stay comparable with the bars next door.
+  const ltmCanvas=document.getElementById('spendLtmChart');
+  if(ltmCanvas){
+    const ltm=window.PlannerSpending
+      ? PlannerSpending.rollingSeries(months,12,{skip:[asOf.slice(0,7)]})
+      : months.map(()=>null);
+    const first=ltm.findIndex(Boolean),last=ltm.length-1-[...ltm].reverse().findIndex(Boolean);
+    const note=document.getElementById('spendLtmNote');
+    if(first<0){
+      // Nothing to draw. Saying why beats an empty grid that reads as a run rate of zero.
+      ltmCanvas.closest('.spend-ltm-wrap').style.display='none';
+      if(note)note.textContent='Twelve consecutive months of records are needed before a trailing average exists. Once there are, this shows how the run rate has drifted.';
+    }else{
+      // Trimmed to the months that have a window: the ones before the first full year, and the
+      // month in progress on the end, are not a run rate of zero. Leaving them in would squash
+      // the part that has something to say and hang a blank tick off each end.
+      const span=ltm.slice(first,last+1),lab=months.slice(first,last+1).map(m=>monthLabel(m.month));
+      const line=(key,label,color)=>({label,data:span.map(p=>p?p[key]:null),
+        borderColor:color,backgroundColor:color,borderWidth:2.5,tension:.35,
+        pointRadius:0,pointHoverRadius:4,fill:false,spanGaps:false});
+      charts.spendingLtm=new Chart(ltmCanvas,{type:'line',data:{labels:lab,datasets:[
+        line('income','Income · trailing 12-month average','#72cbb0'),
+        line('expense','Spending · trailing 12-month average','#a798ef')]},
+        options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+          plugins:{legend:{labels:{color:'#bdc9dc',font:{size:12}}},
+            tooltip:{callbacks:{title:c=>`12 months to ${c[0].label}`,label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}/mo`}}},
+          scales:{x:{ticks:{color:'#aabbd0',maxRotation:60,minRotation:45,autoSkipPadding:12,font:{size:11}},grid:{display:false}},
+            y:{ticks:{color:'#aabbd0',callback:v=>fmt(v)},grid:{color:'#27364b'}}}}});
+    }
+  }
   if(months.some(m=>m.month!==asOf.slice(0,7)&&!verified.includes(m.month))){
     const note=document.createElement('p');note.className='spend-caption';note.textContent='* Full-month import coverage has not been verified.';document.getElementById('spendMonthlyChart').parentElement.after(note);
   }

@@ -431,7 +431,34 @@ describe('the scope filter leaves the history summary alone', () => {
 
   it('claims a trend only when the CHOSEN period holds enough months for one', () => {
     // A one-month scope leaves `prior` empty, so every category reads as risen from zero.
-    expect(src).toContain('const canTrend=complete.length>=6&&');
+    // It counts the CLOSED months in the scope: year-to-date now carries the month in
+    // progress, and a fortnight of it standing in for a month would tilt both sides.
+    expect(src).toContain('const canTrend=closedScoped.length>=6&&');
+    expect(src).toContain('const recent=closedScoped.slice(-3),prior=closedScoped.slice(-6,-3);');
+  });
+});
+
+// ── Year to date means to date ───────────────────────────────────────────
+describe('the year-to-date scope', () => {
+  const src = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  it('reads from the full history, so the month in progress is in it', () => {
+    expect(src).toContain('const complete=spendScopeMonths(completeAll,asOf,months);');
+    expect(src).toContain('const src=(every&&every.length?every:rows);');
+  });
+
+  it('is the one scope that does, and stops claiming the current month is excluded', () => {
+    expect(src).toContain("${['month','year','ytd'].includes(_spendScope.kind)?'':' · current month excluded'}");
+  });
+
+  it('divides per-month figures by months ELAPSED, not months listed', () => {
+    // 53% of September counted as a whole month would report the run rate about half again
+    // too low — the one way including the partial month could mislead.
+    expect(src).toContain('const n=(closedScoped.length+(partialInScope?(Number(cov.fractionElapsed)||1):0))||1;');
+  });
+
+  it('offers the chip even before a month of the year has closed', () => {
+    expect(src).toContain("closedThisYear||months.some(m=>String(m.month).slice(0,4)===thisYear)?scopeChip('ytd'");
   });
 });
 
@@ -491,13 +518,25 @@ describe('the rolling LTM series', () => {
     expect(S.rollingSeries(run(3, () => ({})), 12).every(x => x === null)).toBe(true);
   });
 
-  it('is drawn as a line, and says so in the legend', () => {
+  it('is a chart of its own, not lines laid over the monthly bars', () => {
     const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
+    const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
     expect(cockpit).toContain("PlannerSpending.rollingSeries(months,12,{skip:[asOf.slice(0,7)]})");
-    // A square swatch made "Income · 12-month average" indistinguishable from "Income",
-    // which is the one distinction this chart exists to draw.
-    expect(cockpit).toContain("pointStyle:'line'");
-    expect(cockpit).toContain('usePointStyle:true');
+    expect(cockpit).toContain("document.getElementById('spendLtmChart')");
+    expect(cockpit).toContain('charts.spendingLtm=new Chart');
+    expect(html).toContain('id="spendLtmChart"');
+    // The bar chart carries the two bars and nothing else — the whole point of splitting.
+    const barChart = cockpit.slice(cockpit.indexOf('charts.spendingMonths='), cockpit.indexOf('const ltmCanvas'));
+    expect(barChart).toContain("type:'bar'");
+    expect(barChart).not.toMatch(/12-month average/);
+  });
+
+  it('starts where the first full window closes rather than drawing empty months', () => {
+    const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
+    expect(cockpit).toContain('const first=ltm.findIndex(Boolean)');
+    // Nothing to draw is said in words, not shown as a flat line at zero.
+    expect(cockpit).toContain("if(first<0)");
+    expect(cockpit).toContain('spendLtmNote');
   });
 
   it('offers twelve months as a period once twelve exist, not only once thirteen do', () => {
