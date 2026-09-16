@@ -216,6 +216,49 @@
     return window.reduce((s,m)=>s+f(m),0)/n;
   }
 
+  // ── The trailing window, month by month ──────────────────────────────────
+  // Monthly bars are noisy: one holiday, one insurance renewal, one quarter's tuition and the
+  // shape of the year disappears. A trailing twelve-month line laid over them separates the
+  // month from the trend — flat means a steady run rate whatever the bars do, and a rising
+  // line is drift you would not otherwise see until the annual total arrived.
+  //
+  // Reported as a PER-MONTH average rather than the twelve-month total, so it shares the axis
+  // with the bars it explains. A total is twelve times taller and needs a second axis, and a
+  // second axis on the same chart is the easiest way to make two series look related when
+  // they are not.
+  //
+  // A window is only produced where all `n` months are present AND consecutive. A gap in the
+  // history silently averaging eleven months as though they were twelve would report a fall
+  // that is really a missing record; nulls leave the line broken, which is the truth.
+  function rollingSeries(months,n,opts){
+    const rows=Array.isArray(months)?months:[];
+    const o=opts||{};
+    const size=Math.max(1,Number(n)||12);
+    const skip=new Set(o.skip||[]);
+    const pick=o.pick||(m=>({income:Number(m.income)||0,expense:Number(m.expense)||0}));
+    // Month keys are comparable as strings, so consecutiveness is a date walk, not arithmetic.
+    const step=(ym,back)=>{
+      const [y,mo]=String(ym).split('-').map(Number);
+      const d=new Date(Date.UTC(y,mo-1-back,1));
+      return d.toISOString().slice(0,7);
+    };
+    return rows.map((m,i)=>{
+      // An incomplete month has no trailing window of its own: including it would drag the
+      // line down for a month that simply has not finished.
+      if(skip.has(m.month))return null;
+      if(i+1<size)return null;
+      const win=rows.slice(i+1-size,i+1);
+      if(win.some(w=>skip.has(w.month)))return null;
+      if(win.some((w,k)=>w.month!==step(m.month,size-1-k)))return null;
+      const parts=win.map(pick);
+      return{
+        month:m.month,
+        income:parts.reduce((s,p)=>s+(Number(p.income)||0),0)/size,
+        expense:parts.reduce((s,p)=>s+(Number(p.expense)||0),0)/size,
+      };
+    });
+  }
+
   // ── Budgets ──────────────────────────────────────────────────────────────
   // Actual-vs-budget for one month. `budgets` is [{categoryId, planned}].
   function budgetStatus(month,budgets,opts){
@@ -244,7 +287,7 @@
   function observedAverage(months,n,today){
     return rollingAverage((months||[]).map(m=>({...m,coverageVerified:true})),n,null,today);
   }
-  const api={KIND,indexCategories,classify,summarize,coverage,rollingAverage,observedAverage,budgetStatus,monthKey,spendOf};
+  const api={KIND,indexCategories,classify,summarize,coverage,rollingAverage,rollingSeries,observedAverage,budgetStatus,monthKey,spendOf};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerSpending=api;
 })(typeof window!=='undefined'?window:this);

@@ -415,3 +415,74 @@ describe('the scope filter leaves the history summary alone', () => {
     expect(src).toContain('const canTrend=complete.length>=6&&');
   });
 });
+
+// ── The trailing twelve months, laid over the months ─────────────────────
+// Monthly bars are noisy — one holiday, one insurance renewal, one quarter of tuition — and
+// the shape of the year disappears into them. The trailing line separates the month from the
+// trend, but only where it can honestly be computed.
+describe('the rolling LTM series', () => {
+  const run = (n, fn) => Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.UTC(2025, i, 1));
+    return { month: d.toISOString().slice(0, 7), ...fn(i) };
+  });
+
+  it('says nothing until a full window exists', () => {
+    const rows = run(14, () => ({ income: 40000, expense: 5000 }));
+    const out = S.rollingSeries(rows, 12);
+    expect(out.slice(0, 11).every(x => x === null)).toBe(true);
+    expect(out[11]).toMatchObject({ month: '2025-12', income: 40000, expense: 5000 });
+  });
+
+  it('reports a per-month average, so it shares the axis with the bars', () => {
+    // A twelve-month TOTAL is twelve times taller and needs a second axis — and a second axis
+    // is the easiest way to make two series look related when they are not.
+    const rows = run(12, () => ({ income: 12000, expense: 1200 }));
+    expect(S.rollingSeries(rows, 12)[11]).toMatchObject({ income: 12000, expense: 1200 });
+  });
+
+  it('shows drift the bars hide', () => {
+    // Spending steps up halfway and stays there: every bar after the step is identical, while
+    // the line climbs as the cheaper months fall out of the window. That climb is the signal.
+    const rows = run(18, i => ({ income: 40000, expense: i < 12 ? 5000 : 8000 }));
+    const out = S.rollingSeries(rows, 12).filter(Boolean).map(x => Math.round(x.expense));
+    expect(out[0]).toBe(5000);
+    for (let i = 1; i < out.length; i++) expect(out[i]).toBeGreaterThan(out[i - 1]);
+  });
+
+  it('breaks across a gap rather than averaging eleven months as twelve', () => {
+    // A missing record would otherwise read as a fall in spending that never happened.
+    const rows = run(15, () => ({ income: 40000, expense: 5000 }));
+    rows.splice(5, 1);                       // 2025-06 never imported
+    const out = S.rollingSeries(rows, 12);
+    expect(out.every(x => x === null)).toBe(true);
+  });
+
+  it('gives an incomplete month no window of its own, and excludes it from others', () => {
+    // Including a month two-thirds through would drag the line down for a month that has
+    // simply not finished.
+    const rows = run(14, () => ({ income: 40000, expense: 5000 }));
+    const partial = rows[13].month;
+    const out = S.rollingSeries(rows, 12, { skip: [partial] });
+    expect(out[13]).toBeNull();
+    expect(out[12]).not.toBeNull();          // the month before still has its own full window
+  });
+
+  it('survives an empty or unusable history without throwing', () => {
+    for (const rows of [[], null, undefined]) expect(S.rollingSeries(rows, 12)).toEqual([]);
+    expect(S.rollingSeries(run(3, () => ({})), 12).every(x => x === null)).toBe(true);
+  });
+
+  it('is drawn as a line, and says so in the legend', () => {
+    const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
+    expect(cockpit).toContain("PlannerSpending.rollingSeries(months,12,{skip:[asOf.slice(0,7)]})");
+    // A square swatch made "Income · 12-month average" indistinguishable from "Income",
+    // which is the one distinction this chart exists to draw.
+    expect(cockpit).toContain("pointStyle:'line'");
+    expect(cockpit).toContain('usePointStyle:true');
+  });
+
+  it('offers twelve months as a period once twelve exist, not only once thirteen do', () => {
+    const src = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+    expect(src).toContain('const ranges=[3,6,12].filter(n=>n<=completeAll.length);');
+  });
+});
