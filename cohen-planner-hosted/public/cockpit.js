@@ -13,6 +13,25 @@ let cockpitYear=null;
 // The one place the choice is applied. Everything on the cockpit reads net worth through
 // here so a new surface cannot quietly pick the wrong field.
 function cpNw(r){return r?(cockpitExRet?r.nw:r.netWorth):0}
+// The projection stated as a change from where you are, because a year-end figure alone
+// cannot be checked against anything. Two cards both reading $1.35M look like one number
+// printed twice; "+$62K from today" says the projection moved, and "no change from today"
+// says it did not — which is a finding, not an ambiguity.
+//
+// Exact dollars on the delta even though the headline is rounded: the whole point is to show
+// a difference that rounding to two decimal places in millions would swallow.
+function cockpitDelta(projected,today,row){
+  if(!Number.isFinite(projected)||!Number.isFinite(today))return '';
+  const d=Math.round(projected-today);
+  const same=d===0;
+  // The projection carries home equity; the observed balances do not cover the house. Say so
+  // rather than letting a down payment read as the year's saving.
+  const home=row&&Number(row.eq)>0?' · includes home equity, which your accounts do not carry':'';
+  const basis=inflationView?` in ${(P.planStartYear||2026)} purchasing power`:'';
+  return `<small class="cp-delta" data-dir="${same?'flat':d>0?'up':'down'}">${
+    same?'No change from today':`${d>0?'+':'−'}${UI.money(Math.abs(d),{exact:true})} from today`
+  }${basis}${home}</small>`;
+}
 function cpLabel(){return cockpitExRet?'net worth ex-retirement':'net worth'}
 function cockpitSetExRet(ex){
   if(cockpitExRet===!!ex)return;
@@ -55,6 +74,14 @@ function renderCockpit(R){
   const current=R.find(r=>r.yr===new Date().getFullYear())||R[0];
   const end=R[R.length-1],floor=R.reduce((a,b)=>a.liq<b.liq?a:b);
   const selected=R.find(r=>r.yr===cockpitYear)||current;cockpitYear=selected.yr;
+  // Where you are now, on whichever basis the toggle is showing, so the projection can be
+  // stated as a CHANGE rather than as a second number the reader has to diff by eye against
+  // a different card. Two figures that round to the same $1.35M are indistinguishable from a
+  // bug when nothing says whether they are meant to be the same.
+  const openingNw=(Number(P.startingLiquid)||0)+(Number(P.startingStripeEquity)||0)
+    +(cockpitExRet?0:(Number(P.k401Start)||0))-Math.abs(Number(P.otherDebt)||0);
+  const todayNw=obsNw!=null?obsNw:openingNw;
+
   const metric=(title,value,detail,action)=>`<button class="cp-metric" onclick="cockpitGo('${action}')"><span>${title}</span><strong>${value}</strong><small>${detail}</small></button>`;
   // The hero must never render a dash. When accounts are unreachable the PLAN still
   // knows a net worth, so show that and let the provenance chip carry the doubt.
@@ -95,7 +122,7 @@ function renderCockpit(R){
           <span class="cp-register-note">Projected from your plan. Not a forecast.</span>
         </div>
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
-      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end ${cpLabel()}</span><strong id="cp-value">${UI.money(deflate(cpNw(selected),selected.yr))}</strong>${R[0].stubFrac<1?`<small class="cp-stub">${R[0].yr} models only the ${Math.round(R[0].stubFrac*100)}% of the year still ahead of ${e(cockpitObservedLabel(P))}. The months before it are already in your balances.</small>`:''}</div><span id="cp-band-note">${cockpitExRet?'Excludes retirement':'Includes retirement'}<br>${inflationView?(P.planStartYear||2026)+' purchasing power':'Future dollars'} · assumed returns</span></div>
+      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end ${cpLabel()}</span><strong id="cp-value">${UI.money(deflate(cpNw(selected),selected.yr))}</strong>${cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected)}${R[0].stubFrac<1?`<small class="cp-stub">${R[0].yr} models only the ${Math.round(R[0].stubFrac*100)}% of the year still ahead of ${e(cockpitObservedLabel(P))}. The months before it are already in your balances.</small>`:''}</div><span id="cp-band-note">${cockpitExRet?'Excludes retirement':'Includes retirement'}<br>${inflationView?(P.planStartYear||2026)+' purchasing power':'Future dollars'} · assumed returns</span></div>
       <label class="cp-basis"><input type="checkbox" id="cp-inc-ret"${cockpitExRet?'':' checked'}
         onchange="cockpitSetExRet(!this.checked)">
         <span>Include retirement</span>

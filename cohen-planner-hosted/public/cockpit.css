@@ -254,3 +254,10 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
 .pace-why{flex:1 1 100%;margin-top:5px;font-size:12px;line-height:1.55;color:var(--t3)}
 /* Only the one-off gets warm colour: it is the one that says "this will not repeat". */
 .pace-why[data-kind="one-off"]{color:var(--warn)}
+
+/* The projection as a change from today, under the year-end figure. Rounding to two decimal
+   places in millions can hide tens of thousands, so this line carries exact dollars. */
+.cp-delta{display:block;margin-top:4px;font-size:11px;line-height:1.45;font-variant-numeric:tabular-nums;color:var(--t3)}
+.cp-delta[data-dir="up"]{color:#72dfbd}
+.cp-delta[data-dir="down"]{color:#f0918f}
+.cp-delta[data-dir="flat"]{color:var(--t2)}

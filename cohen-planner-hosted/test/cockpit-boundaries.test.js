@@ -55,3 +55,62 @@ describe('cockpit financial boundaries',()=>{
     expect(r.every(y=>y.sSold===0&&y.sHold===0)).toBe(true);
   });
 });
+
+// ── The projection, stated as a change ───────────────────────────────────
+// A year-end figure alone cannot be checked against anything. When today's net worth and the
+// projected year-end both round to $1.35M, two cards read as one number printed twice — and
+// there is nothing on screen to say whether that is a coincidence of rounding or a bug.
+describe('the path-ahead delta', () => {
+  const src = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
+  // Run cockpitDelta against a context standing in for the page's globals.
+  const delta = (projected, today, row = {}, opts = {}) => {
+    const ctx = {
+      inflationView: !!opts.inflationView,
+      P: { planStartYear: 2026 },
+      UI: { money: (v, o) => (o && o.exact ? '$' + Math.round(v).toLocaleString('en-US') : '$' + v) },
+    };
+    vm.createContext(ctx);
+    vm.runInContext(src.slice(src.indexOf('function cockpitDelta'), src.indexOf('function cockpitSetExRet')), ctx);
+    return ctx.cockpitDelta(projected, today, row);
+  };
+
+  it('states the movement in exact dollars, because rounded millions hide it', () => {
+    // $1,412,096 and $1,350,000 both print as $1.35M / $1.41M; the difference is the point.
+    const out = delta(1412096, 1350000);
+    expect(out).toContain('+$62,096 from today');
+    expect(out).toContain('data-dir="up"');
+  });
+
+  it('says so plainly when the projection really does not move', () => {
+    const out = delta(1350000, 1350000);
+    expect(out).toContain('No change from today');
+    expect(out).toContain('data-dir="flat"');
+    expect(out).not.toContain('+$0');   // "+$0 from today" reads as a rendering failure
+  });
+
+  it('shows a fall as a fall rather than an unsigned number', () => {
+    const out = delta(1278443, 1350000);
+    expect(out).toContain('−$71,557 from today');
+    expect(out).toContain('data-dir="down"');
+  });
+
+  it('flags the house, which the projection carries and observed accounts do not', () => {
+    expect(delta(2704153, 1350000, { eq: 900000 })).toContain('includes home equity');
+    expect(delta(1412096, 1350000, { eq: 0 })).not.toContain('home equity');
+  });
+
+  it('names the basis when the figure has been deflated', () => {
+    expect(delta(2e6, 1350000, {}, { inflationView: true })).toContain('in 2026 purchasing power');
+    expect(delta(2e6, 1350000)).not.toContain('purchasing power');
+  });
+
+  it('renders nothing rather than NaN when either side is unknown', () => {
+    for (const [a, b] of [[NaN, 1], [1, NaN], [null, 1], [1, undefined]]) expect(delta(a, b)).toBe('');
+  });
+
+  it('is wired into the year-end headline', () => {
+    expect(src).toContain('cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected)');
+    // …and today is measured on whichever basis the toggle is showing.
+    expect(src).toContain('cockpitExRet?0:(Number(P.k401Start)||0)');
+  });
+});
