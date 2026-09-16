@@ -6274,6 +6274,9 @@ function advEditExpenseProposal(index,field,value){
   c.key=livingCategoryKey(c.expenseCategory,c.expenseYear-sy);
   const baseline={...(p.baseline||P)},row=run(baseline).R.find(r=>r.yr===c.expenseYear);
   c.oldValue=row?.livFullParts?.[c.expenseCategory]??row?.livParts?.[c.expenseCategory]??0;
+  if(c.expenseOperation==='increase')c.value=c.oldValue+c.expenseAmount;
+  else if(c.expenseOperation==='decrease')c.value=Math.max(0,c.oldValue-c.expenseAmount);
+  else if(c.expenseOperation==='set'&&Number.isFinite(c.expenseAmount))c.value=c.expenseAmount;
   p.aiParams={...baseline};
   p.changes.forEach(change=>{p.aiParams[change.key]=change.value});
   const title=document.querySelector('#advProposalsPanel .adv-proposals-hdr h4')?.textContent||'Reviewed proposal';

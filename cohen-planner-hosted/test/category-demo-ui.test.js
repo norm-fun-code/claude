@@ -8,6 +8,8 @@ describe('advisor category proposals',()=>{
   it('offers a dedicated category tool and editable year/category proposal controls',()=>{
     expect(server).toContain("name: 'set_expense_category'");
     expect(server).toContain('Named-category changes are NOT one-offs');
+    expect(server).toContain("enum: ['set','increase','decrease']");
+    expect(server).toContain("operation==='increase'?old+dollars");
     expect(html).toContain('advEditExpenseProposal');
     expect(html).toContain('aria-label="Expense category"');
     expect(html).toContain('aria-label="Expense year"');
