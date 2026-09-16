@@ -72,7 +72,7 @@ describe('the path-ahead delta', () => {
     };
     vm.createContext(ctx);
     vm.runInContext(src.slice(src.indexOf('function cockpitDelta'), src.indexOf('function cockpitSetExRet')), ctx);
-    return ctx.cockpitDelta(projected, today, row, gap);
+    return ctx.cockpitDelta(projected, today, row, gap, opts.gapParts);
   };
 
   it('states the movement in exact dollars, because rounded millions hide it', () => {
@@ -119,25 +119,66 @@ describe('the path-ahead delta', () => {
     expect(delta(1351930, 1346045, {}, { openingGap: 51259 })).toContain('+$5,885 from today');
   });
 
-  it('names a plan that is not starting from today, as something to fix', () => {
-    const out = delta(1351930, 1346045, {}, { openingGap: 51259 });
-    expect(out).toContain('the plan starts from $1,294,786');
+  it('names what the gap is made of rather than issuing an instruction', () => {
+    // Some of what sits outside the plan's opening is deliberately outside it — accounts
+    // hidden on purpose, a private position kept separate. Telling someone to go and fix a
+    // choice they made is worse than saying nothing, so this states a fact and its parts.
+    const out = delta(1351930, 1346045, {}, { openingGap: 51259,
+      gapParts: ['Vested Stripe equity is set by hand at $623,741, $51,259 under the accounts'] });
+    expect(out).toContain('the plan compounds $1,294,786');
     expect(out).toContain('$51,259 less than you hold');
-    expect(out).toContain('classify the rest');
+    expect(out).toContain('Vested Stripe equity is set by hand at $623,741');
+    expect(out).not.toMatch(/classify the rest|you should|go and/i);
     // Rounding noise is not a gap worth a sentence.
-    expect(delta(1412096, 1350000, {}, { openingGap: 40 })).not.toContain('the plan starts from');
+    expect(delta(1412096, 1350000, {}, { openingGap: 40 })).not.toContain('the plan compounds');
   });
 
-  it('handles a plan opening ABOVE the accounts without claiming there is more to classify', () => {
+  it('reads the other direction without inventing a remedy', () => {
     const out = delta(1351930, 1346045, {}, { openingGap: -20000 });
     expect(out).toContain('$20,000 more than you hold');
-    expect(out).not.toContain('classify the rest');
+  });
+
+  it('says only the amount when the composition cannot be attributed', () => {
+    const out = delta(1351930, 1346045, {}, { openingGap: 51259 });
+    expect(out).toContain('$51,259 less than you hold');
+    expect(out).not.toContain(' — ');   // no dangling breakdown separator
   });
 
   it('is wired into the year-end headline', () => {
-    expect(src).toContain('cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected,openingGap)');
+    expect(src).toContain('cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected,openingGap,gapParts)');
     expect(src).toContain('const todayNw=obsNw!=null?obsNw:openingNw;');
+    // Hidden accounts leave the hero and the opening alike, so hiding can never be the gap.
+    expect(src).toContain('hidden accounts leave the hero and the opening alike');
+    // The reason comes from the module that decides it, not from guessing at classes.
+    expect(src).toContain('PlannerOpening.observedOpening(P,s,available)');
     // …and today is measured on whichever basis the toggle is showing.
     expect(src).toContain('cockpitExRet?0:(Number(P.k401Start)||0)');
+  });
+});
+
+// ── Hiding an account is not a gap ───────────────────────────────────────
+// Accounts hidden on purpose are excluded from the observed hero and from the plan's opening
+// alike, so hiding can never make the two disagree. Worth a test, because the delta line once
+// told someone to go and reclassify accounts they had deliberately put out of sight.
+describe('hidden accounts', () => {
+  const accts = [
+    { id: '1', name: 'Chase Checking', balance: 60000, category: 'cash' },
+    { id: '2', name: 'Fidelity Brokerage', balance: 559786, category: 'investment' },
+    { id: '3', name: 'Stripe Equity', balance: 675000, category: 'investment' },
+    { id: '4', name: 'Old 2014 Savings', balance: 40000, category: 'cash' },
+    { id: '5', name: 'Fidelity 401k', balance: 297000, category: 'retirement' },
+  ];
+  const sides = (overrides) => {
+    const s = Accounts.summarize(accts, overrides);
+    return { hero: s.netWorth - (s.byClass.retirement?.total || 0),
+             opening: s.accessible + s.stripeVested, hiddenNet: s.hiddenNet };
+  };
+
+  it('leaves the hero and the plan opening equal, hidden or not', () => {
+    const open = sides({}), hidden = sides({ '4': { hidden: true } });
+    expect(open.hero).toBe(open.opening);
+    expect(hidden.hero).toBe(hidden.opening);        // ← hiding cannot open a gap
+    expect(hidden.hiddenNet).toBe(40000);
+    expect(open.hero - hidden.hero).toBe(40000);     // both sides fall together
   });
 });

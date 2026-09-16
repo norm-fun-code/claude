@@ -20,16 +20,19 @@ function cpNw(r){return r?(cockpitExRet?r.nw:r.netWorth):0}
 //
 // Exact dollars on the delta even though the headline is rounded: the whole point is to show
 // a difference that rounding to two decimal places in millions would swallow.
-function cockpitDelta(projected,today,row,openingGap){
+function cockpitDelta(projected,today,row,openingGap,gapParts){
   if(!Number.isFinite(projected)||!Number.isFinite(today))return '';
   const d=Math.round(projected-today);
   const same=d===0;
-  // A gap between today's balances and the balance the projection starts from is the usual
-  // reason a year of growth reads as nothing: the plan is compounding a smaller number. Named
-  // as something to fix, not as a footnote explaining away the figure.
+  // A gap between today's balances and the balance the projection compounds is the usual
+  // reason a year of growth reads as nothing. It is stated as a fact with its composition
+  // named, and NOT as an instruction: some of what sits outside the plan's opening is
+  // deliberately outside it, and telling someone to go and fix a choice they made is worse
+  // than saying nothing.
   const g=Math.round(Number(openingGap)||0);
+  const parts=Array.isArray(gapParts)&&gapParts.length?` — ${gapParts.join(', ')}`:'';
   const gap=Math.abs(g)>=1000
-    ? ` · the plan starts from ${UI.money(today-g,{exact:true})}, ${UI.money(Math.abs(g),{exact:true})} ${g>0?'less than you hold — classify the rest and this year has further to run':'more than you hold'}`
+    ? ` · the plan compounds ${UI.money(today-g,{exact:true})}, ${UI.money(Math.abs(g),{exact:true})} ${g>0?'less':'more'} than you hold${parts}`
     : '';
   // The projection carries home equity; the observed balances do not cover the house. Say so
   // rather than letting a down payment read as the year's saving.
@@ -95,6 +98,27 @@ function renderCockpit(R){
     +(cockpitExRet?0:(Number(P.k401Start)||0))-Math.abs(Number(P.otherDebt)||0);
   const todayNw=obsNw!=null?obsNw:openingNw;
   const openingGap=obsNw!=null?Math.round(obsNw-openingNw):0;
+  // WHY the plan's opening is not today's balance, taken from the module that decides it
+  // rather than inferred from class arithmetic. Each opening field either follows the
+  // accounts or says what stopped it — set by hand, balances unreadable, nothing classified
+  // into the bucket — and those reasons are the gap.
+  //
+  // Hiding is never among them: hidden accounts leave the hero and the opening alike, so an
+  // account hidden on purpose cannot open a gap between them. Saying "classify the rest"
+  // here was wrong twice over — it guessed at a cause, and it told someone to undo a choice
+  // they had made deliberately.
+  const gapParts=[];
+  if(openingGap&&window.PlannerOpening){
+    try{
+      for(const r of PlannerOpening.observedOpening(P,s,available)){
+        // Only fields that actually differ. A field held at the same figure the accounts
+        // report contributes nothing to the gap, and listing it buries the one that does.
+        const diff=Math.round(r.value-r.planValue);
+        if(r.following||Math.abs(diff)<1000)continue;
+        gapParts.push(`${r.label} ${r.mode==='manual'?'is set by hand at':'is holding'} ${UI.money(r.planValue,{exact:true})}, ${UI.money(Math.abs(diff),{exact:true})} ${diff>0?'under':'over'} the accounts`);
+      }
+    }catch(_){/* never let an explanation break the figure it explains */}
+  }
 
   const metric=(title,value,detail,action)=>`<button class="cp-metric" onclick="cockpitGo('${action}')"><span>${title}</span><strong>${value}</strong><small>${detail}</small></button>`;
   // The hero must never render a dash. When accounts are unreachable the PLAN still
@@ -136,7 +160,7 @@ function renderCockpit(R){
           <span class="cp-register-note">Projected from your plan. Not a forecast.</span>
         </div>
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
-      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end ${cpLabel()}</span><strong id="cp-value">${UI.money(deflate(cpNw(selected),selected.yr))}</strong>${cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected,openingGap)}${R[0].stubFrac<1?`<small class="cp-stub">${R[0].yr} models only the ${Math.round(R[0].stubFrac*100)}% of the year still ahead of ${e(cockpitObservedLabel(P))}. The months before it are already in your balances.</small>`:''}</div><span id="cp-band-note">${cockpitExRet?'Excludes retirement':'Includes retirement'}<br>${inflationView?(P.planStartYear||2026)+' purchasing power':'Future dollars'} · assumed returns</span></div>
+      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end ${cpLabel()}</span><strong id="cp-value">${UI.money(deflate(cpNw(selected),selected.yr))}</strong>${cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected,openingGap,gapParts)}${R[0].stubFrac<1?`<small class="cp-stub">${R[0].yr} models only the ${Math.round(R[0].stubFrac*100)}% of the year still ahead of ${e(cockpitObservedLabel(P))}. The months before it are already in your balances.</small>`:''}</div><span id="cp-band-note">${cockpitExRet?'Excludes retirement':'Includes retirement'}<br>${inflationView?(P.planStartYear||2026)+' purchasing power':'Future dollars'} · assumed returns</span></div>
       <label class="cp-basis"><input type="checkbox" id="cp-inc-ret"${cockpitExRet?'':' checked'}
         onchange="cockpitSetExRet(!this.checked)">
         <span>Include retirement</span>
