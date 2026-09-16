@@ -109,27 +109,34 @@ describe('the path-ahead delta', () => {
     for (const [a, b] of [[NaN, 1], [1, NaN], [null, 1], [1, undefined]]) expect(delta(a, b)).toBe('');
   });
 
-  // The defect this measurement had on its first day: it subtracted the OBSERVED hero from
-  // the year-end. The hero counts every account; the plan's opening counts only what is
-  // classified into liquid, vested Stripe and retirement. Anything else — an HSA, a car —
-  // sits in one and not the other, so the difference silently came out of the year's growth.
-  it('measures from the plan\'s opening, so unclassified accounts cannot eat the growth', () => {
-    // $1,412,096 year-end from a $1,350,000 opening is +$62,096, whatever the accounts total.
-    expect(delta(1412096, 1350000, {}, { openingGap: 59000 })).toContain('+$62,096 from today');
-    expect(delta(1412096, 1350000, {}, { openingGap: 0 })).toContain('+$62,096 from today');
+  // What the reader is asking is "where am I today versus year end", so today is the
+  // OBSERVED balance. When the plan's opening sits below that, the year's movement really is
+  // smaller — the projection is compounding a smaller number — and that is a fact to surface,
+  // not arithmetic to hide.
+  it('measures from today, not from the plan\'s opening', () => {
+    // Year-end $1,351,930 against $1,346,045 observed is +$5,885, even though the plan's own
+    // opening is $51,259 lower and its internal movement is +$57,144.
+    expect(delta(1351930, 1346045, {}, { openingGap: 51259 })).toContain('+$5,885 from today');
   });
 
-  it('names the gap rather than absorbing it, since the hero sits directly above', () => {
-    const out = delta(1412096, 1350000, {}, { openingGap: 59000 });
-    expect(out).toContain("from the plan's $1,350,000 opening");
-    expect(out).toContain('$59,000 below the accounts above');
+  it('names a plan that is not starting from today, as something to fix', () => {
+    const out = delta(1351930, 1346045, {}, { openingGap: 51259 });
+    expect(out).toContain('the plan starts from $1,294,786');
+    expect(out).toContain('$51,259 less than you hold');
+    expect(out).toContain('classify the rest');
     // Rounding noise is not a gap worth a sentence.
-    expect(delta(1412096, 1350000, {}, { openingGap: 40 })).not.toContain('opening,');
+    expect(delta(1412096, 1350000, {}, { openingGap: 40 })).not.toContain('the plan starts from');
+  });
+
+  it('handles a plan opening ABOVE the accounts without claiming there is more to classify', () => {
+    const out = delta(1351930, 1346045, {}, { openingGap: -20000 });
+    expect(out).toContain('$20,000 more than you hold');
+    expect(out).not.toContain('classify the rest');
   });
 
   it('is wired into the year-end headline', () => {
     expect(src).toContain('cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected,openingGap)');
-    expect(src).toContain('const todayNw=openingNw;');
+    expect(src).toContain('const todayNw=obsNw!=null?obsNw:openingNw;');
     // …and today is measured on whichever basis the toggle is showing.
     expect(src).toContain('cockpitExRet?0:(Number(P.k401Start)||0)');
   });

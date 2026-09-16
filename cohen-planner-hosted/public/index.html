@@ -1593,7 +1593,12 @@ function posOpts(){const o=chartOpts();o.scales.y.min=0;return o}
 const todayMarker={
   id:'todayMarker',
   afterDatasetsDraw(chart){
-    const i=chart.data.datasets.findIndex(d=>/^Total net worth/.test(d.label||''));
+    // Anchored to the ex-retirement line, not the total: retirement is locked until 59½, so
+    // a "today" that silently includes $297K you cannot reach is not the figure anyone is
+    // checking the chart against — and it is not what the cockpit hero beside it reports.
+    const want=/^Net worth ex-retirement/;
+    let i=chart.data.datasets.findIndex(d=>want.test(d.label||''));
+    if(i<0)i=chart.data.datasets.findIndex(d=>/^Total net worth/.test(d.label||''));
     if(i<0)return;
     const meta=chart.getDatasetMeta(i);
     if(!meta||meta.hidden)return;
@@ -1614,13 +1619,13 @@ const todayMarker={
     if(y<area.top)y=pt.y+10;
     ctx.beginPath();
     if(ctx.roundRect)ctx.roundRect(x,y,w,h,r);else ctx.rect(x,y,w,h);
-    ctx.fillStyle='rgba(182,168,255,.18)';ctx.fill();
-    ctx.strokeStyle='#b6a8ff';ctx.lineWidth=1;ctx.stroke();
-    ctx.fillStyle='#e8ebf5';ctx.textBaseline='middle';ctx.textAlign='left';
+    ctx.fillStyle='rgba(216,122,32,.20)';ctx.fill();
+    ctx.strokeStyle='#e08a3c';ctx.lineWidth=1;ctx.stroke();
+    ctx.fillStyle='#ffd9b0';ctx.textBaseline='middle';ctx.textAlign='left';
     ctx.fillText(text,x+7,y+h/2+.5);
-    ctx.beginPath();ctx.arc(pt.x,pt.y,4,0,Math.PI*2);
-    ctx.fillStyle='#b6a8ff';ctx.fill();
-    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.beginPath();ctx.arc(pt.x,pt.y,5,0,Math.PI*2);
+    ctx.fillStyle='#e08a3c';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
     ctx.restore();
   }
 };

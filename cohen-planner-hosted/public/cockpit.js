@@ -24,10 +24,12 @@ function cockpitDelta(projected,today,row,openingGap){
   if(!Number.isFinite(projected)||!Number.isFinite(today))return '';
   const d=Math.round(projected-today);
   const same=d===0;
-  // The hero counts accounts the plan's opening does not. Naming the gap keeps this line
-  // honest about measuring from the plan's start rather than from the figure just above it.
-  const gap=Math.abs(Number(openingGap)||0)>=1000
-    ? ` · from the plan's ${UI.money(today,{exact:true})} opening, ${UI.money(Math.abs(openingGap),{exact:true})} ${openingGap>0?'below':'above'} the accounts above`
+  // A gap between today's balances and the balance the projection starts from is the usual
+  // reason a year of growth reads as nothing: the plan is compounding a smaller number. Named
+  // as something to fix, not as a footnote explaining away the figure.
+  const g=Math.round(Number(openingGap)||0);
+  const gap=Math.abs(g)>=1000
+    ? ` · the plan starts from ${UI.money(today-g,{exact:true})}, ${UI.money(Math.abs(g),{exact:true})} ${g>0?'less than you hold — classify the rest and this year has further to run':'more than you hold'}`
     : '';
   // The projection carries home equity; the observed balances do not cover the house. Say so
   // rather than letting a down payment read as the year's saving.
@@ -79,19 +81,19 @@ function renderCockpit(R){
   const current=R.find(r=>r.yr===new Date().getFullYear())||R[0];
   const end=R[R.length-1],floor=R.reduce((a,b)=>a.liq<b.liq?a:b);
   const selected=R.find(r=>r.yr===cockpitYear)||current;cockpitYear=selected.yr;
-  // Where the PROJECTION starts, which is the only figure a year of it can be measured
-  // against. Not the observed hero above: that counts every account, while the plan's opening
-  // counts the ones classified into liquid, vested Stripe and retirement. Anything
-  // unclassified — an HSA, a car, a crypto wallet — sits in one and not the other, and
-  // subtracting the hero from the year-end quietly deducted that gap from the year's growth.
-  // On the reported balance sheet, $59K of unclassified accounts turned a real +$62K into
-  // +$3K, which is exactly the number that looked wrong.
+  // The question is "where am I today versus the end of the year", so today is the OBSERVED
+  // balance — the hero directly above — not the plan's opening.
   //
-  // The gap is real and worth knowing, but it is the bridge's subject, not this line's.
+  // Those two are not the same figure, and when they differ the movement looks small for a
+  // reason worth surfacing rather than arithmetic worth hiding: the plan's opening counts
+  // only what is classified into liquid, vested Stripe and retirement, so anything else you
+  // hold is missing from the balance the projection compounds. A projection starting $51K
+  // poorer than you are spends the year catching up to where you already were.
+  //
+  // So: measure from today, and say plainly when the plan is not starting from today.
   const openingNw=(Number(P.startingLiquid)||0)+(Number(P.startingStripeEquity)||0)
     +(cockpitExRet?0:(Number(P.k401Start)||0))-Math.abs(Number(P.otherDebt)||0);
-  const todayNw=openingNw;
-  // …but never let the two disagree silently: the hero is right above this line.
+  const todayNw=obsNw!=null?obsNw:openingNw;
   const openingGap=obsNw!=null?Math.round(obsNw-openingNw):0;
 
   const metric=(title,value,detail,action)=>`<button class="cp-metric" onclick="cockpitGo('${action}')"><span>${title}</span><strong>${value}</strong><small>${detail}</small></button>`;
