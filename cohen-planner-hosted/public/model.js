@@ -425,6 +425,19 @@ function run(p,rets,compiledGrants){
   // nullish-coalescing reason as k401Start above. See the note at `nw` for why this is a
   // flat offset and not a drawdown on liq.
   const otherDebt=Math.abs(Number(p.otherDebt??0))||0;
+  // ── Private assets that are not vested Stripe ────────────────────────────
+  // Angel investments, a stake in something, a private fund. Real wealth, and until now the
+  // plan had nowhere to put it: the opening reads cash + taxable into `liq` and vested Stripe
+  // into its own pool, so a private holding of any other kind fell out of the projection
+  // entirely — present in the observed net worth, absent from every year the plan draws.
+  //
+  // Held FLAT, deliberately. We have no return path for a private position we know nothing
+  // about, and inventing one would compound a guess for thirty years. It is not added to
+  // `liq` either: it cannot be sold to fund a house or a shortfall, and treating it as though
+  // it could is how a plan looks solvent right up until the money is needed. So it sits in
+  // net worth, unchanged, and says so — the same treatment, and the same reasoning, as the
+  // revolving balance on the other side of the ledger.
+  const otherAssets=Math.max(0,Number(p.otherAssets??0)||0);
   // Stripe equity is a wholly separate pool from the diversified `liq`. Basis matters
   // because RSU cost basis IS the vest-date FMV — selling at vest produces essentially no
   // capital gain (the W2 tax was already paid), and only post-vest appreciation is ever a
@@ -645,7 +658,7 @@ function run(p,rets,compiledGrants){
     // rounding the raw sum instead left the total up to a dollar off the parts printed
     // beside it. That dollar is not cosmetic — it silently disabled the bridge's
     // year-by-year breakdown, which only renders when its parts reconcile exactly.
-    const nw=Math.round(liq)+Math.round(stripeEnd)+Math.round(eq)-Math.round(otherDebt);
+    const nw=Math.round(liq)+Math.round(stripeEnd)+Math.round(eq)+Math.round(otherAssets)-Math.round(otherDebt);
     R.push({yr,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
@@ -720,7 +733,8 @@ function run(p,rets,compiledGrants){
       // left is the money that is actually yours to move — the diversified pool and vested
       // Stripe, less what you owe. Defined here rather than assembled at each call site,
       // because every net-worth figure this app got wrong got wrong by being assembled.
-      nwExRetHome:Math.round(liq)+Math.round(stripeEnd)-Math.round(otherDebt),
+      nwExRetHome:Math.round(liq)+Math.round(stripeEnd)+Math.round(otherAssets)-Math.round(otherDebt),
+      otherAssets:Math.round(otherAssets),
       otherDebt:Math.round(otherDebt),
       // What share of this calendar year the row actually models. Below 1 the row is a
       // STUB — the months before the observation date are already in the opening

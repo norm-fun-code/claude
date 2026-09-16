@@ -47,7 +47,7 @@ describe('story mode reports the right figures for today', () => {
     expect(render).toContain('${fmt(m.row.nwExRetHome)}');
     expect(render).not.toContain('${fmt(m.row.netWorth)}');
     const model = fs.readFileSync(new URL('../public/model.js', import.meta.url), 'utf8');
-    expect(model).toContain('nwExRetHome:Math.round(liq)+Math.round(stripeEnd)-Math.round(otherDebt)');
+    expect(model).toContain('nwExRetHome:Math.round(liq)+Math.round(stripeEnd)+Math.round(otherAssets)-Math.round(otherDebt)');
   });
 
   it('says what the figure leaves out, in its own label', () => {

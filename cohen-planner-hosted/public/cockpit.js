@@ -95,6 +95,7 @@ function renderCockpit(R){
   //
   // So: measure from today, and say plainly when the plan is not starting from today.
   const openingNw=(Number(P.startingLiquid)||0)+(Number(P.startingStripeEquity)||0)
+    +Math.max(0,Number(P.otherAssets)||0)
     +(cockpitExRet?0:(Number(P.k401Start)||0))-Math.abs(Number(P.otherDebt)||0);
   const todayNw=obsNw!=null?obsNw:openingNw;
   const openingGap=obsNw!=null?Math.round(obsNw-openingNw):0;
@@ -126,8 +127,10 @@ function renderCockpit(R){
     try{
       const unk=Math.round(Number(s?.byClass?.unknown?.total)||0);
       if(Math.abs(unk)>=1000)gapParts.push(`${UI.money(unk,{exact:true})} in accounts not yet classified`);
-      const priv=Math.round((Number(s?.byClass?.private?.total)||0)-(Number(s?.stripeVested)||0));
-      if(Math.abs(priv)>=1000)gapParts.push(`${UI.money(priv,{exact:true})} in private holdings not marked as vested Stripe`);
+      // Private holdings other than vested Stripe now have their own opening field, so this
+      // only fires when that field is held or set by hand — the loop above will have said why.
+      const priv=Math.round((Number(s?.byClass?.private?.total)||0)-(Number(s?.stripeVested)||0)-(Number(P.otherAssets)||0));
+      if(Math.abs(priv)>=1000)gapParts.push(`${UI.money(priv,{exact:true})} in private holdings the plan is not carrying`);
     }catch(_){}
   }
 

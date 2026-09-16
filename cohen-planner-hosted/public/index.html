@@ -1861,7 +1861,7 @@ function render(){
   // exactly what that point is.
   const sy0=P.planStartYear||2026;
   const startNwK=Math.round(((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
-    -Math.abs(Number(P.otherDebt||0)))/1000);
+    +Math.max(0,Number(P.otherAssets)||0)-Math.abs(Number(P.otherDebt||0)))/1000);
   const obsOn=/^\d{4}-\d{2}-\d{2}/.test(String(P.observedOn||''))?String(P.observedOn).slice(0,10):null;
   // "Today" has to mean the balance you actually hold. The anchor is the plan's OPENING, and
   // when the two differ — money in accounts the opening's four buckets do not read — calling
@@ -1944,7 +1944,7 @@ function render(){
     if(compareMode)scenarios.forEach(s=>{
       const sp=s.params||{};
       const sOpen=Math.round(((sp.startingLiquid||P.startingLiquid)+(sp.startingStripeEquity||0)
-        +(sp.k401Start||0)-Math.abs(Number(sp.otherDebt||0)))/1000);
+        +(sp.k401Start||0)+Math.max(0,Number(sp.otherAssets)||0)-Math.abs(Number(sp.otherDebt||0)))/1000);
       ds.push({label:s.name+' net worth',data:[sOpen,...s.results.R.map(r=>deflK(r.netWorth,r.yr))],
         borderColor:s.color,fill:false,tension:.3,pointRadius:3,pointBackgroundColor:s.color,borderWidth:3.5})});
     // Snapshot overlay — compare a saved projection against the current plan.
@@ -1960,7 +1960,7 @@ function render(){
         const snSy=sn.params.planStartYear||sy0;
         const byYr={};sr.R.forEach(r=>{byYr[r.yr]=deflK(r.netWorth,r.yr)});
         // Same basis and same anchor as the live Total NW line it is overlaid on.
-        byYr[snSy-1]=Math.round(((sn.params.startingLiquid||P.startingLiquid)+(sn.params.startingStripeEquity||0)+(sn.params.k401Start||0)-Math.abs(Number(sn.params.otherDebt||0)))/1000);
+        byYr[snSy-1]=Math.round(((sn.params.startingLiquid||P.startingLiquid)+(sn.params.startingStripeEquity||0)+(sn.params.k401Start||0)+Math.max(0,Number(sn.params.otherAssets)||0)-Math.abs(Number(sn.params.otherDebt||0)))/1000);
         const snData=nwLabels.map(lbl=>{const v=byYr[parseInt(lbl,10)];return v===undefined?null:v});
         ds.push({label:'📸 '+sn.label+' (NW)',data:snData,borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3],spanGaps:false});
       }

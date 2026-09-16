@@ -284,8 +284,55 @@ describe('the numbers on screen add up to the numbers on screen', () => {
   it('builds the totals that way in the engine, not by rounding a raw sum', () => {
     const src = fs.readFileSync(new URL('../public/model.js', import.meta.url), 'utf8');
     expect(src).toContain('const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu);');
-    expect(src).toContain('const nw=Math.round(liq)+Math.round(stripeEnd)+Math.round(eq)-Math.round(otherDebt);');
+    expect(src).toContain('const nw=Math.round(liq)+Math.round(stripeEnd)+Math.round(eq)+Math.round(otherAssets)-Math.round(otherDebt);');
     expect(src).not.toContain('const totE=h+liv+cc+tu;');
     expect(src).not.toContain('const nw=liq+stripeEnd+eq-otherDebt;');
+  });
+});
+
+// ── Private assets that are not vested Stripe ────────────────────────────
+// Angel investments, a stake in something, a private fund. The plan had nowhere to put them:
+// the opening reads cash + taxable into `liq` and vested Stripe into its own pool, so any
+// other private holding fell out of the projection entirely — in the observed net worth,
+// absent from every year the plan drew. $51,500 of it is what made a year of growth read as
+// $5,885 instead of $57,144.
+describe('private holdings the plan had no bucket for', () => {
+  const base = { ...D, planStartYear: 2026, planEndYear: 2028, observedOn: null,
+    startingLiquid: 619786, startingStripeEquity: 623000, k401Start: 297000, otherDebt: 0,
+    homePurchaseYear: 2099 };
+
+  it('counts in net worth, on both bases', () => {
+    const without = M.run(base).R[0];
+    const with_ = M.run({ ...base, otherAssets: 51500 }).R[0];
+    expect(with_.nw - without.nw).toBe(51500);
+    expect(with_.netWorth - without.netWorth).toBe(51500);
+    expect(with_.nwExRetHome - without.nwExRetHome).toBe(51500);
+  });
+
+  it('is held flat, because there is no return path for a position we know nothing about', () => {
+    const R = M.run({ ...base, otherAssets: 51500 }).R;
+    for (const r of R) expect(r.otherAssets).toBe(51500);
+  });
+
+  it('never joins the spendable pool, which could fund a house it cannot fund', () => {
+    const without = M.run(base).R;
+    const with_ = M.run({ ...base, otherAssets: 51500 }).R;
+    for (let i = 0; i < without.length; i++) expect(with_[i].liq).toBe(without[i].liq);
+  });
+
+  it('treats a negative or missing figure as nothing, never as a debt', () => {
+    const zero = M.run(base).R[0].nw;
+    for (const v of [undefined, null, 0, -5000, 'nonsense']) {
+      expect(M.run({ ...base, otherAssets: v }).R[0].nw).toBe(zero);
+    }
+  });
+
+  it('closes the gap between the plan opening and the observed balance', () => {
+    // The reported case: $51,500 of private assets, and the two figures finally agree.
+    const observedExRet = 619786 + 623000 + 51500;
+    const openingExRet = (p) => (p.startingLiquid || 0) + (p.startingStripeEquity || 0)
+      + Math.max(0, Number(p.otherAssets) || 0) - Math.abs(Number(p.otherDebt) || 0);
+    expect(openingExRet(base)).toBe(observedExRet - 51500);            // before
+    expect(openingExRet({ ...base, otherAssets: 51500 })).toBe(observedExRet);  // after
   });
 });

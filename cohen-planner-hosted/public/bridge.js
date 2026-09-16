@@ -71,11 +71,13 @@
     const rows=R||[];
     const prev=rows.find(r=>r.yr===year-1);
     if(prev)return{value:r0(exRetirement?prev.nw:prev.netWorth),source:'prior year close',year:year-1,
-      parts:{liq:prev.liq,stripe:prev.sEnd,home:prev.eq,retirement:prev.k401,debt:prev.otherDebt}};
+      parts:{liq:prev.liq,stripe:prev.sEnd,home:prev.eq,retirement:prev.k401,debt:prev.otherDebt,
+        other:Number(prev.otherAssets)||0}};
     const p=P||{};
     const parts={liq:Number(p.startingLiquid)||0,stripe:Number(p.startingStripeEquity)||0,
-      home:0,retirement:Number(p.k401Start)||0,debt:Math.abs(Number(p.otherDebt||0))};
-    return{value:r0(parts.liq+parts.stripe+(exRetirement?0:parts.retirement)-parts.debt),
+      home:0,retirement:Number(p.k401Start)||0,debt:Math.abs(Number(p.otherDebt||0)),
+      other:Math.max(0,Number(p.otherAssets)||0)};
+    return{value:r0(parts.liq+parts.stripe+parts.other+(exRetirement?0:parts.retirement)-parts.debt),
       source:'your starting assumptions',year:null,parts};
   }
 
