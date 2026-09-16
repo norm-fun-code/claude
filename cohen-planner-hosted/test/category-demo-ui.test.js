@@ -10,6 +10,8 @@ describe('advisor category proposals',()=>{
     expect(server).toContain('Named-category changes are NOT one-offs');
     expect(server).toContain("enum: ['set','increase','decrease']");
     expect(server).toContain("operation==='increase'?old+dollars");
+    expect(server).toContain('A named living category was requested. Do not use expenseAdjY.');
+    expect(html).toContain('Any earlier chat message claiming this is unsupported is stale and must be corrected.');
     expect(html).toContain('advEditExpenseProposal');
     expect(html).toContain('aria-label="Expense category"');
     expect(html).toContain('aria-label="Expense year"');
