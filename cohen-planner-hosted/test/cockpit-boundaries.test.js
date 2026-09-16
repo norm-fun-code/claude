@@ -64,6 +64,7 @@ describe('the path-ahead delta', () => {
   const src = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
   // Run cockpitDelta against a context standing in for the page's globals.
   const delta = (projected, today, row = {}, opts = {}) => {
+    const gap = opts.openingGap;
     const ctx = {
       inflationView: !!opts.inflationView,
       P: { planStartYear: 2026 },
@@ -71,7 +72,7 @@ describe('the path-ahead delta', () => {
     };
     vm.createContext(ctx);
     vm.runInContext(src.slice(src.indexOf('function cockpitDelta'), src.indexOf('function cockpitSetExRet')), ctx);
-    return ctx.cockpitDelta(projected, today, row);
+    return ctx.cockpitDelta(projected, today, row, gap);
   };
 
   it('states the movement in exact dollars, because rounded millions hide it', () => {
@@ -108,8 +109,27 @@ describe('the path-ahead delta', () => {
     for (const [a, b] of [[NaN, 1], [1, NaN], [null, 1], [1, undefined]]) expect(delta(a, b)).toBe('');
   });
 
+  // The defect this measurement had on its first day: it subtracted the OBSERVED hero from
+  // the year-end. The hero counts every account; the plan's opening counts only what is
+  // classified into liquid, vested Stripe and retirement. Anything else — an HSA, a car —
+  // sits in one and not the other, so the difference silently came out of the year's growth.
+  it('measures from the plan\'s opening, so unclassified accounts cannot eat the growth', () => {
+    // $1,412,096 year-end from a $1,350,000 opening is +$62,096, whatever the accounts total.
+    expect(delta(1412096, 1350000, {}, { openingGap: 59000 })).toContain('+$62,096 from today');
+    expect(delta(1412096, 1350000, {}, { openingGap: 0 })).toContain('+$62,096 from today');
+  });
+
+  it('names the gap rather than absorbing it, since the hero sits directly above', () => {
+    const out = delta(1412096, 1350000, {}, { openingGap: 59000 });
+    expect(out).toContain("from the plan's $1,350,000 opening");
+    expect(out).toContain('$59,000 below the accounts above');
+    // Rounding noise is not a gap worth a sentence.
+    expect(delta(1412096, 1350000, {}, { openingGap: 40 })).not.toContain('opening,');
+  });
+
   it('is wired into the year-end headline', () => {
-    expect(src).toContain('cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected)');
+    expect(src).toContain('cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected,openingGap)');
+    expect(src).toContain('const todayNw=openingNw;');
     // …and today is measured on whichever basis the toggle is showing.
     expect(src).toContain('cockpitExRet?0:(Number(P.k401Start)||0)');
   });

@@ -20,17 +20,22 @@ function cpNw(r){return r?(cockpitExRet?r.nw:r.netWorth):0}
 //
 // Exact dollars on the delta even though the headline is rounded: the whole point is to show
 // a difference that rounding to two decimal places in millions would swallow.
-function cockpitDelta(projected,today,row){
+function cockpitDelta(projected,today,row,openingGap){
   if(!Number.isFinite(projected)||!Number.isFinite(today))return '';
   const d=Math.round(projected-today);
   const same=d===0;
+  // The hero counts accounts the plan's opening does not. Naming the gap keeps this line
+  // honest about measuring from the plan's start rather than from the figure just above it.
+  const gap=Math.abs(Number(openingGap)||0)>=1000
+    ? ` · from the plan's ${UI.money(today,{exact:true})} opening, ${UI.money(Math.abs(openingGap),{exact:true})} ${openingGap>0?'below':'above'} the accounts above`
+    : '';
   // The projection carries home equity; the observed balances do not cover the house. Say so
   // rather than letting a down payment read as the year's saving.
   const home=row&&Number(row.eq)>0?' · includes home equity, which your accounts do not carry':'';
   const basis=inflationView?` in ${(P.planStartYear||2026)} purchasing power`:'';
   return `<small class="cp-delta" data-dir="${same?'flat':d>0?'up':'down'}">${
     same?'No change from today':`${d>0?'+':'−'}${UI.money(Math.abs(d),{exact:true})} from today`
-  }${basis}${home}</small>`;
+  }${basis}${home}${gap}</small>`;
 }
 function cpLabel(){return cockpitExRet?'net worth ex-retirement':'net worth'}
 function cockpitSetExRet(ex){
@@ -74,13 +79,20 @@ function renderCockpit(R){
   const current=R.find(r=>r.yr===new Date().getFullYear())||R[0];
   const end=R[R.length-1],floor=R.reduce((a,b)=>a.liq<b.liq?a:b);
   const selected=R.find(r=>r.yr===cockpitYear)||current;cockpitYear=selected.yr;
-  // Where you are now, on whichever basis the toggle is showing, so the projection can be
-  // stated as a CHANGE rather than as a second number the reader has to diff by eye against
-  // a different card. Two figures that round to the same $1.35M are indistinguishable from a
-  // bug when nothing says whether they are meant to be the same.
+  // Where the PROJECTION starts, which is the only figure a year of it can be measured
+  // against. Not the observed hero above: that counts every account, while the plan's opening
+  // counts the ones classified into liquid, vested Stripe and retirement. Anything
+  // unclassified — an HSA, a car, a crypto wallet — sits in one and not the other, and
+  // subtracting the hero from the year-end quietly deducted that gap from the year's growth.
+  // On the reported balance sheet, $59K of unclassified accounts turned a real +$62K into
+  // +$3K, which is exactly the number that looked wrong.
+  //
+  // The gap is real and worth knowing, but it is the bridge's subject, not this line's.
   const openingNw=(Number(P.startingLiquid)||0)+(Number(P.startingStripeEquity)||0)
     +(cockpitExRet?0:(Number(P.k401Start)||0))-Math.abs(Number(P.otherDebt)||0);
-  const todayNw=obsNw!=null?obsNw:openingNw;
+  const todayNw=openingNw;
+  // …but never let the two disagree silently: the hero is right above this line.
+  const openingGap=obsNw!=null?Math.round(obsNw-openingNw):0;
 
   const metric=(title,value,detail,action)=>`<button class="cp-metric" onclick="cockpitGo('${action}')"><span>${title}</span><strong>${value}</strong><small>${detail}</small></button>`;
   // The hero must never render a dash. When accounts are unreachable the PLAN still
@@ -122,7 +134,7 @@ function renderCockpit(R){
           <span class="cp-register-note">Projected from your plan. Not a forecast.</span>
         </div>
       <section class="cp-card cp-trajectory"><div class="cp-section-head"><div><h3>The path ahead</h3></div><button onclick="cockpitGo('home')">Explore a what-if ↗</button></div>
-      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end ${cpLabel()}</span><strong id="cp-value">${UI.money(deflate(cpNw(selected),selected.yr))}</strong>${cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected)}${R[0].stubFrac<1?`<small class="cp-stub">${R[0].yr} models only the ${Math.round(R[0].stubFrac*100)}% of the year still ahead of ${e(cockpitObservedLabel(P))}. The months before it are already in your balances.</small>`:''}</div><span id="cp-band-note">${cockpitExRet?'Excludes retirement':'Includes retirement'}<br>${inflationView?(P.planStartYear||2026)+' purchasing power':'Future dollars'} · assumed returns</span></div>
+      <div class="cp-chart-summary"><div><span id="cp-year">${selected.yr} year-end ${cpLabel()}</span><strong id="cp-value">${UI.money(deflate(cpNw(selected),selected.yr))}</strong>${cockpitDelta(deflate(cpNw(selected),selected.yr),todayNw,selected,openingGap)}${R[0].stubFrac<1?`<small class="cp-stub">${R[0].yr} models only the ${Math.round(R[0].stubFrac*100)}% of the year still ahead of ${e(cockpitObservedLabel(P))}. The months before it are already in your balances.</small>`:''}</div><span id="cp-band-note">${cockpitExRet?'Excludes retirement':'Includes retirement'}<br>${inflationView?(P.planStartYear||2026)+' purchasing power':'Future dollars'} · assumed returns</span></div>
       <label class="cp-basis"><input type="checkbox" id="cp-inc-ret"${cockpitExRet?'':' checked'}
         onchange="cockpitSetExRet(!this.checked)">
         <span>Include retirement</span>
