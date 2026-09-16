@@ -65,13 +65,23 @@ function renderDecisionRoom(R){
   decisionContext={R,events};
   decisionUpdatePreview();
 }
-function decisionSelectYear(year){
-  const fold=document.getElementById('decisionContextFold');if(fold)fold.open=true;
+// `reveal` opens the context fold, which is right when the year was chosen from a milestone
+// or the tightest-year button DOWN there — you want to land where you clicked. It is wrong
+// when the year was chosen from the picker beside the comparison, which would then throw a
+// fold open underneath the thing you were reading.
+function decisionSelectYear(year,reveal){
+  if(reveal!==false){const fold=document.getElementById('decisionContextFold');if(fold)fold.open=true;}
   if(!decisionContext)return;
   decisionYear=Math.max(P.planStartYear,Math.min(P.planEndYear,year));
-  document.getElementById('decisionYear').value=decisionYear;
-  document.getElementById('decisionYearLabel').textContent=decisionYear;
+  const slider=document.getElementById('decisionYear');if(slider)slider.value=decisionYear;
+  const label=document.getElementById('decisionYearLabel');if(label)label.textContent=decisionYear;
+  const picker=document.getElementById('decisionYearPick');if(picker)picker.value=decisionYear;
   decisionUpdatePreview();
+}
+// Step one year without leaving the keyboard or hunting the right option in a list of 33.
+function decisionStepYear(by){
+  const R=decisionContext&&decisionContext.R;if(!R)return;
+  decisionSelectYear(Math.max(R[0].yr,Math.min(R[R.length-1].yr,decisionYear+by)),false);
 }
 function decisionPreset(key){
   decisionOverrides=PlannerDecisions.preset(P,key);
@@ -92,15 +102,67 @@ function decisionUpdatePreview(){
   const a=PlannerDecisions.summarize(P,base,decisionYear),b=PlannerDecisions.summarize(params,preview,decisionYear);
   decisionContext.preview=preview;decisionContext.params=params;
   const delta=decisionDollars(b.netWorth-a.netWorth,a.last.yr);
+  // ── The comparison ──
+  // Split in two, because the two halves answer different questions and reading them as one
+  // list made only the plan-end rows feel like the answer. The top half is ONE YEAR, chosen
+  // here rather than buried in a fold below: a what-if is usually asked about a particular
+  // year — the year the baby arrives, the year you buy — and "net worth in 2058" cannot
+  // answer that.
+  const yr=decisionYear;
+  const at=(v,y)=>decisionDollars(v,y==null?yr:y);
+  // A change column is the point of the panel, so it is computed rather than left to the
+  // reader. Only where BOTH sides are real numbers: a delta between "None" and "Outside
+  // horizon" is not a number, and printing one would be an invention.
+  //
+  // The colour follows whether the change is GOOD, not whether the number went up. More
+  // spending, more vest sold to cover it and more years drawing on savings are all rises, and
+  // all three are worse — painting them green would have the panel telling you the opposite
+  // of what it means. `worseUp` marks those.
+  const chg=(x,z,f,worseUp)=>{
+    if(!Number.isFinite(x)||!Number.isFinite(z))return '<td class="dr-chg">—</td>';
+    const d=z-x;
+    if(Math.round(d)===0)return '<td class="dr-chg">no change</td>';
+    const good=worseUp?d<0:d>0;
+    return `<td class="dr-chg ${good?'dr-up':'dr-down'}">${(d>0?'+':'−')+(f||fmt)(Math.abs(d))}</td>`;
+  };
+  const rows=[
+    ['head',`In ${yr}`],
+    ['Net flow / mo',decisionMoney(at(a.current.flow)/12),decisionMoney(at(b.current.flow)/12),
+      chg(at(a.current.flow)/12,at(b.current.flow)/12,decisionMoney)],
+    ['Total spending',fmt(at(a.current.totE)),fmt(at(b.current.totE)),chg(at(a.current.totE),at(b.current.totE),null,true)],
+    ['Vest sold to cover',a.current.gap>0?fmt(at(a.current.gap)):'None',b.current.gap>0?fmt(at(b.current.gap)):'None',
+      chg(at(a.current.gap),at(b.current.gap),null,true)],
+    ['Liquid assets',fmt(at(a.current.liq)),fmt(at(b.current.liq)),chg(at(a.current.liq),at(b.current.liq))],
+    ['Net worth',fmt(at(a.current.netWorth)),fmt(at(b.current.netWorth)),chg(at(a.current.netWorth),at(b.current.netWorth))],
+    ['head','Across the whole plan'],
+    [`Net worth ${a.last.yr}`,fmt(at(a.netWorth,a.last.yr)),fmt(at(b.netWorth,b.last.yr)),
+      chg(at(a.netWorth,a.last.yr),at(b.netWorth,b.last.yr))],
+    [`401k ${a.last.yr}`,fmt(at(a.retirement,a.last.yr)),fmt(at(b.retirement,b.last.yr)),
+      chg(at(a.retirement,a.last.yr),at(b.retirement,b.last.yr))],
+    ['Lowest liquid assets',`${fmt(at(a.floor.liq,a.floor.yr))}<small>${a.floor.yr}</small>`,
+      `${fmt(at(b.floor.liq,b.floor.yr))}<small>${b.floor.yr}</small>`,
+      chg(at(a.floor.liq,a.floor.yr),at(b.floor.liq,b.floor.yr))],
+    ['Years drawing on savings',a.deficitYears,b.deficitYears,
+      chg(a.deficitYears,b.deficitYears,n=>n+(n===1?' yr':' yrs'),true)],
+    ['Before-closing buffer (incl. Stripe)',
+      a.closingBuffer===null?'Outside horizon':`${fmt(at(a.closingBuffer,P.homePurchaseYear))}<small>${P.homePurchaseYear}</small>`,
+      b.closingBuffer===null?'Outside horizon':`${fmt(at(b.closingBuffer,params.homePurchaseYear))}<small>${params.homePurchaseYear}</small>`,
+      chg(a.closingBuffer,b.closingBuffer)],
+  ];
+  const years=base.map(r=>r.yr);
   document.getElementById('decisionImpact').innerHTML=`<div class="dr-kicker">${changed.length?'PREVIEW VS CURRENT PLAN':'YOUR CURRENT PLAN'}</div><div class="dr-impact-number ${delta<0?'dr-negative':''}">${changed.length?decisionDelta(delta):fmt(decisionDollars(a.netWorth,a.last.yr))}</div><p>${changed.length?'Change in net worth':'Projected net worth'} in ${a.last.yr} · ${inflationView?P.planStartYear+' dollars':'future dollars'}</p>
-    <table class="dr-comparison"><thead><tr><th>Measure</th><th>Current</th><th>Preview</th></tr></thead><tbody>
-    <tr><th>${decisionYear} net flow / mo</th><td>${decisionMoney(decisionDollars(a.current.flow,decisionYear)/12)}</td><td>${decisionMoney(decisionDollars(b.current.flow,decisionYear)/12)}</td></tr>
-    <tr><th>${decisionYear} vest sold to cover</th><td>${a.current.gap>0?fmt(decisionDollars(a.current.gap,decisionYear)):'None'}</td><td>${b.current.gap>0?fmt(decisionDollars(b.current.gap,decisionYear)):'None'}</td></tr>
-    <tr><th>Net worth ${a.last.yr}</th><td>${fmt(decisionDollars(a.netWorth,a.last.yr))}</td><td>${fmt(decisionDollars(b.netWorth,b.last.yr))}</td></tr>
-    <tr><th>401k ${a.last.yr}</th><td>${fmt(decisionDollars(a.retirement,a.last.yr))}</td><td>${fmt(decisionDollars(b.retirement,b.last.yr))}</td></tr>
-    <tr><th>Lowest liquid assets</th><td>${fmt(decisionDollars(a.floor.liq,a.floor.yr))}<small>${a.floor.yr}</small></td><td>${fmt(decisionDollars(b.floor.liq,b.floor.yr))}<small>${b.floor.yr}</small></td></tr>
-    <tr><th>Years drawing on savings</th><td>${a.deficitYears}</td><td>${b.deficitYears}</td></tr>
-    <tr><th>Before-closing buffer (incl. Stripe)</th><td>${a.closingBuffer===null?'Outside horizon':fmt(decisionDollars(a.closingBuffer,P.homePurchaseYear))}<small>${P.homePurchaseYear}</small></td><td>${b.closingBuffer===null?'Outside horizon':fmt(decisionDollars(b.closingBuffer,params.homePurchaseYear))}<small>${params.homePurchaseYear}</small></td></tr>
+    <div class="dr-yearpick">
+      <label for="decisionYearPick">Compare year</label>
+      <button type="button" onclick="decisionStepYear(-1)" aria-label="Previous year"${yr<=years[0]?' disabled':''}>◀</button>
+      <select id="decisionYearPick" onchange="decisionSelectYear(Number(this.value),false)">${years.map(y=>`<option value="${y}"${y===yr?' selected':''}>${y}</option>`).join('')}</select>
+      <button type="button" onclick="decisionStepYear(1)" aria-label="Next year"${yr>=years[years.length-1]?' disabled':''}>▶</button>
+      <span>${(()=>{const k=Array.from({length:P.numKids},(_,i)=>yr-P['kid'+(i+1)+'Birth']).filter(x=>x>=0);
+        return k.length?`${k.length} ${k.length===1?'child':'children'} · age${k.length===1?'':'s'} ${k.join(', ')}`:'before the kids arrive';})()}${yr===params.homePurchaseYear?' · home purchase':''}</span>
+    </div>
+    <table class="dr-comparison"><thead><tr><th>Measure</th><th>Current</th><th>Preview</th><th>Change</th></tr></thead><tbody>
+    ${rows.map(r=>r[0]==='head'
+      ? `<tr class="dr-group"><th colspan="4">${decisionEsc(r[1])}</th></tr>`
+      : `<tr><th>${r[0]}</th><td>${r[1]}</td><td>${r[2]}</td>${r[3]}</tr>`).join('')}
     </tbody></table><div class="dr-changes">${changed.length?changed.map(k=>`<div>${decisionEsc(PlannerDecisions.fields[k]?.label||'Nancy’s starting clients')} <strong>${PlannerDecisions.fields[k]?decisionValue(k,P[k])+' → '+decisionValue(k,params[k]):P[k]+' → '+params[k]}</strong></div>`).join(''):'Move a slider or choose a starting point to compare the impact.'}</div>`;
   document.getElementById('decisionSave').disabled=!changed.length||decisionSaving;
   const row=b.current;

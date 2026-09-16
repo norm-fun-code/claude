@@ -87,7 +87,7 @@ body.home-view{background:#f3f6fb;padding:18px 24px}
 .dr-impact p{font-size:12px}
 .dr-comparison{width:100%;margin:20px 0 14px;font:13px Inter,system-ui,sans-serif;table-layout:auto}
 .dr-comparison th,.dr-comparison td{padding:9px 0;border-bottom:1px solid #dfe5ef;background:transparent;position:static;color:#334155;font-size:13px;text-transform:none;letter-spacing:0;text-align:right;font-weight:500}
-.dr-comparison th:first-child{text-align:left;width:44%;padding-right:12px}
+.dr-comparison th:first-child{text-align:left;width:34%;padding-right:12px}
 .dr-comparison thead th{color:var(--dr-muted);font-size:12px}
 .dr-comparison td{font-variant-numeric:tabular-nums}
 .dr-comparison small{display:block;color:var(--dr-muted);font-size:11px}
@@ -112,3 +112,29 @@ body.home-view{background:#f3f6fb;padding:18px 24px}
 }
 @media(prefers-reduced-motion:reduce){.decision-room *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 @media print{.home-view #mobileControlsToggle,.dr-intro-actions,.dr-presets,.dr-sliders,.dr-save,.dr-text-button{display:none!important}.dr-intro{background:#fff;color:#14233c;box-shadow:none}.dr-intro p,.dr-intro .dr-kicker,.dr-now>span,.dr-source{color:#334155}.dr-card,.dr-metrics article{break-inside:avoid}.dr-lab-layout{display:block}.dr-method{display:none}}
+
+/* ── Choosing the year the comparison is about ────────────────────────────
+   A what-if is usually asked about a particular year, so the picker sits with the
+   comparison rather than in the timeline fold below it. */
+.dr-yearpick{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:16px;
+  padding-top:14px;border-top:1px solid var(--dr-border)}
+.dr-yearpick label{font-size:12px;color:var(--dr-muted);font-weight:500}
+.dr-yearpick select{font:inherit;font-size:13px;font-weight:600;padding:5px 8px;border-radius:8px;
+  border:1px solid var(--dr-border);background:var(--s2,#fff);color:inherit;min-height:32px}
+.dr-yearpick button{min-width:30px;min-height:32px;padding:0 7px;border-radius:8px;cursor:pointer;
+  border:1px solid var(--dr-border);background:var(--s2,#fff);color:inherit;font-size:10px;line-height:1}
+.dr-yearpick button:disabled{opacity:.35;cursor:default}
+.dr-yearpick>span{font-size:12px;color:var(--dr-muted);flex:1;min-width:0;text-align:right}
+/* A group heading is a label for the rows under it, not a measure — so it reads as a heading
+   and does not line up in the number columns. */
+.dr-comparison .dr-group th{text-align:left;font-size:11px;text-transform:uppercase;
+  letter-spacing:.5px;color:var(--dr-muted);font-weight:600;padding:16px 0 6px;border-bottom:0;width:auto}
+.dr-comparison tr:first-child .dr-group th,.dr-comparison .dr-group:first-child th{padding-top:6px}
+.dr-chg{font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12px!important;color:var(--dr-muted)!important}
+.dr-chg.dr-up{color:#0f9d76!important}
+.dr-chg.dr-down{color:#c0395c!important}
+@media(max-width:560px){
+  .dr-comparison,.dr-comparison th,.dr-comparison td{font-size:12px}
+  .dr-comparison th:first-child{width:auto}
+  .dr-yearpick>span{flex-basis:100%;text-align:left}
+}
