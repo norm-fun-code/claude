@@ -20,13 +20,15 @@
 
 const SYNC_KEY = 'monarch_tx_sync';
 
-// Transactions, categories and budgets came from a direct Monarch session the planner no
-// longer holds; the NormOS account bridge publishes account balances only. The READ paths
-// below (ledger, localCategories, status, setOverride) work entirely from what was already
-// stored and are untouched — Spending still renders every transaction ever synced. The three
-// paths that need a live feed refuse in a sentence rather than crashing on a method that is
-// not there, and start working again unchanged the day a feed exists.
-const NO_FEED = 'No transaction feed. The planner reads account balances from the NormOS bridge and holds no Monarch session, so stored transactions can be read but not refreshed.';
+// Transactions and categories come from the NormOS bridge (transactions-bridge.js), the same
+// read-only credential the balances and holdings travel on. The planner holds no Monarch
+// session and never did the fetching itself.
+//
+// This guard remains because the feed is injected: handed a module that cannot fetch — which
+// is exactly what happened when monarchLive, the BALANCE reader, was passed here — every
+// write path would otherwise crash on a method that is not there. The read paths below
+// (ledger, localCategories, status, setOverride) work from stored rows and need no feed at all.
+const NO_FEED = 'No transaction feed is wired up, so stored transactions can be read but not refreshed.';
 function createMonarchSync({ db, live, now = Date.now }) {
   const needFeed = (fn) => { if (typeof (live || {})[fn] !== 'function') throw new Error(NO_FEED); };
 
@@ -228,6 +230,7 @@ function createMonarchSync({ db, live, now = Date.now }) {
   }
 
   async function syncBudgets({ startDate, endDate }) {
+    // No budgets endpoint on the bridge yet — transactions and categories have one.
     needFeed('budgets');
     await initSchema();
     const { rows } = await live.budgets({ startDate, endDate });
