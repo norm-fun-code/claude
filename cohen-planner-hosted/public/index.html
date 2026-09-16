@@ -1210,7 +1210,8 @@ function buildControls(){
     if(!r){const F=(window.PlannerOpening&&PlannerOpening.FIELDS||[]).find(f=>f.key===key);
       return sTxt(F?F.label:key,key);}
     const manual=r.mode==='manual';
-    const asOf=_ovw&&_ovw.asOf?new Date(_ovw.asOf):null;
+    const balanceDate=_ovw?.asOf||monarchSnapshot?.syncedAt;
+  const asOf=balanceDate?new Date(balanceDate):null;
     const dated=asOf&&Number.isFinite(asOf.getTime());
     const src=manual?'Your figure — not tracking your accounts'
       :r.following?`From your accounts${dated?' · '+asOf.toLocaleDateString(undefined,{month:'short',day:'numeric'}):''}`
@@ -3324,7 +3325,7 @@ function renderPortfolioTab(R,P){
    </div>
   </div>
   </details>
-  <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings from Monarch via NormOS. Period: ${inv.periodStart} → ${inv.periodEnd}. ${periodIsReturn?'Portfolio return is Monarch’s contribution-aware performance for this window.':'Monarch did not provide portfolio performance, so growth reprices today’s positions over the window and does not adjust for deposits or withdrawals.'} Holding movers show price movement applied to today’s position size.</div>
+  <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings from Monarch via NormOS. Period: ${inv.periodStart} → ${inv.periodEnd}. ${periodIsReturn?'Portfolio return is Monarch’s contribution-aware performance for this window.':'Growth reprices today’s positions over the window; it is not a contribution-adjusted return and does not measure deposits or withdrawals.'} Holding movers show price movement applied to today’s position size.</div>
 
   ${(()=>{
     // ── Portfolio analysis blurb ─────────────────────────────────────────────
@@ -4578,7 +4579,8 @@ function renderNavLive(){
 
   // Freshness. The dot states which of three things is true, and the text never claims
   // more than the dot: connected and current, connected and stale, or not connected.
-  const asOf=_ovw&&_ovw.asOf?new Date(_ovw.asOf):null;
+  const balanceDate=_ovw?.asOf||monarchSnapshot?.syncedAt;
+  const asOf=balanceDate?new Date(balanceDate):null;
   const dated=asOf&&Number.isFinite(asOf.getTime());
   const days=dated?Math.round((Date.now()-asOf.getTime())/86400000):null;
   const tone=!dated?'missing':days>7?'stale':'fresh';
