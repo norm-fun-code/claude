@@ -575,11 +575,17 @@ function mountSpendingCharts({rows,months,asOf,verified}){
       ? PlannerSpending.rollingSeries(months,12,{skip:[asOf.slice(0,7)]})
       : months.map(()=>null);
     const first=ltm.findIndex(Boolean),last=ltm.length-1-[...ltm].reverse().findIndex(Boolean);
+    const points=ltm.filter(Boolean).length;
     const note=document.getElementById('spendLtmNote');
-    if(first<0){
-      // Nothing to draw. Saying why beats an empty grid that reads as a run rate of zero.
+    // Drift needs two windows to be drift. Exactly one — which is what loading twelve months of
+    // history gives you, since only the last month has a full year behind it — draws a single
+    // point, and a single point with no marker draws NOTHING: an empty grid with one tick on
+    // it. Say what is missing and where the lever is instead.
+    if(points<2){
       ltmCanvas.closest('.spend-ltm-wrap').style.display='none';
-      if(note)note.textContent='Twelve consecutive months of records are needed before a trailing average exists. Once there are, this shows how the run rate has drifted.';
+      if(note)note.textContent=points
+        ? 'There is only one trailing twelve-month window in the records so far, so there is nothing yet to compare it against. Once a thirteenth month is imported this shows how the run rate has moved.'
+        : 'Twelve consecutive months of records are needed before a trailing average exists. Import more history and this shows how the run rate has moved.';
     }else{
       // Trimmed to the months that have a window: the ones before the first full year, and the
       // month in progress on the end, are not a run rate of zero. Leaving them in would squash
@@ -587,7 +593,11 @@ function mountSpendingCharts({rows,months,asOf,verified}){
       const span=ltm.slice(first,last+1),lab=months.slice(first,last+1).map(m=>monthLabel(m.month));
       const line=(key,label,color)=>({label,data:span.map(p=>p?p[key]:null),
         borderColor:color,backgroundColor:color,borderWidth:2.5,tension:.35,
-        pointRadius:0,pointHoverRadius:4,fill:false,spanGaps:false});
+        // A point with nothing either side of it is a line segment of zero length, which draws
+        // as nothing at all. Those get a marker; the rest stay clean.
+        pointRadius:c=>{const d=c.dataset.data,i=c.dataIndex;
+          return d[i]!=null&&d[i-1]==null&&d[i+1]==null?3.5:0},
+        pointHoverRadius:4,fill:false,spanGaps:false});
       charts.spendingLtm=new Chart(ltmCanvas,{type:'line',data:{labels:lab,datasets:[
         line('income','Income · trailing 12-month average','#72cbb0'),
         line('expense','Spending · trailing 12-month average','#a798ef')]},

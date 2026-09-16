@@ -547,13 +547,41 @@ describe('the rolling LTM series', () => {
   it('starts where the first full window closes rather than drawing empty months', () => {
     const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
     expect(cockpit).toContain('const first=ltm.findIndex(Boolean)');
+    expect(cockpit).toContain('const first=ltm.findIndex(Boolean),last=ltm.length-1-[...ltm].reverse().findIndex(Boolean);');
+    expect(cockpit).toContain('ltm.slice(first,last+1)');
     // Nothing to draw is said in words, not shown as a flat line at zero.
-    expect(cockpit).toContain("if(first<0)");
     expect(cockpit).toContain('spendLtmNote');
   });
 
   it('offers twelve months as a period once twelve exist, not only once thirteen do', () => {
     const src = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
     expect(src).toContain('const ranges=[3,6,12].filter(n=>n<=completeAll.length);');
+  });
+});
+
+// ── One point is not a line ──────────────────────────────────────────────
+// A trailing twelve-month average over twelve months of records is exactly one window. Chart.js
+// draws a lone point with pointRadius 0 as nothing at all: an empty grid with one tick on it,
+// which reads as a chart that is broken rather than a history that is short.
+describe('the drift chart when the history is too short to drift', () => {
+  const src = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  it('needs two windows before it draws anything, and says so when it has one', () => {
+    expect(src).toContain('const points=ltm.filter(Boolean).length;');
+    expect(src).toContain('if(points<2){');
+    expect(src).toMatch(/only one trailing twelve-month window/i);
+  });
+
+  it('marks a point that has no neighbour to join, rather than drawing a zero-length line', () => {
+    expect(src).toContain("pointRadius:c=>{const d=c.dataset.data,i=c.dataIndex;");
+    expect(src).toContain('d[i]!=null&&d[i-1]==null&&d[i+1]==null?3.5:0');
+  });
+
+  it('loads enough history for there to be a second window at all', () => {
+    // Twelve months of summary can only ever hold one twelve-month window — the chart was
+    // empty by arithmetic, whatever it drew.
+    expect(html).toContain("fetch('/api/monarch/spending?months=36')");
+    expect(html).not.toContain("fetch('/api/monarch/spending?months=12')");
   });
 });

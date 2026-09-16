@@ -2848,7 +2848,11 @@ async function loadSpending(){
   _spendLoading=true;
   try{
     const [a,b]=await Promise.all([
-      fetch('/api/monarch/spending?months=12').then(r=>r.ok?r.json():r.json().then(e=>({error:e.error||'unavailable'}))),
+      // Three years, not one. Twelve months is exactly one trailing twelve-month window, so
+      // the drift line had a single point and nothing to join it to — and a year-over-year
+      // comparison had no year to compare against. The rollup is one row per month either way;
+      // what widens is the ledger read behind it, and the import itself tops out at 36 months.
+      fetch('/api/monarch/spending?months=36').then(r=>r.ok?r.json():r.json().then(e=>({error:e.error||'unavailable'}))),
       fetch('/api/monarch/sync/status').then(r=>r.ok?r.json():({error:'unavailable'})),
     ]);
     _spend=a;_syncStatus=b;
