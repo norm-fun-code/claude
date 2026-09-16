@@ -165,10 +165,40 @@ describe('what the advisor is told, and what the table shows', () => {
     expect(html).toMatch(/For ANY other year's breakdown call get_projection/);
   });
 
-  it('shows the components as columns beside the total they make', () => {
-    expect(html).toContain("'Housing','Living','Childcare','Tuition',...(anyAdj?['One-off']:[]),'Expenses',");
-    // The one-off column only exists when some year carries one.
-    expect(html).toContain('const anyAdj=R.some(r=>r.eAdj);');
+  it('opens the components under the row instead of spending width on every year', () => {
+    // As four permanent columns they answered a question asked about one year at a time and
+    // charged all thirty-three for it, pushing the balances off the right edge.
+    expect(html).toContain('function expDetailRow(r,span,stub){');
+    expect(html).toContain('onclick="toggleExpRow(${r.yr})"');
+    expect(html).toContain("const _expOpenYears=new Set();");
+    expect(html).toContain("aria-expanded=\"${open}\"");
+    // …and the row it opens carries all four, plus the one-off when the year has one.
+    const detail = html.slice(html.indexOf('function expDetailRow'), html.indexOf('function expAdjSet'));
+    for (const part of ['Housing', 'Living', 'Childcare', 'Tuition', 'One-off', 'Total'])
+      expect(detail).toContain(part);
+    const table = html.slice(html.indexOf("if(activeTab==='projection'&&_projView==='table')"),
+      html.indexOf('polish-table-note') + 4000);
+    expect(table).not.toMatch(/'Housing','Living'/);
+  });
+
+  it('says the figure opens, since a control nobody notices is not one', () => {
+    expect(html).toContain("const openNote=' · click any Expenses figure to see what makes it up';");
+    expect(html).not.toContain('hover the expenses cell for the full-year cost');
+  });
+
+  it('exports a one-off column too, so the CSV columns still sum to its total', () => {
+    expect(html).toContain("'Housing','Living','Childcare','Tuition','One-Off Adjustment','Total Expenses'");
+    expect(html).toContain('r.inc,r.h,r.liv,r.cc,r.tu,r.eAdj,r.totE,');
+  });
+
+  it('keeps the money rule the cockpit uses, rather than a second one beside it', () => {
+    expect(html).toContain('const fmt=n=>UI.money(n);');
+    expect(html).toContain('const fmtF=n=>UI.money(n,{exact:true});');
+  });
+
+  it('sets tables in the page face with tabular figures, not a monospace console face', () => {
+    expect(html).toContain('table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums');
+    expect(html).not.toContain("font-size:10px;font-family:'SF Mono',monospace}");
   });
 });
 
@@ -205,5 +235,21 @@ describe('the sign survives a round trip through the field', () => {
     expect(html).toContain("value=\"${(v<0?'−':'')+fmtF(Math.abs(v))}\"");
     expect(html).toContain("String(val).replace(/−/g,'-').replace(/[^0-9.-]/g,'')");
     expect(html).toContain("String(a.value).replace(/−/g,'-').replace(/[^0-9.-]/g,'')");
+  });
+});
+
+describe('the breakdown row inside a scrolling table', () => {
+  const css = fs.readFileSync(new URL('../public/ui.css', import.meta.url), 'utf8');
+
+  it('is pinned to the left edge and capped to the viewport, not to the table', () => {
+    // Sticky alone pinned its start and let its end run off the right at phone width, which
+    // cut the total off — the one figure the breakdown exists to reconcile against.
+    expect(css).toContain('.exp-detail-in{padding:14px 16px;text-align:left;position:sticky;left:0;');
+    expect(css).toContain('max-width:min(640px,calc(100vw - 52px))');
+  });
+
+  it('stacks into two columns on a phone, with the total on its own line', () => {
+    expect(css).toMatch(/@media\(max-width:620px\)\{[\s\S]*\.exp-parts\{display:grid;grid-template-columns:1fr 1fr/);
+    expect(css).toMatch(/\.exp-part-total\{padding-left:0;border-left:0;grid-column:1\/-1/);
   });
 });

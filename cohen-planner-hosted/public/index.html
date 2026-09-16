@@ -104,9 +104,9 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 .sc h3{font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:4px}
 .sc p{font-size:10.5px;color:var(--t2);line-height:1.55}
 .tw{max-height:340px;overflow-y:auto;border:1px solid var(--bd);border-radius:8px}
-table{width:100%;border-collapse:collapse;font-size:10px;font-family:'SF Mono',monospace}
-th{padding:6px 4px;text-align:right;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:var(--t3);border-bottom:1px solid var(--bd);font-family:'Inter',sans-serif;position:sticky;top:0;background:var(--s2);z-index:1}
-td{padding:3px 4px;text-align:right;border-bottom:1px solid var(--bd);color:var(--t2)}
+table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;letter-spacing:-.1px}
+th{padding:8px 9px;text-align:right;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);border-bottom:1px solid var(--bd);font-family:'Inter',sans-serif;position:sticky;top:0;background:var(--s2);z-index:1}
+td{padding:7px 9px;text-align:right;border-bottom:1px solid var(--bd);color:var(--t2)}
 tr:hover td{background:var(--s2)}
 .btn{padding:6px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--t2);font-size:10px;font-weight:500;cursor:pointer;width:100%;margin-top:3px;font-family:inherit;transition:all .12s}
 .btn:hover{border-color:var(--bd2);color:var(--tx);background:var(--s2)}
@@ -621,8 +621,13 @@ async function doLogout(){
   window.location.href='/login';
 }
 
-const fmt=n=>{const a=Math.abs(n),s=n<0?'-':'';return a>=1e6?`${s}$${(a/1e6).toFixed(2)}M`:a>=1e3?`${s}$${(a/1e3).toFixed(0)}K`:`${s}$${Math.round(a)}`};
-const fmtF=n=>`$${Math.round(n).toLocaleString()}`;
+// One money rule, everywhere. These were a second, older rule sitting beside UI.money, and
+// the difference showed: an ASCII hyphen for negatives instead of a typographic minus, "$5K"
+// for $4,500 (a figure rounded away to a quarter of a thousand dollars), and "$NaN" where the
+// cockpit says "-". Two rules on one screen is how a table ends up looking like a console
+// dump beside a page that looks designed. They delegate now, so there is one.
+const fmt=n=>UI.money(n);
+const fmtF=n=>UI.money(n,{exact:true});
 
 function showToast(msg,type){
   const d=document.createElement('div');
@@ -901,8 +906,8 @@ function toggleInflation(){inflationView=!inflationView;render();savePlannerStat
 // ═══ CSV EXPORT ═══
 function exportCSV(){
   const{R}=run(P);
-  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Cash Available','Housing','Living','Childcare','Tuition','Total Expenses','Net Flow (all income)','Cash-Pay-Only Surplus','Cash Gap','Income Gap','Total Cash Need','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
-  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.totE,r.flow,r.surp,r.gap,r.incGap,r.need,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
+  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Cash Available','Housing','Living','Childcare','Tuition','One-Off Adjustment','Total Expenses','Net Flow (all income)','Cash-Pay-Only Surplus','Cash Gap','Income Gap','Total Cash Need','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
+  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.eAdj,r.totE,r.flow,r.surp,r.gap,r.incGap,r.need,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
   const csv=[cols.join(','),...rows.map(r=>r.join(','))].join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -1025,10 +1030,10 @@ h2{font-size:12px;font-weight:700;color:#0a2540;margin:22px 0 10px;padding-botto
 h2::after{content:'';position:absolute;left:0;bottom:0;width:100%;height:1px;background:linear-gradient(90deg,#635bff 0%,rgba(8,145,178,.4) 40%,#e6ebf1 100%)}
 .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:20px}
 .kpi-card{background:#fff;border:1px solid #ecebf7;border-radius:9px;padding:10px 12px;box-shadow:0 1px 2px rgba(10,37,64,.04),0 6px 14px -8px rgba(99,91,255,.25);border-left:3px solid var(--kc,#635bff)}
-table{width:100%;border-collapse:collapse;font-size:9px}
+table{width:100%;border-collapse:collapse;font-size:9px;font-variant-numeric:tabular-nums}
 th{text-align:right;padding:6px 6px;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#8898aa;border-bottom:1.5px solid #635bff}
 th:first-child{text-align:left}
-td{text-align:right;padding:4px 6px;border-bottom:1px solid #f0f4f8;font-family:'SF Mono','Fira Code',monospace}
+td{text-align:right;padding:4px 6px;border-bottom:1px solid #f0f4f8}
 td:first-child{text-align:left;font-family:'Inter',sans-serif}
 tr:hover td{background:#f6f9fc}
 .footer{margin-top:24px;padding-top:9px;border-top:1px solid #e6ebf1;font-size:9px;color:#8898aa;display:flex;justify-content:space-between}
@@ -1475,6 +1480,29 @@ function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[
 // of those to represent a single year's cost — a baby's first year, a wedding, a renovation
 // — silently changes every later year too, which is why "add $20K to 2027" had no honest
 // answer here at all. This edits expenseAdjY<i>, a signed amount for that one year.
+// ── The expense breakdown, one year at a time ────────────────────────────────
+// Four permanent columns would answer a question that gets asked about one year, and charge
+// every other year — and every other column — for it. This opens under the row instead.
+const _expOpenYears=new Set();
+function toggleExpRow(yr){
+  if(_expOpenYears.has(yr))_expOpenYears.delete(yr);else _expOpenYears.add(yr);
+  render();
+}
+function expDetailRow(r,span,stub){
+  const part=(label,v,note)=>v?`<div class="exp-part"><span title="${advEscape(note||'')}">${label}</span><strong>${fmt(v)}</strong></div>`:'';
+  const signed=v=>(v>0?'+':'−')+fmt(Math.abs(v));
+  return `<tr class="exp-detail"><td colspan="${span}"><div class="exp-detail-in">
+    <div class="exp-parts">
+      ${part('Housing',r.h,'Rent, or mortgage + property tax + insurance + maintenance once the home is bought')}
+      ${part('Living',r.liv,'Groceries, dining, shopping, vacations, transit, utilities, charity, medical and misc, including each child\'s share')}
+      ${part('Childcare',r.cc,'')}
+      ${part('Tuition',r.tu,r.kiy?`${r.kiy} ${r.kiy===1?'kid':'kids'} in school`:'')}
+      ${r.eAdj?`<div class="exp-part"><span title="A one-off for this year alone — not inflated, not repeated">One-off</span><strong style="color:var(--a)">${signed(r.eAdj)}</strong></div>`:''}
+      <div class="exp-part exp-part-total"><span>Total</span><strong>${fmt(r.totE)}</strong></div>
+    </div>
+    <p>${stub?`${r.yr} is a part year — this covers the ${Math.round(r.stubFrac*100)}% still ahead of the opening date. The whole year costs ${fmt(r.totEFull)}.`:'These are the four components the engine sums; they add to the total exactly.'}${r.ptax?` Property tax within housing: ${fmt(r.ptax)}.`:''}</p>
+  </div></td></tr>`;
+}
 function expAdjSet(year,val){
   const sy=P.planStartYear||2026,i=year-sy;
   if(i<0||i>10)return;
@@ -1888,9 +1916,7 @@ function render(){
     // the one column a reader cannot check, and it was also the one the advisor could quote
     // but not break down. Housing, living, childcare and tuition sum to the total exactly.
     // The one-off column appears only when a year actually carries one.
-    const anyAdj=R.some(r=>r.eAdj);
-    const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail',
-      'Housing','Living','Childcare','Tuition',...(anyAdj?['One-off']:[]),'Expenses',
+    const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail','Expenses',
       'Cash gap','Net flow','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW ex-retirement'];
     // The first row is usually a STUB: the plan opens on the date the balances were read, so
     // its income, spending and flow cover only the months still ahead — the earlier ones are
@@ -1900,11 +1926,13 @@ function render(){
     // was missing was saying which period it describes, and what the whole year costs.
     const stubRow=R.find(r=>r.stubFrac!=null&&r.stubFrac<1);
     const stubPct=stubRow?Math.round(stubRow.stubFrac*100):0;
-    const stubNote=stubRow?` · <strong>${stubRow.yr} is a part year</strong>: it covers the ${stubPct}% of the year still ahead of ${advEscape(String(P.observedOn||'').slice(0,10)||'the opening date')}, because the months before it are already inside your opening balances. Its expenses, cash available and net flow are for that remainder; hover the expenses cell for the full-year cost.`:'';
-    ca.innerHTML=`<div class="polish-table-note">Year-end projections · scroll for all columns · net worth excludes retirement${stubNote}</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
+    const openNote=' · click any Expenses figure to see what makes it up';
+    const stubNote=stubRow?` · <strong>${stubRow.yr} is a part year</strong>: it covers the ${stubPct}% of the year still ahead of ${advEscape(String(P.observedOn||'').slice(0,10)||'the opening date')}, because the months before it are already inside your opening balances. Its expenses, cash available and net flow are for that remainder.`:'';
+    ca.innerHTML=`<div class="polish-table-note">Year-end projections · scroll for all columns · net worth excludes retirement${openNote}${stubNote}</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
       const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
       const dash=v=>v>0?fmt(v):'—';
       const stub=r.stubFrac!=null&&r.stubFrac<1;
+      const open=_expOpenYears.has(r.yr);
       return `<tr style="background:${bg}">`+
         `<td style="font-weight:700;color:var(--tx);white-space:nowrap">${r.yr}${stub?` <span style="color:var(--a);font-weight:600" title="Part year — the ${Math.round(r.stubFrac*100)}% still ahead of the opening date. The rest of ${r.yr} is already in your opening balances.">part yr</span>`:''}</td>`+
         `<td style="color:var(--b)">${fmt(r.normCash)}</td>`+
@@ -1915,12 +1943,12 @@ function render(){
         `<td style="color:var(--r)">${fmt(r.tax)}</td>`+
         `<td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td>`+
         `<td style="color:var(--g)">${fmt(r.inc)}</td>`+
-        `<td style="color:var(--t2)" title="Rent, or mortgage + property tax + insurance + maintenance once the home is bought">${fmt(r.h)}</td>`+
-        `<td style="color:var(--t2)" title="Groceries, dining, shopping, vacations, transit, utilities, charity, medical and misc — including each child's share">${fmt(r.liv)}</td>`+
-        `<td style="color:var(--t2)">${dash(r.cc)}</td>`+
-        `<td style="color:var(--t2)"${r.kiy?` title="${r.kiy} ${r.kiy===1?'kid':'kids'} in school"`:''}>${dash(r.tu)}</td>`+
-        (anyAdj?`<td style="color:${r.eAdj?'var(--a)':'var(--t3)'}" title="A one-off for this year alone (expenseAdjY), not inflated and not repeated">${r.eAdj?(r.eAdj>0?'+':'−')+fmt(Math.abs(r.eAdj)):'—'}</td>`:'')+
-        `<td${stub?` style="color:var(--a)" title="${fmt(r.totE)} for the rest of ${r.yr}. The full year costs ${fmt(r.totEFull)}; the difference is already spent and already inside your opening balances."`:''}>${fmt(r.totE)}${stub?`<small style="display:block;font-size:9px;color:var(--t3);font-weight:400;white-space:nowrap">of ${fmt(r.totEFull)} full yr</small>`:''}</td>`+
+        // Expenses opens rather than spreading into four more columns. A breakdown is wanted
+        // for one year at a time, and paying for it with permanent width on all thirty-three
+        // pushes the balances off the right edge for everyone who never asks.
+        `<td class="exp-cell"><button type="button" class="exp-toggle" aria-expanded="${open}" onclick="toggleExpRow(${r.yr})" title="What makes up ${r.yr}'s expenses">`+
+          `<span${stub?' style="color:var(--a)"':''}>${fmt(r.totE)}</span><span class="exp-caret">${open?'▾':'▸'}</span>`+
+          `${stub?`<small>of ${fmt(r.totEFull)} full yr</small>`:''}</button></td>`+
         `<td style="color:${r.gap>0?'var(--a)':'var(--t3)'}" title="Shortfall against cash pay alone — how much of the year's vest must be sold">${r.gap>0?'−'+fmt(r.gap):'—'}</td>`+`<td style="color:${r.flow>=0?'var(--g)':'var(--r)'};font-weight:600" title="Total after-tax pay minus total spending. Negative means the year genuinely draws on savings or held Stripe.">${(r.flow>=0?'+':'−')+fmt(Math.abs(r.flow))}</td>`+
         `<td style="color:#6772e5">${dash(r.sSold)}</td>`+
         `<td style="color:#6772e5;font-weight:600">${dash(r.sRet)}</td>`+
@@ -1928,7 +1956,7 @@ function render(){
         `<td style="color:#6772e5;font-weight:600">${dash(r.sEnd)}</td>`+
         `<td style="color:var(--p)">${dash(r.eq)}</td>`+
         `<td style="color:var(--g);font-weight:600">${fmt(r.nw)}</td>`+
-      `</tr>`}).join('')}</tbody></table></div>`;return}
+      `</tr>`+(open?expDetailRow(r,cols.length,stub):'')}).join('')}</tbody></table></div>`;return}
   if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';
   const ctx=document.getElementById('cv').getContext('2d');const opts=chartOpts();
   // The anchor point is the balance the projection starts from, and it is labelled for WHEN
