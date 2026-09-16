@@ -64,6 +64,7 @@
     {prefix:'stripeRetY',max:9,range:[-0.9,3]},
     {prefix:'nancyW2Y',max:3,range:[0,1e7]},
   ];
+  const LIVING_CATEGORIES=(model&&model.LIV_KEYS)||['groceries','dining','shopping','vacations','auto','insurance','misc','entertainment','charity','medical','transit','utilities'];
 
   function validateOverride(key,value){
     if(ENUMS[key]){
@@ -72,6 +73,15 @@
       return{ok:true,value};
     }
     let range=LIMITS[key];
+    if(!range){
+      const m=/^living([A-Z][a-z]+)Y(\d+)$/.exec(key);
+      if(m){
+        const category=m[1][0].toLowerCase()+m[1].slice(1),i=Number(m[2]);
+        if(!LIVING_CATEGORIES.includes(category))return{ok:false,error:`Unknown living category "${category}". Choose one of: ${LIVING_CATEGORIES.join(', ')}.`};
+        if(i>10)return{ok:false,error:`"${key}" is out of range — category overrides go through Y10.`};
+        range=[0,1e7];
+      }
+    }
     if(!range){
       const ix=INDEXED.find(g=>new RegExp(`^${g.prefix}(\\d+)$`).test(key));
       if(ix){
@@ -91,7 +101,7 @@
 
   function knownKeys(){
     return[...Object.keys(LIMITS),...Object.keys(ENUMS),
-      ...INDEXED.map(g=>`${g.prefix}0…${g.prefix}${g.max}`)].sort();
+      ...INDEXED.map(g=>`${g.prefix}0…${g.prefix}${g.max}`),'living<Category>Y0…Y10'].sort();
   }
 
   function applyOverrides(P,overrides){

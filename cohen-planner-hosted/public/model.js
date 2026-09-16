@@ -296,6 +296,21 @@ function yearRemaining(p){
 const LIV_KEYS=['groceries','dining','shopping','vacations','auto','insurance',
   'misc','entertainment','charity','medical','transit','utilities'];
 
+// An exact, named living-category value for one plan year. These overrides are intentionally
+// separate from expenseAdjY: "set 2027 Misc to $13,125" belongs inside Living, while a truly
+// uncategorised renovation or wedding can still live in the one-off column. The key shape is
+// kept flat so it survives the same scenario/persistence path as every other plan input.
+const livingCategoryKey=(category,yearIndex)=>`living${category[0].toUpperCase()+category.slice(1)}Y${yearIndex}`;
+function livingCategoryOverride(p,category,yr,sy){
+  if(!LIV_KEYS.includes(category))return null;
+  const i=yr-(sy||p.planStartYear||2026);
+  if(i<0||i>EXPENSE_ADJ_MAX)return null;
+  const key=livingCategoryKey(category,i);
+  if(!p||p[key]===undefined||p[key]===null||p[key]==='')return null;
+  const v=Number(p[key]);
+  return Number.isFinite(v)?Math.max(0,Math.round(v)):null;
+}
+
 // ── One-off spending, in the year it happens ─────────────────────────────────
 // Everything else on the expense side is a LEVEL or a RATE: a monthly rent, a grocery
 // baseline, an inflation assumption. All of them apply to every year, so there was no way to
@@ -568,6 +583,10 @@ function run(p,rets,compiledGrants){
     // beneath the heading add up to the heading, which is the rule everywhere else here.
     const livRaw={groceries:gr,dining:di,shopping:sh,vacations:va,auto:au,insurance:ins,
       misc:mi,entertainment:en,charity:ch,medical:md,transit:tr,utilities:ut};
+    for(const category of LIV_KEYS){
+      const exact=livingCategoryOverride(p,category,yr,sy);
+      if(exact!==null)livRaw[category]=exact;
+    }
     const roundParts=(o,f)=>{const out={};for(const k of LIV_KEYS)out[k]=Math.round(o[k]*f);return out};
     const sumParts=o=>LIV_KEYS.reduce((t,k)=>t+o[k],0);
     let liv=sumParts(roundParts(livRaw,1));
@@ -1047,7 +1066,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_KEYS,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

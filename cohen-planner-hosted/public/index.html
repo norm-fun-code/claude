@@ -59,6 +59,13 @@
   --shadow-lg:0 8px 20px rgba(50,71,92,.08),0 2px 6px rgba(50,71,92,.04);
 }
 body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--tx);padding:14px 18px;min-height:100vh;font-size:13px;-webkit-font-smoothing:antialiased;font-feature-settings:'ss01','cv11'}
+body[data-view=inputs] #heroBand,body[data-view=inputs] #kpis,body[data-view=inputs] #scenarioBar,body[data-view=inputs] #snapshotBar,
+body[data-view=advisor] #heroBand,body[data-view=advisor] #kpis{display:none}
+body[data-view=inputs] #chartArea{background:transparent;border:0;box-shadow:none;padding:0}
+body[data-view=inputs] #controls{display:block!important;max-height:none;width:100%;margin:0;padding:22px;border-radius:14px}
+.demo-banner{display:flex;align-items:center;justify-content:center;gap:9px;background:linear-gradient(90deg,#4038a7,#635bff);color:#fff;
+  padding:8px 14px;margin:-14px -18px 12px;font-size:11px;font-weight:650;letter-spacing:.15px;position:sticky;top:0;z-index:80}
+.demo-banner button{border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;border-radius:7px;padding:4px 9px;font:inherit;cursor:pointer}
 .mono{font-family:'SF Mono','Fira Code','Courier New',monospace}
 .hdr{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid var(--bd);padding-bottom:10px;margin-bottom:14px}
 .hdr h1{font-size:16px;font-weight:600;color:var(--tx);letter-spacing:-.3px}
@@ -180,6 +187,12 @@ tr:hover td{background:var(--s2)}
 .adv-proposal-old{color:var(--t4);text-decoration:line-through}
 .adv-proposal-new{color:var(--link);font-weight:600}
 .adv-proposal-reason{color:var(--t3);font-size:12px;margin-left:auto;text-align:right;max-width:230px}
+.adv-proposal-dimension{display:flex;gap:6px;align-items:center;min-width:230px}
+.adv-proposal-dimension select{appearance:none;background:var(--s2);border:1px solid var(--bd);color:var(--tx);
+  border-radius:8px;padding:6px 24px 6px 8px;font:600 12px/1.2 inherit;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--t3) 50%),linear-gradient(135deg,var(--t3) 50%,transparent 50%);
+  background-position:calc(100% - 11px) 50%,calc(100% - 7px) 50%;background-size:4px 4px;background-repeat:no-repeat}
+.adv-proposal-dimension select:focus{outline:none;border-color:var(--link);box-shadow:0 0 0 2px color-mix(in srgb,var(--link) 18%,transparent)}
 .adv-proposals-target{display:flex;gap:7px;margin-bottom:10px;flex-wrap:wrap}
 .adv-proposals-target select,.adv-proposals-target input{font-size:13px;padding:8px 10px;
   border-radius:8px;border:1px solid var(--bd2);background:var(--s2);color:var(--tx);font-family:inherit}
@@ -496,7 +509,7 @@ const D={
   taxInflation:.025,
   planEndYear:2058,
 };
-let P={...D};let scenarios=[];let compareMode=false;
+let P={...D};let scenarios=[];let compareMode=false;let _demoMode=false;
 // Which saved case is loaded, and whether it has been edited since. These are deliberately
 // separate: editing a case must NOT eject you from it, or there is no way to save back into
 // the case you are working in — the only offer left would be "save as new".
@@ -535,6 +548,7 @@ let _saveQueue=Promise.resolve();
 let _saveRevision=0;
 let _planLoaded=false;
 function savePlannerState(){
+  if(typeof _demoMode!=='undefined'&&_demoMode)return;
   if(!_planLoaded){setSyncStatus('error');return;}
   setSyncStatus('saving');
   const revision=++_saveRevision;
@@ -663,6 +677,7 @@ setInterval(()=>{if(!document.hidden)checkMonarchStatus();},5*60*1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-_monarchLastCheck>60000)checkMonarchStatus();});
 
 async function checkMonarchStatus(){
+  if(_demoMode)return;
   try{
     _monarchLastCheck=Date.now();
     const r=await fetch('/api/monarch-status',{cache:'no-store'});
@@ -730,12 +745,14 @@ async function runMonarchDiagnostics(){
 }
 
 async function loadMonarchInvestments(period){
+  if(_demoMode)return;
   if(_investLoading)return;
   if(period)_investPeriod=period;
   _investLoading=true; _investError='';
   try{
     const r=await fetch('/api/monarch-investments?period='+_investPeriod,{cache:'no-store'});
     const data=await r.json();
+    if(_demoMode){_investLoading=false;return}
     if(!r.ok)throw new Error(data.error||'Holdings are temporarily unavailable.');
     monarchInvestments=data;
   }catch(e){monarchInvestments=false;_investError=e.message;}
@@ -744,6 +761,7 @@ async function loadMonarchInvestments(period){
 }
 
 async function syncMonarch({quiet=false}={}){
+  if(_demoMode)return;
   if(_monarchSyncInFlight)return;
   _monarchSyncInFlight=true;
   const btn=document.getElementById('monarchSyncBtn');
@@ -1899,6 +1917,10 @@ function _introAnimate(){
 }
 function render(){
   if(!_planLoaded)return;
+  // Inputs temporarily moves the existing controls into the main canvas. Put it back before
+  // any other view clears that canvas; otherwise innerHTML would discard the live controls.
+  const controlsHome=document.querySelector('.layout'),controlsEl=document.getElementById('controls'),mainEl=document.getElementById('main');
+  if(activeTab!=='inputs'&&controlsHome&&controlsEl&&mainEl&&controlsEl.parentElement!==controlsHome)controlsHome.insertBefore(controlsEl,mainEl);
   document.getElementById('summaries').innerHTML='';
   document.body.dataset.view=activeTab;
   document.body.dataset.subview=activeTab==='home'?_homeView:activeTab==='today'?_todayView:activeTab==='projection'?_projView:'';
@@ -1982,7 +2004,11 @@ function render(){
     if(_homeView==='compare'){renderCompareTab(R,P);return}
     renderDecisionRoom(R);return;
   }
-  if(activeTab==='advisor'){renderAdvisorTab(R,P);return}
+  if(activeTab==='advisor'){
+    if(_demoMode){ca.innerHTML=`<div class="empty-state" style="padding:54px 24px;text-align:center"><h2 style="margin-bottom:8px">Advisor paused in Demo Mode</h2><p style="color:var(--t2);max-width:520px;margin:auto">Demo Mode never sends questions or retrieves connected-account data, so your private financial context cannot appear while you present.</p></div>`;return}
+    renderAdvisorTab(R,P);return
+  }
+  if(activeTab==='inputs'){renderInputsTab();return}
   if(activeTab==='today'){
     if(_todayView==='watch')renderWatchTab(R,P);
     else if(_todayView==='holdings')renderPortfolioTab(R,P);
@@ -2180,7 +2206,7 @@ function render(){
       if(!reuseChart||!_updateChart(dsInc,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsInc},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>fmtK(v)}}}}});
     }
   }
-  document.getElementById('summaries').innerHTML=`<details class="polish-fold refine-fold"><summary>Projection assumptions</summary><p>All charts use the same saved income, tax, housing and family-cost inputs. Use Settings to adjust them, or inspect the annual table for exact amounts.</p><button class="ui-btn" onclick="setSubView('table')">Open annual table →</button></details>`;
+  document.getElementById('summaries').innerHTML=`<details class="polish-fold refine-fold"><summary>Projection assumptions</summary><p>All charts use the same saved income, tax, housing and family-cost inputs. Use Inputs to adjust them, or inspect the annual table for exact amounts.</p><button class="ui-btn" onclick="setSubView('table')">Open annual table →</button></details>`;
 }
 
 let _stripeYear=null;
@@ -2467,9 +2493,11 @@ function provChip(kind,asOf,compact=false){
 }
 
 async function loadOverview(){
+  if(_demoMode)return;
   if(_ovwLoading)return;_ovwLoading=true;
   try{
     const [r,hr]=await Promise.all([fetch('/api/accounts/overview',{signal:AbortSignal.timeout(20000)}),fetch('/api/wealth/history',{signal:AbortSignal.timeout(20000)}).catch(()=>null)]);
+    if(_demoMode){_ovwLoading=false;return}
     _ovw=r.ok?await r.json():{error:(await r.json().catch(()=>({}))).error||'unavailable'};
     _hist=hr?.ok?await hr.json().catch(()=>null):null;
   }catch(e){_ovw={error:e.message};}
@@ -2594,6 +2622,7 @@ function applyReconcileLine(key,value){
 let _inbox=null,_inboxLoading=false,_inboxError=null,_briefing=null;
 
 async function loadInbox(force){
+  if(_demoMode)return;
   if(_inboxLoading)return;
   if(_inbox&&!force)return;
   _inboxLoading=true;_inboxError=null;
@@ -3015,6 +3044,7 @@ function renderOverviewTab(R,P){
 let _spend=null,_spendLoading=false,_syncStatus=null,_syncPoll=null;
 
 async function loadSpending(){
+  if(_demoMode)return;
   if(_spendLoading)return;
   _spendLoading=true;
   try{
@@ -3026,6 +3056,7 @@ async function loadSpending(){
       fetch('/api/monarch/spending?months=36').then(r=>r.ok?r.json():r.json().then(e=>({error:e.error||'unavailable'}))),
       fetch('/api/monarch/sync/status').then(r=>r.ok?r.json():({error:'unavailable'})),
     ]);
+    if(_demoMode){_spendLoading=false;return}
     _spend=a;_syncStatus=b;
   }catch(e){_spend={error:e.message};}
   _spendLoading=false;
@@ -4942,6 +4973,7 @@ const MORE_ACTIONS=[
   ['🖨','Print / save PDF','printPDF()'],
   ['📸','Save a snapshot','showSnapshotInput()'],
   ['🎬','Play as a story','openStoryMode()'],
+  ['◈','Present with demo numbers','enterDemoMode()'],
 ];
 function toggleMoreMenu(e){
   if(e)e.stopPropagation();
@@ -5031,6 +5063,63 @@ function setTab(t){
   if(t==='housing'||t==='sensitivity'||t==='compare'){_homeView=(t==='sensitivity'?'levers':t);t='home';}
   if(t==='portfolio'){_todayView='holdings';t='today';}
   activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();if(!_reduceMotion())requestAnimationFrame(()=>{['chartArea','summaries'].forEach(id=>{const e=document.getElementById(id);if(e){e.classList.remove('tab-fade');void e.offsetWidth;e.classList.add('tab-fade')}})});savePlannerState()}
+
+function renderInputsTab(){
+  const ca=document.getElementById('chartArea'),controls=document.getElementById('controls');
+  destroyCharts();
+  ca.innerHTML=`<div style="margin:2px 2px 14px"><div class="hero-eyebrow">Plan inputs</div><h2 style="font-size:24px;letter-spacing:-.5px;margin-top:5px">The assumptions behind your plan</h2><p style="color:var(--t2);margin-top:6px">Income, family, spending, housing, investments, and taxes—all in one auditable place.</p></div>`;
+  ca.appendChild(controls);controls.classList.add('inputs-panel');
+  document.getElementById('summaries').innerHTML='';
+}
+
+function enterDemoMode(){
+  if(_demoMode)return;
+  _demoMode=true;
+  const year=new Date().getFullYear();
+  // A coherent fictional household, deliberately rounded and materially different from the
+  // saved plan. It exists only in memory; Exit reloads the untouched server-backed state.
+  P={...D,planStartYear:year,startingLiquid:725000,startingStripeEquity:210000,k401Start:285000,
+    homePrice:1850000,homePurchaseYear:year+3,nycRent:4800,numKids:2,kid1Birth:year+1,kid2Birth:year+4,
+    normCashY0:240000,normCashY1:255000,normCashY2:270000,normStockY0:115000,normStockY1:125000,normStockY2:135000,
+    nancyW2Y0:105000,nancyW2Y1:115000,nancyW2Y2:120000,baseMisc:8500,baseShopping:15000};
+  scenarios=[];activeScenarioIdx=-1;scenarioDirty=false;
+  const now=new Date().toISOString();
+  monarchSnapshot={netWorth:1180000,liquid:725000,retirement:285000,assets:1220000,liabilities:40000,syncedAt:now,partial:false};
+  monarchAccounts=[
+    {name:'Everyday checking',institution:'Demo Bank',category:'cash',balance:42000},
+    {name:'High-yield savings',institution:'Demo Bank',category:'cash',balance:168000},
+    {name:'Brokerage',institution:'Demo Investments',category:'investment',balance:515000},
+    {name:'401(k)',institution:'Demo Retirement',category:'retirement',balance:285000},
+    {name:'Private company equity',institution:'Demo Employer',category:'other_asset',balance:210000},
+    {name:'Credit cards',institution:'Demo Bank',category:'liability',balance:-40000},
+  ];
+  monarchInvestments={totalValue:515000,periodMetric:'growth',periodChange:18400,periodChangePct:3.7,allTimeChange:97000,allTimePct:23.2,asOf:now,
+    holdings:[
+      {ticker:'US INDEX',name:'US Total Market',securityType:'mutual_fund',value:285000,periodChange:11800,periodChangePct:4.3},
+      {ticker:'INTL',name:'International Index',securityType:'etf',value:105000,periodChange:2100,periodChangePct:2},
+      {ticker:'BONDS',name:'Bond Index',securityType:'etf',value:85000,periodChange:900,periodChangePct:1.1},
+      {ticker:'CASH',name:'Money Market',securityType:'cash',value:40000,periodChange:0,periodChangePct:0},
+    ],topGainers:[],topLosers:[]};
+  _ovw={error:'Detailed connected-account controls are hidden in Demo Mode.'};_hist=null;
+  const demoMonths=[];
+  for(let back=12;back>=1;back--){
+    const dt=new Date(Date.UTC(year,new Date().getUTCMonth()-back,1)),ym=dt.toISOString().slice(0,7);
+    const cats=[['housing','Housing',4800],['shopping','Shopping',1750],['groceries','Groceries',1050],['dining','Dining',850],['travel','Travel',700],['other','Other',950]];
+    demoMonths.push({month:ym,expense:10100,income:30000,transfer:4500,cardPayment:6200,investment:9500,count:84,pending:0,
+      categories:cats.map(([id,name,net])=>({id,name,net,gross:net,refunds:0,count:Math.max(2,Math.round(net/180))}))});
+  }
+  const demoTotal=demoMonths.reduce((s,m)=>s+m.expense,0);
+  _spend={months:demoMonths,endDate:new Date().toISOString().slice(0,10),
+    coverage:{first:demoMonths[0].month,last:demoMonths.at(-1).month,completeMonths:demoMonths.map(m=>m.month),partial:null},
+    totals:{expense:demoTotal,income:360000,transfer:54000,cardPayment:74400,investment:114000,refund:0,hidden:0,splitParents:0},
+    counts:{expense:780,income:24,transfer:36,cardPayment:120,investment:24,refund:0},rolling:{m3:10100,m6:10100,m12:10100}};
+  _syncStatus={transactions:1008,firstDate:demoMonths[0].month+'-01',lastDate:demoMonths.at(-1).month+'-28',lastSyncAt:now,pending:0,running:false};
+  _inbox=null;
+  document.body.insertAdjacentHTML('afterbegin','<div class="demo-banner" id="demoBanner">◈ Demo Mode · fictional numbers only <button onclick="exitDemoMode()">Exit demo</button></div>');
+  buildControls();activeTab='cockpit';render();closeMoreMenu();
+  showToast('Demo Mode on — your saved plan and connected data are hidden.','green');
+}
+function exitDemoMode(){location.reload()}
 document.getElementById('main').innerHTML=`
   <div id="heroBand"></div>
   <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
@@ -5041,6 +5130,7 @@ document.getElementById('main').innerHTML=`
     <button role="tab" aria-selected="false" data-tab="stripe" onclick="setTab('stripe')">◆ Stripe</button>
     <button role="tab" aria-selected="false" data-tab="today" onclick="setTab('today')">≡ Financial life<span class="nav-badge" id="navAlertBadge" hidden></span></button>
     <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">✦ Advisor</button>
+    <button role="tab" aria-selected="false" data-tab="inputs" onclick="setTab('inputs')">⚙ Inputs</button>
     <button id="moreBtn" aria-label="More actions" aria-haspopup="true" aria-expanded="false" onclick="toggleMoreMenu(event)" style="margin-left:auto;font-size:11px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit;line-height:1">⋯</button>
     <!-- The rail carried six items and then 70% empty column. A cockpit's side rail
          should be alive: what needs you, how fresh the data is, and the shape of the
@@ -5153,6 +5243,7 @@ function _paletteCommands(){
     {icon:'💳',label:'Spending & cash flow',hint:'Today',run:()=>{_todayView='spending';setTab('today')}},
     {icon:'🩺',label:'Diagnose Monarch connection',hint:'Support',run:()=>{setTab('portfolio');setTimeout(()=>openMonarchDiagnostics(),350)}},
     {icon:'🤖',label:'AI Advisor',hint:'View',run:()=>setTab('advisor')},
+    {icon:'⚙',label:'Plan inputs',hint:'View',run:()=>setTab('inputs')},
     {icon:'🎬',label:'Play plan as a story',hint:'Story mode',run:()=>openStoryMode()},
     {icon:inflationView?'🔢':'💵',label:inflationView?'Show nominal dollars':'Show real (inflation-adjusted) dollars',hint:'Toggle',run:()=>toggleInflation()},
     {icon:'🎲',label:(_bandMode?'Hide':'Show')+' confidence bands',hint:'Chart overlay',run:()=>toggleBandMode()},
@@ -6070,7 +6161,7 @@ async function advSendAgentic(text,chat,liveContext,thinking){
           advInsertToolCallBubble(payload.tool_call);
         }
         if(payload.done){
-          advPendingProposals=payload.proposedChanges&&payload.proposedChanges.length>0?{changes:payload.proposedChanges,aiParams:payload.aiParams}:null;
+          advPendingProposals=payload.proposedChanges&&payload.proposedChanges.length>0?{changes:payload.proposedChanges,aiParams:payload.aiParams,baseline:payload.baseline}:null;
           break outer;
         }
       }
@@ -6098,7 +6189,10 @@ function advInsertToolCallBubble(tc){
   const msgs=document.getElementById('advMsgs');if(!msgs)return;
   const div=document.createElement('div');div.className='adv-tool adv-tool-detail';
   let body='';
-  if(tc.name==='set_param'){
+  if(tc.name==='set_expense_category'){
+    const label=(tc.expenseCategory||'category').replace(/^./,s=>s.toUpperCase());
+    body=`<strong>Expense category</strong>: ${advEscape(String(tc.expenseYear))} ${advEscape(label)} ${tc.oldValue!==undefined?`<span class="tc-old">${fmt(tc.oldValue)}</span> → `:''}<strong>${fmt(tc.value)}</strong>${tc.reason?` — <em>${advEscape(tc.reason)}</em>`:''}`;
+  } else if(tc.name==='set_param'){
     const old=tc.oldValue!==undefined?`<span class="tc-old">${advEscape(String(tc.oldValue))}</span> → `:'';
     body=`<strong>set_param</strong>: <code>${advEscape(tc.key)}</code> ${old}<strong>${advEscape(String(tc.value))}</strong>${tc.reason?` — <em>${advEscape(tc.reason)}</em>`:''}`;
   } else if(tc.name==='run_projection'){
@@ -6134,8 +6228,13 @@ function advShowProposals(proposals,chatTitle,suggestedName){
     if(['homePrice','startingLiquid','pretax401k','startingStripeEquity','stripeLiquidFloor'].includes(key)||/^(normCashY|normStockY|nancyW2Y)\d+$/.test(key))return fmt(v);
     return String(v);
   };
-  const rows=proposals.changes.map(c=>`<div class="adv-proposal-row">
-    <span class="adv-proposal-key">${advEscape(c.key)}</span>
+  const categoryLabels={groceries:'Groceries',dining:'Dining',shopping:'Shopping',vacations:'Vacations',auto:'Auto',insurance:'Insurance',misc:'Misc',entertainment:'Entertainment',charity:'Charity',medical:'Medical',transit:'Transit',utilities:'Utilities & phone'};
+  const sy=Number((proposals.baseline||P).planStartYear)||2026;
+  const rows=proposals.changes.map((c,i)=>`<div class="adv-proposal-row">
+    ${c.expenseCategory?`<span class="adv-proposal-dimension">
+      <select aria-label="Expense year" onchange="advEditExpenseProposal(${i},'year',this.value)">${Array.from({length:11},(_,j)=>`<option value="${sy+j}" ${Number(c.expenseYear)===sy+j?'selected':''}>${sy+j}</option>`).join('')}</select>
+      <select aria-label="Expense category" onchange="advEditExpenseProposal(${i},'category',this.value)">${Object.entries(categoryLabels).map(([k,v])=>`<option value="${k}" ${c.expenseCategory===k?'selected':''}>${v}</option>`).join('')}</select>
+    </span>`:`<span class="adv-proposal-key">${advEscape(c.key)}</span>`}
     <span class="adv-proposal-old">${fmtVal(c.key,c.oldValue)}</span>
     <span class="adv-proposal-arrow">→</span>
     <span class="adv-proposal-new">${fmtVal(c.key,c.value)}</span>
@@ -6162,6 +6261,24 @@ function advShowProposals(proposals,chatTitle,suggestedName){
     <button class="adv-proposals-view" onclick="advPreviewProposals()">👁 Preview on chart</button>
   </div>`;
   msgs.appendChild(el);msgs.scrollTop=msgs.scrollHeight;
+}
+
+// Category proposals remain fully reviewable: changing either dropdown retargets the staged
+// edit, recalculates the value it will replace, and rebuilds the sandbox from the untouched
+// baseline. Nothing reaches the live plan until Apply is confirmed.
+function advEditExpenseProposal(index,field,value){
+  const p=advPendingProposals,c=p&&p.changes&&p.changes[index];
+  if(!c||!c.expenseCategory)return;
+  if(field==='year')c.expenseYear=Number(value);else c.expenseCategory=value;
+  const sy=Number((p.baseline||P).planStartYear)||2026;
+  c.key=livingCategoryKey(c.expenseCategory,c.expenseYear-sy);
+  const baseline={...(p.baseline||P)},row=run(baseline).R.find(r=>r.yr===c.expenseYear);
+  c.oldValue=row?.livFullParts?.[c.expenseCategory]??row?.livParts?.[c.expenseCategory]??0;
+  p.aiParams={...baseline};
+  p.changes.forEach(change=>{p.aiParams[change.key]=change.value});
+  const title=document.querySelector('#advProposalsPanel .adv-proposals-hdr h4')?.textContent||'Reviewed proposal';
+  document.getElementById('advProposalsPanel')?.remove();
+  advShowProposals(p,title.replace(/^🤖\s*\d+ proposed changes?\s*/,''),'Advisor scenario');
 }
 
 // Toggles the name field and save-button label between "create new" and "update existing"

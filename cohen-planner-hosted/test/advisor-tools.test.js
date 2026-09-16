@@ -39,6 +39,13 @@ describe('An unknown parameter is an error, not a no-op',()=>{
     expect(T.validateOverride('normStockY40',200000).error).toMatch(/normStockY10/);
   });
 
+  it('accepts exact annual living-category overrides and rejects invented categories',()=>{
+    expect(T.validateOverride('livingMiscY1',13125)).toEqual({ok:true,value:13125});
+    expect(T.validateOverride('livingGroceriesY10',24000).ok).toBe(true);
+    expect(T.validateOverride('livingUnicornsY1',1000).ok).toBe(false);
+    expect(T.validateOverride('livingMiscY11',1000).ok).toBe(false);
+  });
+
   it('says when a change changes nothing',()=>{
     const r=T.compute({P,overrides:{homePrice:P.homePrice}});
     expect(r.applied.homePrice.noop).toBe(true);

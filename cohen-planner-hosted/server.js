@@ -15,7 +15,8 @@ const rateLimit = require('express-rate-limit');
 const Anthropic = require('@anthropic-ai/sdk');
 const path = require('path');
 const db = require('./db');
-const { run: runModel } = require('./public/model.js');
+const Model = require('./public/model.js');
+const { run: runModel } = Model;
 const { migrateP } = require('./public/plan-migrate.js');
 const { createMonarchLive } = require('./monarch-live');
 const monarchLive = createMonarchLive({ db });
@@ -52,6 +53,20 @@ async function loadAccountMeta() {
 }
 
 const ADVISOR_TOOLS = [
+  {
+    name: 'set_expense_category',
+    description: 'Set one named annual living-expense category to an exact dollar amount in one plan year. Use this when the user names a category such as Misc, Shopping, Groceries, Dining, Vacations, Medical, or Utilities. This places the value inside Living; do not use the uncategorized one-off adjustment for a named category.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        year: { type: 'integer', description: 'Calendar year to update' },
+        category: { type: 'string', enum: ['groceries','dining','shopping','vacations','auto','insurance','misc','entertainment','charity','medical','transit','utilities'] },
+        value: { type: 'number', description: 'Exact annual amount for this category in that year, in dollars' },
+        reason: { type: 'string', description: 'One sentence explaining the change' },
+      },
+      required: ['year','category','value','reason'],
+    },
+  },
   {
     name: 'set_param',
     description: 'Propose changing one parameter in a sandbox copy of the plan. Never modifies anything until the user reviews the diff and explicitly applies it (to their live plan, a new scenario, or an existing one).',
@@ -1747,6 +1762,7 @@ app.post('/api/advisor/agentic', requireAuth, advisorLimiter, async (req, res) =
 You have tools to compute changes to Norm's plan in a sandbox (a full copy of his current inputs). Nothing you do here touches his real data by itself — after you finish, he sees an exact diff and picks where it goes: apply directly to his live plan, update an existing saved scenario, or save as a new one. So when he asks you to "update," "change," or "set" something directly (e.g. "update my 2027 income to $320K"), that's exactly what set_param is for — compute the precise change he described, don't just discuss it in prose.
 
 Tools available:
+• set_expense_category(year, category, value, reason) — set an exact annual value for a named category in one year. Use this whenever he names a living category; it rolls into Living and never appears as a one-off.
 • set_param(key, value, reason) — stage one parameter change. See the full key reference below.
 • run_projection() — compute key metrics (final NW, deficit years, worst surplus, total tuition, liquid) with the current sandbox params. Call this after set_param calls to show impact.
 • save_scenario(name) — suggest a name for the change set (used to prefill the "save as new scenario" box he'll see — he can still rename it or choose a different destination).
@@ -1772,6 +1788,7 @@ Childcare keys: childcareMonthly (per child, per month) and childcareStartMonths
 Other editable keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normGrowth, normStockGrowth, nancyHourlyRate, nancyMaxClients, nancyRampClients, nancyRampYear, nancyRampYears, nancyWeeksPerYear, pretax401k, mcVol, tuitionInflation, homeAppreciation, capGainsTaxRate, numKids, planStartYear, kid1Birth, kid2Birth, kid3Birth, kid4Birth.
 
 ONE-OFF SPENDING IN A SINGLE YEAR:
+• Named-category changes are NOT one-offs. If he says "set 2027 Misc to $13,125" or names Groceries, Dining, Shopping, Vacations, Auto, Insurance, Misc, Entertainment, Charity, Medical, Transit, or Utilities, call set_expense_category. Its value is the exact annual category total for that calendar year.
 • expenseAdjY0 … expenseAdjY10 — a signed dollar adjustment to ONE year's expenses, indexed from the plan's start year. This is the key for "add $20K to 2027 for the baby", a wedding, a renovation, a car. Negative means that year costs less. It is not inflated and not spread across the year: the amount lands in the year named, in that year's dollars.
   Every OTHER expense input is a level or a rate that applies to every year — nycRent, baseGroceries, childcareMonthly, expenseInflation and so on. Raising one of those to represent a single year's cost is wrong and would silently change every later year too. Use expenseAdjY for anything that happens once.
 
@@ -1816,7 +1833,27 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
           if (block.type !== 'tool_use') continue;
           let result;
 
-          if (block.name === 'set_param') {
+          if (block.name === 'set_expense_category') {
+            const {year,category,value,reason}=block.input;
+            const sy=aiParams.planStartYear||2026,idx=Number(year)-sy;
+            const categories=Model.LIV_KEYS||[];
+            if(!Number.isInteger(Number(year))||idx<0||idx>10){
+              result={error:`Year must be between ${sy} and ${sy+10}.`};
+            }else if(!categories.includes(category)){
+              result={error:`Category must be one of: ${categories.join(', ')}.`};
+            }else if(!Number.isFinite(Number(value))||Number(value)<0){
+              result={error:'Category value must be a non-negative dollar amount.'};
+            }else{
+              const key=Model.livingCategoryKey(category,idx);
+              const before=runModel(aiParams).R.find(r=>r.yr===Number(year));
+              const old=before?.livFullParts?.[category]??before?.livParts?.[category];
+              const next=Math.round(Number(value));
+              aiParams[key]=next;
+              proposedChanges.push({key,oldValue:old,value:next,reason,expenseCategory:category,expenseYear:Number(year)});
+              send({tool_call:{name:'set_expense_category',key,oldValue:old,value:next,reason,expenseCategory:category,expenseYear:Number(year)}});
+              result={ok:true,year:Number(year),category,value:next,previousValue:old};
+            }
+          } else if (block.name === 'set_param') {
             const { key, value, reason } = block.input;
             // stripePolicy is the one non-numeric parameter. Validate rather than letting a
             // bad string reach the model, where the switch would silently fall back to the
@@ -1918,7 +1955,7 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
       }
     }
 
-    send({ done: true, proposedChanges, aiParams });
+    send({ done: true, proposedChanges, aiParams, baseline: migrateP({ ...(currentParams || {}) }) });
     res.end();
   } catch (err) {
     console.error('Advisor agentic error:', err);

@@ -258,6 +258,20 @@ describe('the breakdown row inside a scrolling table', () => {
 // Living is twelve lines and usually the largest of the four, so handing over only its sum
 // was the same defect one level down: a total nobody can see inside.
 describe('living opens out into its twelve lines', () => {
+  it('puts a year-specific named category value inside living, not in one-off spending', () => {
+    const P=plan({livingMiscY1:13125});
+    const r=yr(P,2027);
+    expect(r.livFullParts.misc).toBe(13125);
+    expect(r.livParts.misc).toBe(13125);
+    expect(r.eAdj).toBe(0);
+    expect(r.liv).toBe(M.LIV_KEYS.reduce((s,k)=>s+r.livParts[k],0));
+  });
+
+  it('keeps a named category override in its chosen year only', () => {
+    const P=plan({livingMiscY1:13125});
+    expect(yr(P,2027).livFullParts.misc).toBe(13125);
+    expect(yr(P,2028).livFullParts.misc).not.toBe(13125);
+  });
   const P = plan();
 
   it('sums to the living total exactly, in every year of the plan', () => {
