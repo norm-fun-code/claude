@@ -1845,11 +1845,21 @@ function render(){
   if(activeTab==='projection'&&_projView==='table'){
     // Wide by necessity — this is the audit view. The .tw wrapper scrolls horizontally.
     const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Net flow','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW ex-retirement'];
-    ca.innerHTML=`<div class="polish-table-note">Year-end projections · scroll for all columns · net worth excludes retirement</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
+    // The first row is usually a STUB: the plan opens on the date the balances were read, so
+    // its income, spending and flow cover only the months still ahead — the earlier ones are
+    // already inside the opening balances. Every column in that row was printed in the same
+    // style as a full year beside it, so $51K of expenses read as a year that cost $51K.
+    // The row stays as the engine computes it, because its own arithmetic has to hold; what
+    // was missing was saying which period it describes, and what the whole year costs.
+    const stubRow=R.find(r=>r.stubFrac!=null&&r.stubFrac<1);
+    const stubPct=stubRow?Math.round(stubRow.stubFrac*100):0;
+    const stubNote=stubRow?` · <strong>${stubRow.yr} is a part year</strong>: it covers the ${stubPct}% of the year still ahead of ${advEscape(String(P.observedOn||'').slice(0,10)||'the opening date')}, because the months before it are already inside your opening balances. Its expenses, cash available and net flow are for that remainder; hover the expenses cell for the full-year cost.`:'';
+    ca.innerHTML=`<div class="polish-table-note">Year-end projections · scroll for all columns · net worth excludes retirement${stubNote}</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
       const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
       const dash=v=>v>0?fmt(v):'—';
+      const stub=r.stubFrac!=null&&r.stubFrac<1;
       return `<tr style="background:${bg}">`+
-        `<td style="font-weight:700;color:var(--tx)">${r.yr}</td>`+
+        `<td style="font-weight:700;color:var(--tx);white-space:nowrap">${r.yr}${stub?` <span style="color:var(--a);font-weight:600" title="Part year — the ${Math.round(r.stubFrac*100)}% still ahead of the opening date. The rest of ${r.yr} is already in your opening balances.">part yr</span>`:''}</td>`+
         `<td style="color:var(--b)">${fmt(r.normCash)}</td>`+
         `<td style="color:#6772e5">${dash(r.normStock)}</td>`+
         `<td style="font-weight:600" title="Cash + stock — the W-2 figure taxes are computed on">${fmt(r.normG)}</td>`+
@@ -1858,7 +1868,7 @@ function render(){
         `<td style="color:var(--r)">${fmt(r.tax)}</td>`+
         `<td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td>`+
         `<td style="color:var(--g)">${fmt(r.inc)}</td>`+
-        `<td>${fmt(r.totE)}</td>`+
+        `<td${stub?` style="color:var(--a)" title="${fmt(r.totE)} for the rest of ${r.yr}. The full year costs ${fmt(r.totEFull)}; the difference is already spent and already inside your opening balances."`:''}>${fmt(r.totE)}${stub?`<small style="display:block;font-size:9px;color:var(--t3);font-weight:400;white-space:nowrap">of ${fmt(r.totEFull)} full yr</small>`:''}</td>`+
         `<td style="color:${r.gap>0?'var(--a)':'var(--t3)'}" title="Shortfall against cash pay alone — how much of the year's vest must be sold">${r.gap>0?'−'+fmt(r.gap):'—'}</td>`+`<td style="color:${r.flow>=0?'var(--g)':'var(--r)'};font-weight:600" title="Total after-tax pay minus total spending. Negative means the year genuinely draws on savings or held Stripe.">${(r.flow>=0?'+':'−')+fmt(Math.abs(r.flow))}</td>`+
         `<td style="color:#6772e5">${dash(r.sSold)}</td>`+
         `<td style="color:#6772e5;font-weight:600">${dash(r.sRet)}</td>`+

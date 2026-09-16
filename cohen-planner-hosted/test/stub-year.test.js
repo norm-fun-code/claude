@@ -231,3 +231,46 @@ describe('net flow describes the same months as the spending', () => {
     }
   });
 });
+
+// ── What the year costs, next to what is left of it ──────────────────────────
+// The annual table printed the stub row in the same style as every full year beside it, so
+// $50K of remaining expenses read as a year that costs $50K — against $207K the year after.
+// The row itself is right and has to stay as the engine computes it, or its own arithmetic
+// stops holding. What was missing was the other number, and a word saying which is which.
+describe('the full-year cost of a stub year', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const D = vm.runInNewContext('(' + html.match(/const D=(\{[\s\S]*?\n\});/)[1] + ')');
+  const first = (over) => M.run({ ...D, planStartYear: 2026, ...over }).R[0];
+
+  it('carries the whole year alongside the part of it still ahead', () => {
+    const r = first({ observedOn: '2026-09-16' });
+    expect(r.stubFrac).toBeLessThan(1);
+    expect(r.totE).toBeLessThan(r.totEFull);
+    // The remainder is the same share of the year the stub fraction claims.
+    expect(Math.abs(r.totE - r.totEFull * r.stubFrac)).toBeLessThan(4);
+  });
+
+  it('is the same number on a year that is not a stub', () => {
+    const r = first({ observedOn: null });
+    expect(r.stubFrac).toBe(1);
+    expect(r.totEFull).toBe(r.totE);
+  });
+
+  it('is summed from rounded components, like every other total here', () => {
+    // Recovering it downstream by dividing totE by stubFrac would be off by the rounding on
+    // four components — a total that disagrees with the year beside it by a few hundred
+    // dollars is exactly what this table exists to rule out.
+    const src = fs.readFileSync(new URL('../public/model.js', import.meta.url), 'utf8');
+    expect(src).toContain('const totEFull=Math.round(hFull)+Math.round(livFull)+Math.round(ccFull)+Math.round(tuFull);');
+    expect(src).toContain('const hFull=h,livFull=liv,ccFull=cc;');
+  });
+
+  it('is what the annual table shows, with the row marked as a part year', () => {
+    expect(html).toContain('const stubRow=R.find(r=>r.stubFrac!=null&&r.stubFrac<1);');
+    expect(html).toContain('is a part year');
+    expect(html).toContain('part yr');
+    expect(html).toContain('of ${fmt(r.totEFull)} full yr');
+    // …and nothing is marked when the plan really does open on 1 January.
+    expect(html).toContain("const stubNote=stubRow?");
+  });
+});

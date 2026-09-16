@@ -540,6 +540,12 @@ function run(p,rets,compiledGrants){
     // Spending already incurred this year is behind the observation date and is already
     // reflected in the opening balances, so only the remainder is charged. Every reported
     // component is scaled, not just the total, so the parts still sum to it.
+    // Kept before the scaling, because "what does 2026 cost" and "what is left of 2026" are
+    // both fair questions and the stub row only ever answered the second one. Carried out
+    // rather than recovered by dividing totE by stubFrac downstream: that division is off by
+    // the rounding on four components, and a total that disagrees with the year beside it by
+    // a few hundred dollars is exactly the kind of thing this table exists to rule out.
+    const hFull=h,livFull=liv,ccFull=cc;
     if(stub<1){h*=stub;liv*=stub;cc*=stub}
     tC+=cc;
     let tu=0;
@@ -548,6 +554,7 @@ function run(p,rets,compiledGrants){
       const startAge=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;
       if(a>=startAge&&a<=p.yeshivaEndAge)tu+=baseTuit(a)*(1+p.tuitionInflation)**(yr-sy); // C4 fix: yr-sy not yr-2026
     }
+    const tuFull=tu;
     if(stub<1)tu*=stub;
     tT+=tu;
     // Rounded components, summed — not the raw sum, rounded. h, liv, cc and tu are each
@@ -555,6 +562,8 @@ function run(p,rets,compiledGrants){
     // total printed beneath them. Same fault as `nw` and `netWorth`, same fix: the number on
     // screen is the sum of the numbers on screen.
     const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu);
+    // Same summing discipline: rounded components summed, never a rounded raw sum.
+    const totEFull=Math.round(hFull)+Math.round(livFull)+Math.round(ccFull)+Math.round(tuFull);
     const surp=cashAvail-totE; // operating cash flow — retained stock is NOT spendable
     // ── Stripe cash waterfall ──
     // Cash comp funds life first. Whatever it can't cover (including the down payment, a
@@ -672,6 +681,8 @@ function run(p,rets,compiledGrants){
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
       liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE,
+      // What the WHOLE calendar year costs, stub or not. On a full year it equals totE.
+      totEFull,
       surp:Math.round(surp),
       // `flow` is the household's actual net cash flow: everything earned after tax, minus
       // everything spent. It is the figure that answers "am I living within my income", and
