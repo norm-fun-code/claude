@@ -196,7 +196,7 @@ describe('the trajectory anchor is labelled for when the balance was true', () =
   const fn = src.slice(src.indexOf('const sy0=P.planStartYear||2026;'), src.indexOf('const nwLabels=') + 200);
 
   it('uses the observation date when the plan opens mid-year', () => {
-    expect(fn).toContain('anchorIsToday=!!obsOn&&Number(obsOn.slice(0,4))===sy0');
+    expect(fn).toContain('anchorDated=!!obsOn&&Number(obsOn.slice(0,4))===sy0');
     expect(fn).toContain("toLocaleDateString(undefined,{month:'short',day:'numeric'})");
   });
 
@@ -206,8 +206,17 @@ describe('the trajectory anchor is labelled for when the balance was true', () =
   });
 
   it('only calls the marker "Today" when the anchor really is today', () => {
-    expect(src).toContain("chart.$anchorIsToday===false?'Start · ':'Today · '");
+    expect(src).toContain("chart.$anchorIsToday===false?'Plan start · ':'Today · '");
     // …and the flag has to survive the chart-reuse path, or a stale one outlives its chart.
     expect(src).toContain('if(charts.main)charts.main.$anchorIsToday=anchorIsToday;');
+  });
+
+  it('will not call it today when the plan opens from a different figure than you hold', () => {
+    // $1,295K on this chart and $1,350K on the cockpit cannot both be "today". The point stays
+    // where the line starts; only the claim about what it is gets corrected.
+    expect(fn).toContain('anchorMatchesToday=anchorObs==null||Math.abs(anchorObs-(startNwK*1000))<1000');
+    expect(fn).toContain('anchorIsToday=anchorDated&&anchorMatchesToday;');
+    // …and the DATE survives it: an opening that omits an account was still read in September.
+    expect(fn).toContain('const anchorLabel=anchorDated');
   });
 });

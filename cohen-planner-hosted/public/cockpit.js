@@ -118,6 +118,17 @@ function renderCockpit(R){
         gapParts.push(`${r.label} ${r.mode==='manual'?'is set by hand at':'is holding'} ${UI.money(r.planValue,{exact:true})}, ${UI.money(Math.abs(diff),{exact:true})} ${diff>0?'under':'over'} the accounts`);
       }
     }catch(_){/* never let an explanation break the figure it explains */}
+    // …and what sits in the accounts but in no bucket the plan's opening reads at all. The
+    // opening covers four: accessible (cash + taxable), vested Stripe, retirement, revolving
+    // debt. An account classified into none of them — or not classified yet — is real wealth
+    // the projection never compounds, and no field above can report it, because no field is
+    // responsible for it. This is the usual shape of the gap and it was going unexplained.
+    try{
+      const unk=Math.round(Number(s?.byClass?.unknown?.total)||0);
+      if(Math.abs(unk)>=1000)gapParts.push(`${UI.money(unk,{exact:true})} in accounts not yet classified`);
+      const priv=Math.round((Number(s?.byClass?.private?.total)||0)-(Number(s?.stripeVested)||0));
+      if(Math.abs(priv)>=1000)gapParts.push(`${UI.money(priv,{exact:true})} in private holdings not marked as vested Stripe`);
+    }catch(_){}
   }
 
   const metric=(title,value,detail,action)=>`<button class="cp-metric" onclick="cockpitGo('${action}')"><span>${title}</span><strong>${value}</strong><small>${detail}</small></button>`;

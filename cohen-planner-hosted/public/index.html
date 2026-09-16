@@ -1607,7 +1607,7 @@ const todayMarker={
     if(!pt||v==null)return;
     // `v` is already in thousands, which is what fmtK expects. Scaling it here is what
     // turned $1.28M into $1284M the last time this existed.
-    const text=(chart.$anchorIsToday===false?'Start · ':'Today · ')+fmtK(v);
+    const text=(chart.$anchorIsToday===false?'Plan start · ':'Today · ')+fmtK(v);
     const ctx=chart.ctx, area=chart.chartArea;
     ctx.save();
     ctx.font='600 11px Inter, system-ui, sans-serif';
@@ -1860,9 +1860,30 @@ function render(){
   // With no observation date the plan does open on 1 January, and then the prior year-end is
   // exactly what that point is.
   const sy0=P.planStartYear||2026;
+  const startNwK=Math.round(((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
+    -Math.abs(Number(P.otherDebt||0)))/1000);
   const obsOn=/^\d{4}-\d{2}-\d{2}/.test(String(P.observedOn||''))?String(P.observedOn).slice(0,10):null;
-  const anchorIsToday=!!obsOn&&Number(obsOn.slice(0,4))===sy0;
-  const anchorLabel=anchorIsToday
+  // "Today" has to mean the balance you actually hold. The anchor is the plan's OPENING, and
+  // when the two differ — money in accounts the opening's four buckets do not read — calling
+  // it today puts $1,295K on this chart and $1,350K on the cockpit under the same word. The
+  // point stays where the line starts, because that is where the projection starts; only the
+  // claim about what it is gets corrected.
+  const anchorObs=(()=>{
+    try{
+      const sm=_ovw&&_ovw.summary;
+      if(!sm||_ovw.error||_ovw.capabilities?.balances?.available!==true)return null;
+      return sm.netWorth-(Number(sm.byClass?.retirement?.total)||0)+(Number(P.k401Start)||0);
+    }catch(_){return null}
+  })();
+  // Two separate questions, and conflating them sent the axis back to 2025.
+  //   WHEN was this balance true?  → the observation date, whenever there is one.
+  //   Is it everything you hold?   → only if it matches the accounts.
+  // A plan opening that omits an unclassified account was still read on 16 September; it is
+  // not a 2025 year-end, and dating it as one is the very mistake this replaced.
+  const anchorDated=!!obsOn&&Number(obsOn.slice(0,4))===sy0;
+  const anchorMatchesToday=anchorObs==null||Math.abs(anchorObs-(startNwK*1000))<1000;
+  const anchorIsToday=anchorDated&&anchorMatchesToday;
+  const anchorLabel=anchorDated
     ?new Date(obsOn+'T00:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'})
     :String(sy0-1);
   const nwLabels=[anchorLabel,...labels];
@@ -1870,8 +1891,6 @@ function render(){
   // its cash. Anchoring Total NW at startingLiquid dropped Stripe and the entire 401(k) from
   // the left-hand point, so the line began below where the plan actually starts and the
   // first segment showed a jump the model never produced.
-  const startNwK=Math.round(((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
-    -Math.abs(Number(P.otherDebt||0)))/1000);
   // The Monarch "actual" dot machinery is gone with the pin it drew. It read the legacy
   // sync — a different source from the accounts every other figure here comes from — so it
   // marked the chart with a number that agreed with nothing around it.
