@@ -2974,9 +2974,11 @@ const ordinal=n=>{const s=['th','st','nd','rd'],v=n%100;return s[(v-20)%10]||s[v
 // "Where does my money go" has a period attached to it, and twelve months and last March are
 // different questions. `_spendScope` is a rolling window in months, or one named month.
 //
-// Defaulting to every complete month preserves what this screen showed before a filter
-// existed, so the figure nobody changed does not move underneath them.
-let _spendScope={kind:'all'};
+// It opens on year to date. Averaging every month on record answers a question nobody is
+// asking — two years ago is a different household — whereas "what has this year cost so far"
+// is the one the screen is usually opened to settle. With no records for this year at all it
+// falls back to everything rather than showing an empty donut.
+let _spendScope={kind:'ytd'};
 // The calendar year the data is standing in, taken from the observation date rather than
 // inferred from the last complete month. In January the most recent complete month is
 // December of the year before, and reading YTD off that would quietly report last year.
@@ -3020,8 +3022,9 @@ function spendScopeLabel(all,asOf,every){
     const y=spendCurrentYear(asOf),partial=String(asOf||'').slice(0,7);
     const n=rows.filter(m=>String(m.month).slice(0,4)===y).length;
     const hasPartial=(every||[]).some(m=>m.month===partial)&&partial.slice(0,4)===y;
-    if(n||hasPartial)return `${y} so far — ${n} closed month${n===1?'':'s'}`
-      +(hasPartial?` plus ${monthLabel(partial).replace(/\s+\d{4}$/,'')} in progress`:'');
+    const name=monthLabel(partial).replace(/\s+\d{4}$/,'');
+    if(!n&&hasPartial)return `${y} so far — ${name} in progress`;   // "0 closed months plus" says nothing
+    if(n)return `${y} so far — ${n} closed month${n===1?'':'s'}`+(hasPartial?` plus ${name} in progress`:'');
   }
   if(_spendScope.kind==='recent'){
     const n=Math.min(Math.max(1,Number(_spendScope.months)||0),rows.length);
@@ -3194,6 +3197,10 @@ function renderSpendingTab(R,P){
     const ranges=[3,6,12].filter(n=>n<=completeAll.length);
     const thisYear=spendCurrentYear(asOf);
     const closedThisYear=completeAll.filter(m=>String(m.month).slice(0,4)===thisYear).length;
+    // With nothing recorded this year the YTD scope has nothing to show and falls back to
+    // everything — so the chip is hidden and All is the one lit, rather than a default with no
+    // chip pressed at all.
+    const hasYtd=closedThisYear>0||months.some(m=>String(m.month).slice(0,4)===thisYear);
     // Every year the records touch, newest first. The CURRENT year is left out of the list:
     // "2026" and "YTD" would be the same set of closed months while 2026 is still running, and
     // two controls for one answer is worse than one.
@@ -3201,8 +3208,8 @@ function renderSpendingTab(R,P){
       .filter(y=>y!==thisYear).sort().reverse();
     const scopeControl=`<div class="spend-scope" role="group" aria-label="Period for this breakdown">
       ${ranges.map(n=>scopeChip('recent',n,`${n}M`,_spendScope.kind==='recent'&&Number(_spendScope.months)===n)).join('')}
-      ${closedThisYear||months.some(m=>String(m.month).slice(0,4)===thisYear)?scopeChip('ytd',null,'YTD',_spendScope.kind==='ytd'):''}
-      ${scopeChip('all',null,'All',_spendScope.kind==='all')}
+      ${hasYtd?scopeChip('ytd',null,'YTD',_spendScope.kind==='ytd'):''}
+      ${scopeChip('all',null,'All',_spendScope.kind==='all'||(!hasYtd&&_spendScope.kind==='ytd'))}
       <label class="spend-scope-month"><span class="ui-sr">A year or a single month</span>
         <select onchange="setSpendScopeFromSelect(this.value)">
           <option value="">Pick a period…</option>
@@ -3211,7 +3218,7 @@ function renderSpendingTab(R,P){
         </select>
       </label>
     </div>`;
-    h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${advEscape(spendScopeLabel(completeAll,asOf,months))}${['month','year','ytd'].includes(_spendScope.kind)?'':' · current month excluded'}${partialInScope?' · per-month figures divide by months elapsed':''}</p>${scopeControl}<div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
+    h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${advEscape(spendScopeLabel(completeAll,asOf,months))}${partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}</p>${scopeControl}<div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
     <div class="spend-stack">
     <section class="cp-card"><h3>Run-rate drift</h3><p>Rolling twelve-month average, per month · the month in progress is excluded</p><div class="spend-ltm-wrap"><canvas id="spendLtmChart" role="img" aria-label="Rolling twelve-month average income and spending"></canvas></div><p class="spend-caption" id="spendLtmNote">Each point averages the twelve months ending there, so one unusual month barely moves it: flat is a steady run rate, and a rising or falling line is real drift. The series breaks across any gap in the records rather than drawing through it.</p></section>
     <section class="cp-card"><h3>Income & spending</h3><p>Every imported month · current and unverified months are labeled${_spendScope.kind!=='all'?' · not narrowed by the period above':''}</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Month by month, as recorded. Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section>

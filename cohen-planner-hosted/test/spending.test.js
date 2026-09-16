@@ -447,8 +447,10 @@ describe('the year-to-date scope', () => {
     expect(src).toContain('const src=(every&&every.length?every:rows);');
   });
 
-  it('is the one scope that does, and stops claiming the current month is excluded', () => {
-    expect(src).toContain("${['month','year','ytd'].includes(_spendScope.kind)?'':' · current month excluded'}");
+  it('says which of the two is happening, from the scope rather than its name', () => {
+    // "current month excluded" is true whenever the partial month is out of range — including
+    // when year-to-date falls back for want of records this year — and false when it is in.
+    expect(src).toContain("${partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}");
   });
 
   it('divides per-month figures by months ELAPSED, not months listed', () => {
@@ -458,7 +460,18 @@ describe('the year-to-date scope', () => {
   });
 
   it('offers the chip even before a month of the year has closed', () => {
-    expect(src).toContain("closedThisYear||months.some(m=>String(m.month).slice(0,4)===thisYear)?scopeChip('ytd'");
+    expect(src).toContain("const hasYtd=closedThisYear>0||months.some(m=>String(m.month).slice(0,4)===thisYear);");
+    expect(src).toContain("${hasYtd?scopeChip('ytd',null,'YTD',_spendScope.kind==='ytd'):''}");
+  });
+
+  it('is what the breakdown opens on', () => {
+    expect(src).toContain("let _spendScope={kind:'ytd'};");
+  });
+
+  it('lights All instead when there is no year to date to show', () => {
+    // The scope itself falls back to everything; leaving no chip pressed would make the
+    // default look like a filter nobody chose.
+    expect(src).toContain("scopeChip('all',null,'All',_spendScope.kind==='all'||(!hasYtd&&_spendScope.kind==='ytd'))");
   });
 });
 
