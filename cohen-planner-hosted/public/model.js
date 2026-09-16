@@ -528,6 +528,16 @@ function run(p,rets,compiledGrants){
     const futureStockIncome=eqYear?futureEvents.reduce((s,e)=>s+e.stock,0):normStock*(yIdx===0?stripeVestRemaining(p):1);
     const remainingNetComp=eqYear?cashAvail+futureStockIncome*(1-vestRate):tax.net*stub;
     const inc=cashAvail;
+    // ── The same year, stated as a WHOLE year ──
+    // The stub exists because the months before the observation date are already inside the
+    // opening balances, and the projection must not compound them twice. But "what does this
+    // year cost, and does it cover itself" is a question about the calendar year, and a table
+    // comparing a quarter of 2026 against all of 2027 answers nothing.
+    //
+    // Substituting stub=1 collapses: the whole year's QCA cash cancels the term subtracting
+    // it, and the whole year's vest cancels the stock withheld from it. What is left is the
+    // year's own after-tax income — which is what it should be.
+    const incFull=tax.net-normStockNet;
     // rets[] (Monte Carlo) perturbs only the DIVERSIFIED portfolio. Stripe follows its own
     // explicit return path — we have no basis for claiming to know its volatility.
     const retFull=rets?rets[yIdx]:p.investReturn;
@@ -618,6 +628,11 @@ function run(p,rets,compiledGrants){
     const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu)+eAdj;
     // Same summing discipline: rounded components summed, never a rounded raw sum.
     const totEFull=Math.round(hFull)+Math.round(livFull)+Math.round(ccFull)+Math.round(tuFull)+eAdj;
+    // The whole-year counterparts of surp, flow and gap, from the whole-year income above.
+    // On a year that is not a stub these equal the figures beside them, which is the check
+    // that the substitution was right rather than merely plausible.
+    const surpFull=incFull-totEFull;
+    const flowFull=tax.net-totEFull;
     const surp=cashAvail-totE; // operating cash flow — retained stock is NOT spendable
     // ── Stripe cash waterfall ──
     // Cash comp funds life first. Whatever it can't cover (including the down payment, a
@@ -735,8 +750,15 @@ function run(p,rets,compiledGrants){
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
       liv:Math.round(liv),livParts,livFullParts,cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
-      // What the WHOLE calendar year costs, stub or not. On a full year it equals totE.
-      totEFull,
+      // The WHOLE calendar year, stub or not. On a full year each equals its counterpart.
+      // A table comparing a quarter of one year against all of the next answers nothing, so
+      // these are what it shows; the projection still carries the remainder forward, and the
+      // year-end balances are unchanged by any of this.
+      // …and the components of it, so a breakdown opened from a full-year total does not
+      // answer with the remainder and contradict the figure that was clicked.
+      hFull:Math.round(hFull),ccFull:Math.round(ccFull),tuFull:Math.round(tuFull),
+      totEFull,incFull:Math.round(incFull),
+      flowFull:Math.round(flowFull),gapFull:Math.round(Math.max(0,-surpFull)),
       surp:Math.round(surp),
       // `flow` is the household's actual net cash flow: everything earned after tax, minus
       // everything spent. It is the figure that answers "am I living within my income", and

@@ -839,3 +839,13 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .exp-liv-grid span{font-size:12px;color:var(--t2)}
 .exp-liv-grid strong{font-size:12px;font-weight:600;color:var(--tx);font-variant-numeric:tabular-nums}
 .exp-zero{color:var(--t3)!important;font-weight:400!important}
+
+/* Actual-to-date beside the projection, for the year we are standing in. */
+.exp-actual{margin-top:14px;padding-top:13px;border-top:1px solid var(--bd)}
+.exp-actual .exp-liv-head{display:flex;align-items:center;gap:9px}
+.exp-pill{font-size:10px;font-weight:600;letter-spacing:.2px;text-transform:none;
+  padding:2px 8px;border-radius:999px;border:1px solid transparent}
+.exp-pill-over{color:#ffb4c4;background:rgba(255,156,175,.12);border-color:rgba(255,156,175,.3)}
+.exp-pill-under{color:#8ce8c7;background:rgba(122,227,195,.12);border-color:rgba(122,227,195,.3)}
+.exp-pill-flat{color:var(--t2);background:var(--s3);border-color:var(--bd2)}
+.exp-actual-note{margin:10px 0 0!important;font-size:11px!important;color:var(--t3)!important;line-height:1.6}

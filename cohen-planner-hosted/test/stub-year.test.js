@@ -265,11 +265,19 @@ describe('the full-year cost of a stub year', () => {
     expect(src).toContain('const hFull=h,livFull=liv,ccFull=cc;');
   });
 
-  it('is what the annual table shows, with the row marked as a part year', () => {
+  it('is what the annual table shows — every row is a whole calendar year', () => {
+    // A table comparing a quarter of 2026 against all of 2027 answers nothing about either.
+    expect(html).toContain('${fmt(r.totEFull)}</span><span class="exp-caret">');
+    expect(html).toContain('${fmt(r.incFull)}</td>');
+    expect(html).toContain('${(r.flowFull>=0?\'+\':\'−\')+fmt(Math.abs(r.flowFull))}');
+    expect(html).toContain("${r.gapFull>0?'−'+fmt(r.gapFull):'—'}");
+  });
+
+  it('marks the stub row for what the stub actually changes: the closing balances', () => {
     expect(html).toContain('const stubRow=R.find(r=>r.stubFrac!=null&&r.stubFrac<1);');
-    expect(html).toContain('is a part year');
-    expect(html).toContain('part yr');
-    expect(html).toContain('of ${fmt(r.totEFull)} full yr');
+    expect(html).toContain('is shown as a full year');
+    expect(html).toContain('opened mid-yr');
+    expect(html).toMatch(/closing balances grow from only the \$\{stubPct\}%/);
     // …and nothing is marked when the plan really does open on 1 January.
     expect(html).toContain("const stubNote=stubRow?");
   });

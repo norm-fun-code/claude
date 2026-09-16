@@ -906,8 +906,8 @@ function toggleInflation(){inflationView=!inflationView;render();savePlannerStat
 // ═══ CSV EXPORT ═══
 function exportCSV(){
   const{R}=run(P);
-  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Cash Available','Housing','Living','Childcare','Tuition','One-Off Adjustment','Total Expenses','Net Flow (all income)','Cash-Pay-Only Surplus','Cash Gap','Income Gap','Total Cash Need','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
-  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.inc,r.h,r.liv,r.cc,r.tu,r.eAdj,r.totE,r.flow,r.surp,r.gap,r.incGap,r.need,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
+  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Modeled Fraction Of Year','Cash Available (modeled)','Cash Available (full year)','Housing','Living','Childcare','Tuition','One-Off Adjustment','Total Expenses (modeled)','Total Expenses (full year)','Net Flow (modeled)','Net Flow (full year)','Cash-Pay-Only Surplus','Cash Gap','Cash Gap (full year)','Income Gap','Total Cash Need','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
+  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.stubFrac,r.inc,r.incFull,r.h,r.liv,r.cc,r.tu,r.eAdj,r.totE,r.totEFull,r.flow,r.flowFull,r.surp,r.gap,r.gapFull,r.incGap,r.need,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
   const csv=[cols.join(','),...rows.map(r=>r.join(','))].join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -1490,7 +1490,37 @@ function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[
 const _expOpenYears=new Set();
 function toggleExpRow(yr){
   if(_expOpenYears.has(yr))_expOpenYears.delete(yr);else _expOpenYears.add(yr);
+  // The year we are living through can be checked against what has actually been spent, and
+  // that lives in the transaction ledger the Spending tab loads. Opening the row here is the
+  // first time this tab needs it, so ask for it then — loadSpending re-renders when it lands.
+  if(_expOpenYears.has(yr)&&yr===new Date().getFullYear()&&!_spend&&!_spendLoading)loadSpending();
   render();
+}
+// ── What the year has actually cost so far ──────────────────────────────────
+// A projection for the year you are standing in is checkable, and nothing else on this page
+// checks it. Actual is the imported ledger's own spending total for the year INCLUDING the
+// month in progress — "so far" means so far.
+//
+// The two taxonomies are not the same and this does not pretend they are: it compares totals
+// and says so. The pace figure divides by the share of the year actually elapsed, because
+// eight and a bit months of spending measured against twelve months of plan is not a
+// comparison, it is a subtraction with a month missing.
+function expActualYTD(year){
+  if(year!==new Date().getFullYear())return null;
+  if(_spendLoading)return{loading:true};
+  const d=_spend;
+  if(!d||d.error||!Array.isArray(d.months))return null;
+  const rows=d.months.filter(m=>String(m.month).slice(0,4)===String(year));
+  if(!rows.length)return null;
+  const asOf=d.endDate||new Date().toISOString().slice(0,10);
+  const partial=(d.coverage||{}).partial;
+  const closed=rows.filter(m=>m.month!==partial);
+  const spent=rows.reduce((t,m)=>t+(Number(m.expense)||0),0);
+  // Months elapsed, counting the one in progress for the part of it that has passed.
+  const elapsed=closed.length+(rows.length>closed.length?(Number((d.coverage||{}).fractionElapsed)||0):0);
+  return{spent,elapsed,asOf,months:rows.length,
+    through:partial&&rows.some(m=>m.month===partial)?partial:(closed.length?closed[closed.length-1].month:null),
+    pace:elapsed>0?spent/elapsed*12:null};
 }
 // The labels for the twelve lines inside living. LIV_KEYS owns the ORDER; this owns how each
 // one reads. A key with no label here would still render — as its own key — rather than
@@ -1498,28 +1528,61 @@ function toggleExpRow(yr){
 const LIV_LABEL={groceries:'Groceries',dining:'Dining',shopping:'Shopping',vacations:'Vacations',
   auto:'Auto',insurance:'Insurance',misc:'Misc',entertainment:'Entertainment',charity:'Charity',
   medical:'Medical',transit:'Transit',utilities:'Utilities & phone'};
+function expActualBlock(r){
+  const a=expActualYTD(r.yr);
+  if(!a)return '';
+  if(a.loading)return `<div class="exp-actual"><div class="exp-liv-head">Actual so far</div><p>Reading your imported transactions…</p></div>`;
+  const plan=r.totEFull;
+  const share=a.elapsed/12;
+  // Plan-to-date is the projection scaled to the SAME elapsed share, so the two sides cover
+  // the same stretch of calendar. Comparing spending-to-date against a whole year would
+  // report every household on earth as comfortably under budget in January.
+  const planToDate=plan*share;
+  const diff=a.spent-planToDate;
+  const over=diff>0;
+  const pill=Math.abs(diff)<Math.max(1000,planToDate*0.03)
+    ? `<span class="exp-pill exp-pill-flat">on plan</span>`
+    : `<span class="exp-pill ${over?'exp-pill-over':'exp-pill-under'}">${fmt(Math.abs(diff))} ${over?'over':'under'}</span>`;
+  return `<div class="exp-actual">
+    <div class="exp-liv-head">Actual so far this year ${pill}</div>
+    <div class="exp-liv-grid">
+      <div><span>Spent through ${advEscape(monthLabel(a.through)||String(a.asOf))}</span><strong>${fmt(a.spent)}</strong></div>
+      <div><span>Plan for the same stretch</span><strong>${fmt(planToDate)}</strong></div>
+      <div><span>At this pace, full year</span><strong>${a.pace==null?'—':fmt(a.pace)}</strong></div>
+      <div><span>Plan, full year</span><strong>${fmt(plan)}</strong></div>
+    </div>
+    <p class="exp-actual-note">Actual is your imported transactions, net of refunds, with transfers and card payments excluded. It counts ${a.elapsed.toFixed(1)} of 12 months, and the plan is scaled to the same stretch. The plan's four categories and your Monarch categories are different taxonomies, so this compares totals, not lines.</p>
+  </div>`;
+}
 function expDetailRow(r,span,stub){
   // A zero component shows as a dash rather than disappearing: a year with no tuition read
   // as a year whose breakdown was missing a line, which is the opposite of the point.
   const part=(label,v,note,cls)=>`<div class="exp-part${cls?' '+cls:''}"><span${note?` title="${advEscape(note)}"`:''}>${label}</span><strong${v?'':' class="exp-zero"'}>${v?fmt(v):'—'}</strong></div>`;
   const signed=v=>(v>0?'+':'−')+fmt(Math.abs(v));
   const keys=typeof LIV_KEYS!=='undefined'?LIV_KEYS:Object.keys(r.livParts||{});
-  const lp=r.livParts||{};
+  // Whole-year throughout, because that is the figure this opened from. The modelled
+  // remainder is a different question and it is the closing balances, not these, that carry
+  // it — answering a click on $171K with $50K of parts is just a contradiction.
+  const lp=r.livFullParts||r.livParts||{};
+  // Summed from the parts rather than taken from r.liv, so the heading and the twelve lines
+  // under it cannot disagree about which period they describe.
+  const livTotal=keys.reduce((t,k)=>t+(lp[k]||0),0);
   const livRows=keys.filter(k=>lp[k]).sort((a,b)=>lp[b]-lp[a]);
   return `<tr class="exp-detail"><td colspan="${span}"><div class="exp-detail-in">
     <div class="exp-parts">
-      ${part('Housing',r.h,'Rent, or mortgage + property tax + insurance + maintenance once the home is bought')}
-      ${part('Living',r.liv,'Everyday spending — opened out below, including each child\'s share')}
-      ${part('Childcare',r.cc,'A flat monthly rate per child, from birth until school starts')}
-      ${part('Tuition',r.tu,r.kiy?`${r.kiy} ${r.kiy===1?'kid':'kids'} in school`:'No child is in school this year')}
+      ${part('Housing',r.hFull,'Rent, or mortgage + property tax + insurance + maintenance once the home is bought')}
+      ${part('Living',livTotal,'Everyday spending — opened out below, including each child\'s share')}
+      ${part('Childcare',r.ccFull,'A flat monthly rate per child, from birth until school starts')}
+      ${part('Tuition',r.tuFull,r.kiy?`${r.kiy} ${r.kiy===1?'kid':'kids'} in school`:'No child is in school this year')}
       ${r.eAdj?`<div class="exp-part"><span title="A one-off for this year alone — not inflated, not repeated">One-off</span><strong style="color:var(--a)">${signed(r.eAdj)}</strong></div>`:''}
-      ${part('Total',r.totE,'','exp-part-total')}
+      ${part('Total',r.totEFull,'','exp-part-total')}
     </div>
     ${livRows.length?`<div class="exp-liv">
-      <div class="exp-liv-head">Inside living · ${fmt(r.liv)}, largest first</div>
+      <div class="exp-liv-head">Inside living · ${fmt(livTotal)}, largest first</div>
       <div class="exp-liv-grid">${livRows.map(k=>`<div><span>${advEscape(LIV_LABEL[k]||k)}</span><strong>${fmt(lp[k])}</strong></div>`).join('')}</div>
     </div>`:''}
-    <p>${stub?`${r.yr} is a part year — this covers the ${Math.round(r.stubFrac*100)}% still ahead of the opening date. The whole year costs ${fmt(r.totEFull)}.`:'Every figure here is summed from the ones beneath it, so the parts add to the total exactly.'}${r.ptax?` Property tax within housing: ${fmt(r.ptax)}.`:''}</p>
+    ${expActualBlock(r)}
+    <p>Every figure here is summed from the ones beneath it, so the parts add to the total exactly.${r.ptax?` Property tax within housing: ${fmt(r.ptax)}.`:''}${stub?` The plan opened partway through ${r.yr}, so its closing balances grow from only the months after that date — these costs are for the whole year.`:''}</p>
   </div></td></tr>`;
 }
 function expAdjSet(year,val){
@@ -1937,23 +2000,23 @@ function render(){
     // The one-off column appears only when a year actually carries one.
     const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail','Expenses',
       'Cash gap','Net flow','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW ex-retirement'];
-    // The first row is usually a STUB: the plan opens on the date the balances were read, so
-    // its income, spending and flow cover only the months still ahead — the earlier ones are
-    // already inside the opening balances. Every column in that row was printed in the same
-    // style as a full year beside it, so $51K of expenses read as a year that cost $51K.
-    // The row stays as the engine computes it, because its own arithmetic has to hold; what
-    // was missing was saying which period it describes, and what the whole year costs.
+    // Every row is a WHOLE calendar year, the first one included. The engine still opens
+    // partway through it — the months before the observation date are already in the opening
+    // balances and must not be compounded twice — but a table comparing a quarter of 2026
+    // against all of 2027 answers nothing about either, and $51K of expenses read as a year
+    // that cost $51K. The flow columns show the full-year figures. What the stub genuinely
+    // changes is the year-end BALANCES beside them, and that is what the note now says.
     const stubRow=R.find(r=>r.stubFrac!=null&&r.stubFrac<1);
     const stubPct=stubRow?Math.round(stubRow.stubFrac*100):0;
     const openNote=' · click any Expenses figure to see what makes it up';
-    const stubNote=stubRow?` · <strong>${stubRow.yr} is a part year</strong>: it covers the ${stubPct}% of the year still ahead of ${advEscape(String(P.observedOn||'').slice(0,10)||'the opening date')}, because the months before it are already inside your opening balances. Its expenses, cash available and net flow are for that remainder.`:'';
+    const stubNote=stubRow?` · <strong>${stubRow.yr} is shown as a full year</strong>, like every row. Your plan opened ${advEscape(String(P.observedOn||'').slice(0,10)||'partway through it')}, so that year's closing balances grow from only the ${stubPct}% after that date — the months before it are already inside your opening balances.`:'';
     ca.innerHTML=`<div class="polish-table-note">Year-end projections · scroll for all columns · net worth excludes retirement${openNote}${stubNote}</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
       const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
       const dash=v=>v>0?fmt(v):'—';
       const stub=r.stubFrac!=null&&r.stubFrac<1;
       const open=_expOpenYears.has(r.yr);
       return `<tr style="background:${bg}">`+
-        `<td style="font-weight:700;color:var(--tx);white-space:nowrap">${r.yr}${stub?` <span style="color:var(--a);font-weight:600" title="Part year — the ${Math.round(r.stubFrac*100)}% still ahead of the opening date. The rest of ${r.yr} is already in your opening balances.">part yr</span>`:''}</td>`+
+        `<td style="font-weight:700;color:var(--tx);white-space:nowrap">${r.yr}${stub?` <span style="color:var(--a);font-weight:600" title="These figures cover the whole of ${r.yr}. The plan opened partway through it, so the closing balances grow from only the ${Math.round(r.stubFrac*100)}% after that date — the earlier months are already in your opening balances.">opened mid-yr</span>`:''}</td>`+
         `<td style="color:var(--b)">${fmt(r.normCash)}</td>`+
         `<td style="color:#6772e5">${dash(r.normStock)}</td>`+
         `<td style="font-weight:600" title="Cash + stock — the W-2 figure taxes are computed on">${fmt(r.normG)}</td>`+
@@ -1961,14 +2024,13 @@ function render(){
         `<td>${fmt(r.gross)}</td>`+
         `<td style="color:var(--r)">${fmt(r.tax)}</td>`+
         `<td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td>`+
-        `<td style="color:var(--g)">${fmt(r.inc)}</td>`+
+        `<td style="color:var(--g)">${fmt(r.incFull)}</td>`+
         // Expenses opens rather than spreading into four more columns. A breakdown is wanted
         // for one year at a time, and paying for it with permanent width on all thirty-three
         // pushes the balances off the right edge for everyone who never asks.
         `<td class="exp-cell"><button type="button" class="exp-toggle" aria-expanded="${open}" onclick="toggleExpRow(${r.yr})" title="What makes up ${r.yr}'s expenses">`+
-          `<span${stub?' style="color:var(--a)"':''}>${fmt(r.totE)}</span><span class="exp-caret">${open?'▾':'▸'}</span>`+
-          `${stub?`<small>of ${fmt(r.totEFull)} full yr</small>`:''}</button></td>`+
-        `<td style="color:${r.gap>0?'var(--a)':'var(--t3)'}" title="Shortfall against cash pay alone — how much of the year's vest must be sold">${r.gap>0?'−'+fmt(r.gap):'—'}</td>`+`<td style="color:${r.flow>=0?'var(--g)':'var(--r)'};font-weight:600" title="Total after-tax pay minus total spending. Negative means the year genuinely draws on savings or held Stripe.">${(r.flow>=0?'+':'−')+fmt(Math.abs(r.flow))}</td>`+
+          `<span>${fmt(r.totEFull)}</span><span class="exp-caret">${open?'▾':'▸'}</span></button></td>`+
+        `<td style="color:${r.gapFull>0?'var(--a)':'var(--t3)'}" title="Shortfall against cash pay alone — how much of the year's vest must be sold">${r.gapFull>0?'−'+fmt(r.gapFull):'—'}</td>`+`<td style="color:${r.flowFull>=0?'var(--g)':'var(--r)'};font-weight:600" title="Total after-tax pay minus total spending, across the whole calendar year. Negative means the year genuinely draws on savings or held Stripe.">${(r.flowFull>=0?'+':'−')+fmt(Math.abs(r.flowFull))}</td>`+
         `<td style="color:#6772e5">${dash(r.sSold)}</td>`+
         `<td style="color:#6772e5;font-weight:600">${dash(r.sRet)}</td>`+
         `<td style="color:var(--b)">${fmt(r.liq)}</td>`+

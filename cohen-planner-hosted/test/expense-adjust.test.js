@@ -187,8 +187,8 @@ describe('what the advisor is told, and what the table shows', () => {
   });
 
   it('exports a one-off column too, so the CSV columns still sum to its total', () => {
-    expect(html).toContain("'Housing','Living','Childcare','Tuition','One-Off Adjustment','Total Expenses'");
-    expect(html).toContain('r.inc,r.h,r.liv,r.cc,r.tu,r.eAdj,r.totE,');
+    expect(html).toContain("'Housing','Living','Childcare','Tuition','One-Off Adjustment','Total Expenses (modeled)'");
+    expect(html).toContain('r.h,r.liv,r.cc,r.tu,r.eAdj,r.totE,');
   });
 
   it('keeps the money rule the cockpit uses, rather than a second one beside it', () => {
