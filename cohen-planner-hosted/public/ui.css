@@ -372,12 +372,9 @@
    more would be decoration pretending to be data. */
 .nav-spark{display:block;width:100%;padding:0;border:0;background:none;cursor:pointer;
   color:var(--gain);text-align:left}
-.nav-spark svg{display:block;width:100%;height:30px;opacity:.95}
-.nav-spark polyline{stroke-width:1.8}
-.nav-spark:hover svg{opacity:1}
-.nav-spark>span{display:flex;justify-content:space-between;gap:8px;margin-top:5px;
+.nav-spark>span{display:flex;justify-content:space-between;gap:8px;
   font-size:11px;color:var(--t4);font-variant-numeric:tabular-nums}
-.nav-spark>span i{font-style:normal;color:var(--t3)}
+.nav-spark:hover>span{color:var(--t3)}
 .nav-spark:hover>span i{color:var(--t2)}
 
 /* On a phone the rail is a bottom bar, so the footer has nowhere to live. */

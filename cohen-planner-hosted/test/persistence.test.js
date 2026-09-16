@@ -173,8 +173,11 @@ describe('The live nav rail',()=>{
     expect(fn).toMatch(/Balances \$\{days\} day/);
   });
 
-  it('hides the rail rather than drawing a curve it could not compute',()=>{
-    expect(fn).toContain('catch(e){rail.hidden=true;return}');
+  it('runs no projection, because nothing left in the rail depends on one',()=>{
+    // The sparkline is gone; the rail is a freshness dot and a link. Projecting the whole
+    // plan on every render to decide whether to draw those is work for nothing.
+    expect(fn).not.toContain('run(P)');
+    expect(fn).not.toContain('polyline');
   });
 
   it('is redrawn on every render, so a finished sync reaches it',()=>{

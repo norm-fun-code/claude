@@ -1582,6 +1582,49 @@ if(window.Chart&&Chart.defaults){Chart.defaults.font.family='Inter';Chart.defaul
 function chartOpts(){return{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},animations:{colors:false},plugins:{legend:{position:'top',align:'end',labels:{color:'#b6c3d6',font:{size:12,family:'Inter',weight:'500'},usePointStyle:true,pointStyle:'circle',boxWidth:7,boxHeight:7,padding:15}},tooltip:{..._GLASS_TOOLTIP,callbacks:{label:c=>'  '+c.dataset.label+': $'+(c.raw||0).toLocaleString()+'K'}}},scales:{x:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},maxRotation:45},grid:{display:false},border:{display:false}},y:{ticks:{color:'#8898aa',font:{size:10,family:'Inter'},stepSize:500,callback:v=>fmtK(v),padding:6},grid:{color:'rgba(10,37,64,.05)',drawTicks:false},border:{display:false}}}}}
 function posOpts(){const o=chartOpts();o.scales.y.min=0;return o}
 
+// ── Today, named and numbered ──────────────────────────────────────────────
+// The trajectory's first point has always BEEN today's net worth — prepended at sy-1, the
+// same figure the cockpit shows. But unlabelled, at the bottom of an axis that has to reach
+// the 2050s, it reads as where a line starts rather than where you actually are: the one
+// number on the chart you already know, and the only one you can check the rest against.
+//
+// Drawn rather than added as a dataset, so it cannot appear in the legend, shift the axis,
+// or be mistaken for a fourth series.
+const todayMarker={
+  id:'todayMarker',
+  afterDatasetsDraw(chart){
+    const i=chart.data.datasets.findIndex(d=>/^Total net worth/.test(d.label||''));
+    if(i<0)return;
+    const meta=chart.getDatasetMeta(i);
+    if(!meta||meta.hidden)return;
+    const pt=meta.data&&meta.data[0], v=chart.data.datasets[i].data[0];
+    if(!pt||v==null)return;
+    // `v` is already in thousands, which is what fmtK expects. Scaling it here is what
+    // turned $1.28M into $1284M the last time this existed.
+    const text='Today · '+fmtK(v);
+    const ctx=chart.ctx, area=chart.chartArea;
+    ctx.save();
+    ctx.font='600 11px Inter, system-ui, sans-serif';
+    const w=ctx.measureText(text).width+14, h=20, r=6;
+    // Stay inside the plot: at the left edge the pill goes right of the dot, and it drops
+    // below when there is no room above.
+    let x=pt.x+10, y=pt.y-h-8;
+    if(x+w>area.right)x=pt.x-10-w;
+    if(x<area.left)x=area.left+2;
+    if(y<area.top)y=pt.y+10;
+    ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(x,y,w,h,r);else ctx.rect(x,y,w,h);
+    ctx.fillStyle='rgba(182,168,255,.18)';ctx.fill();
+    ctx.strokeStyle='#b6a8ff';ctx.lineWidth=1;ctx.stroke();
+    ctx.fillStyle='#e8ebf5';ctx.textBaseline='middle';ctx.textAlign='left';
+    ctx.fillText(text,x+7,y+h/2+.5);
+    ctx.beginPath();ctx.arc(pt.x,pt.y,4,0,Math.PI*2);
+    ctx.fillStyle='#b6a8ff';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.restore();
+  }
+};
+
 // ═══ MOTION + HERO HELPERS (next-gen visual layer) ═══
 let _firstPaint=true;
 const _reduceMotion=()=>window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
@@ -1887,7 +1930,7 @@ function render(){
     // accounts the rest of this screen is built on — so it drifted from everything around
     // it, and a pin that disagrees with its own chart is worse than no pin. Today's position
     // is on the Overview, observed and dated, which is where it belongs.
-    if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po})}
+    if(!reuseChart||!_updateChart(ds,nwLabels)){if(!reuseChart)ca.innerHTML='<canvas id="cv" style="height:300px"></canvas>';const ctx2=document.getElementById('cv').getContext('2d');charts.main=new Chart(ctx2,{type:'line',data:{labels:nwLabels,datasets:ds},options:po,plugins:[todayMarker]})}
   } else {
     if(_projView==='cashflow'){
       // Bars are net flow against TOTAL after-tax pay — the honest "did the year pay for
@@ -4573,9 +4616,9 @@ function renderNavLive(){
 
   const rail=document.getElementById('navLive');
   if(!rail)return;
-  let R;
-  try{R=run(P).R}catch(e){rail.hidden=true;return}
-  if(!R||!R.length){rail.hidden=true;return}
+  // No projection is run here any more. It existed only to draw the sparkline; with that
+  // gone, nothing in this rail depends on it, and running the whole plan on every render to
+  // decide whether to show a freshness dot is work for nothing.
 
   // Freshness. The dot states which of three things is true, and the text never claims
   // more than the dot: connected and current, connected and stale, or not connected.
@@ -4588,20 +4631,15 @@ function renderNavLive(){
     :days<=0?'Balances read today'
     :`Balances ${days} day${days===1?'':'s'} old`;
 
-  // The curve, at the size it can honestly be read: shape only, no axis, no figures.
-  const series=R.map(r=>r.netWorth);
-  const lo=Math.min(...series),hi=Math.max(...series),span=(hi-lo)||1;
-  const pts=series.map((v,i)=>
-    `${(i/(series.length-1)*100).toFixed(1)},${(26-(v-lo)/span*24).toFixed(1)}`).join(' ');
-
+  // The sparkline that used to sit here is gone. Rescaled to its own min and max, thirty
+  // years of compounding flattened into a line that looked the same whatever the plan said —
+  // a picture of a shape with no number on it, in a corner, beside a chart that shows the
+  // same projection properly. What is left is the two things this rail can actually tell
+  // you at that size: how fresh the balances are, and the way in.
   rail.hidden=false;
   rail.innerHTML=`
     <div class="nav-fresh" data-tone="${tone}"><span></span>${advEscape(freshness)}</div>
-    <button class="nav-spark" onclick="setTab('cockpit')" aria-label="Projected wealth through ${R[R.length-1].yr}. Open the cockpit.">
-      <svg viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">
-        <polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.6"
-          stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
-      </svg>
+    <button class="nav-spark" onclick="setTab('cockpit')" aria-label="Open your financial overview.">
       <span>Open your financial overview ↗</span>
     </button>`;
 }
