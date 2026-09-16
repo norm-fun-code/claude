@@ -107,4 +107,16 @@ async function getPlannerHoldings(token, window) {
   }
   return mapHoldings(d.portfolio);
 }
-module.exports = { login, getAccounts, getTransactions, getPlannerHoldings };
+// Transactions and categories for the family planner, on their own query. The planner's
+// sync is incremental and idempotent, so it needs ids, `updatedAt` and `pending` that the
+// briefing query above does not select.
+async function getPlannerTransactions(token, window) {
+  const { fetchTransactionPage } = require('./planner-transactions');
+  return fetchTransactionPage(gql, token, window);
+}
+async function getPlannerCategories(token) {
+  const { fetchCategories } = require('./planner-transactions');
+  return fetchCategories(gql, token);
+}
+module.exports = { login, getAccounts, getTransactions, getPlannerHoldings,
+  getPlannerTransactions, getPlannerCategories };
