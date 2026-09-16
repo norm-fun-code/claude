@@ -9,7 +9,7 @@ function installHoldingsRoute(router,{db,api,env,now,authorize}) {
     const {rows}=await db.query("SELECT id, config FROM sources WHERE id IN ('monarch','monarch_api','monarch_mcp_sync')");
     let saved=rows.find(r=>r.id==='monarch')?.config?.plannerHoldings?.[period];
     if(!Array.isArray(saved?.holdings)||!saved.holdings.length||!Number.isFinite(Date.parse(saved.asOf)))saved=null;
-    if(saved&&now()-Date.parse(saved.asOf)<ttl)return {...saved,stale:false,warning:null};
+    if(saved&&saved.periodEnd===window.endDate&&now()-Date.parse(saved.asOf)<ttl)return {...saved,stale:false,warning:null};
     const token=env.MONARCH_TOKEN||rows.find(r=>r.config?.monarchToken)?.config.monarchToken;
     let warning=cooldown.get(period)?.warning;
     if(!cooldown.has(period)||now()>=cooldown.get(period).until){

@@ -22,3 +22,5 @@ test('price changes use position value; missing history remains unavailable',()=
  const partial=shapePortfolio([position,{...position,periodChange:null}],periodWindow('1M'));
  assert.equal(partial.periodChange,null);assert.equal(partial.periodChangePct,null);
 });
+
+test('evening queries end on the local market day, not tomorrow in UTC',()=>{assert.equal(periodWindow('1M',Date.parse('2026-09-16T01:00:00Z')).endDate,'2026-09-15');});

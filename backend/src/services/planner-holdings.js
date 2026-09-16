@@ -2,6 +2,7 @@
 // Read-only positions. Price growth is not a contribution-adjusted portfolio return.
 const HOLDINGS_QUERY = `query NormOS_Holdings($input: PortfolioInput) {
   portfolio(input: $input) {
+    performance { totalValue totalBasis totalChangePercent totalChangeDollars oneDayChangePercent historicalChart { date returnPercent } }
     aggregateHoldings { edges { node {
       id quantity basis totalValue
       securityPriceChangeDollars securityPriceChangePercent
@@ -72,9 +73,10 @@ function mapHoldings(payload) {
 
 function periodWindow(period, timestamp = Date.now()) {
   if (!['1W','1M','3M','YTD','1Y'].includes(period)) throw new Error('Choose 1W, 1M, 3M, YTD or 1Y.');
-  const endDate = new Date(timestamp).toISOString().slice(0,10);
+  const endDate = new Date(timestamp).toLocaleDateString('en-CA',{timeZone:'America/New_York'});
+  const midnight = Date.parse(endDate+'T00:00:00Z');
   const days = {'1W':7,'1M':30,'3M':90,'1Y':365};
-  return { endDate, startDate: period === 'YTD' ? endDate.slice(0,4)+'-01-01' : new Date(timestamp-days[period]*86400000).toISOString().slice(0,10) };
+  return { endDate, startDate: period === 'YTD' ? endDate.slice(0,4)+'-01-01' : new Date(midnight-days[period]*86400000).toISOString().slice(0,10) };
 }
 function shapePortfolio(holdings, window) {
   const totalValue = holdings.reduce((s,h)=>s+h.value,0);
