@@ -302,16 +302,28 @@ describe('private holdings the plan had no bucket for', () => {
     homePurchaseYear: 2099 };
 
   it('counts in net worth, on both bases', () => {
-    const without = M.run(base).R[0];
-    const with_ = M.run({ ...base, otherAssets: 51500 }).R[0];
+    const without = M.run({ ...base, investReturn: 0 }).R[0];
+    const with_ = M.run({ ...base, otherAssets: 51500, investReturn: 0 }).R[0];
     expect(with_.nw - without.nw).toBe(51500);
     expect(with_.netWorth - without.netWorth).toBe(51500);
     expect(with_.nwExRetHome - without.nwExRetHome).toBe(51500);
   });
 
-  it('is held flat, because there is no return path for a position we know nothing about', () => {
-    const R = M.run({ ...base, otherAssets: 51500 }).R;
-    for (const r of R) expect(r.otherAssets).toBe(51500);
+  it('compounds at the portfolio return, like the investments they are', () => {
+    const R = M.run({ ...base, otherAssets: 51500, investReturn: 0.06 }).R;
+    expect(R[0].otherAssets).toBe(Math.round(51500 * 1.06));
+    expect(R[1].otherAssets).toBe(Math.round(51500 * 1.06 * 1.06));
+    // …and a zero-return plan leaves them exactly where they started.
+    for (const r of M.run({ ...base, otherAssets: 51500, investReturn: 0 }).R) expect(r.otherAssets).toBe(51500);
+  });
+
+  it('takes the stub year\'s share of growth, not a whole year of it', () => {
+    // A position observed in September has only the remaining months ahead of it, exactly
+    // like the diversified pool beside it.
+    const full = M.run({ ...base, otherAssets: 51500, investReturn: 0.06 }).R[0].otherAssets;
+    const stub = M.run({ ...base, otherAssets: 51500, investReturn: 0.06, observedOn: '2026-09-16' }).R[0].otherAssets;
+    expect(stub).toBeGreaterThan(51500);
+    expect(stub).toBeLessThan(full);
   });
 
   it('never joins the spendable pool, which could fund a house it cannot fund', () => {
@@ -334,5 +346,21 @@ describe('private holdings the plan had no bucket for', () => {
       + Math.max(0, Number(p.otherAssets) || 0) - Math.abs(Number(p.otherDebt) || 0);
     expect(openingExRet(base)).toBe(observedExRet - 51500);            // before
     expect(openingExRet({ ...base, otherAssets: 51500 })).toBe(observedExRet);  // after
+  });
+
+  it('never becomes spendable, whatever it grows to', () => {
+    // The distinction that matters: reclassifying these as taxable would put them in the pool
+    // the model can SELL — to fund a house, to cover a deficit year — and they cannot be sold.
+    // Growing them must not smuggle them in through the back door.
+    const without = M.run({ ...base, investReturn: 0.06 }).R;
+    const with_ = M.run({ ...base, otherAssets: 51500, investReturn: 0.06 }).R;
+    for (let i = 0; i < without.length; i++) {
+      expect(with_[i].liq).toBe(without[i].liq);
+      expect(with_[i].flow).toBe(without[i].flow);
+    }
+    // …including in a year with a house purchase to fund.
+    const buying = { ...base, planEndYear: 2032, homePurchaseYear: 2030, investReturn: 0.06 };
+    const a = M.run(buying).R, b = M.run({ ...buying, otherAssets: 51500 }).R;
+    for (let i = 0; i < a.length; i++) expect(b[i].liq).toBe(a[i].liq);
   });
 });

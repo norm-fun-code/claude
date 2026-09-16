@@ -161,6 +161,14 @@ function renderCockpit(R){
       </div>
       <div class="cp-metrics">${
         metric('Cash + taxable',available?money(s.accessible):money(selected.liq),available?'Spendable without penalty':'Projected · accounts unavailable','overview')
+      }${(() => {
+        // Private holdings kept as their own tile rather than folded into the one above. They
+        // are investments and they count in the net worth at the top, but the tile beside them
+        // answers "what can I actually reach", and these cannot be reached — which is the one
+        // thing that would be lost by calling the combination "investments" here.
+        const v=available?Math.max(0,(Number(s.byClass?.private?.total)||0)-(Number(s.stripeVested)||0)):Number(selected.otherAssets)||0;
+        return v>=1000?metric('Private assets',money(v),'In your net worth · not readily sellable','overview'):'';
+      })()
       }${metric('Vested Stripe',available?money(s.stripeVested):money(selected.sEnd),'Private equity · sale windows apply','stripe')
       }${metric('Retirement',available?money(s.byClass?.retirement?.total):money(selected.k401),cockpitExRet?'Locked until 59½ · NOT in the figure above':available?'Locked until retirement age':'Projected · accounts unavailable','holdings')
       }${metric(`${current.yr} monthly margin`,money(current.flowMonthly),'All after-tax pay less all spending','cashflow')}</div>

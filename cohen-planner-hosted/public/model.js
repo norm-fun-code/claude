@@ -420,24 +420,30 @@ function run(p,rets,compiledGrants){
   const dp=p.homePrice*(p.downPctg/100),ma=p.homePrice-dp,am=mPmt(ma,p.mortgageRate/100);
   // F3. `||` treats a deliberate zero as absent, so a household with no retirement balance
   // was silently given $210,000 of it. Nullish coalescing preserves an explicit zero.
-  let liq=p.startingLiquid,k401=p.k401Start??210000,tT=0,tC=0,tTx=0,tS=0;
-  // Non-mortgage debt. Absent means zero, and an explicit zero must survive — same
-  // nullish-coalescing reason as k401Start above. See the note at `nw` for why this is a
-  // flat offset and not a drawdown on liq.
-  const otherDebt=Math.abs(Number(p.otherDebt??0))||0;
   // ── Private assets that are not vested Stripe ────────────────────────────
   // Angel investments, a stake in something, a private fund. Real wealth, and until now the
   // plan had nowhere to put it: the opening reads cash + taxable into `liq` and vested Stripe
   // into its own pool, so a private holding of any other kind fell out of the projection
   // entirely — present in the observed net worth, absent from every year the plan draws.
   //
-  // Held FLAT, deliberately. We have no return path for a private position we know nothing
-  // about, and inventing one would compound a guess for thirty years. It is not added to
-  // `liq` either: it cannot be sold to fund a house or a shortfall, and treating it as though
-  // it could is how a plan looks solvent right up until the money is needed. So it sits in
-  // net worth, unchanged, and says so — the same treatment, and the same reasoning, as the
-  // revolving balance on the other side of the ledger.
-  const otherAssets=Math.max(0,Number(p.otherAssets??0)||0);
+  // They COMPOUND at the diversified portfolio's return, because that is what they are:
+  // investments that appreciate, not a static balance. Borrowed rather than separately
+  // assumed — a rate invented for a specific angel investment would be a guess wearing a
+  // number — and it is a consequential choice either way: $51,500 at 6% for thirty-two years
+  // is roughly $300K, so carrying them flat understates net worth by about as much as
+  // leaving them out did.
+  //
+  // What they are NOT is spendable. They never join `liq`, so the liquidity waterfall cannot
+  // sell them to fund a house or cover a deficit year. That separation is the whole point:
+  // counting them in net worth is honest, counting them as reachable is how a plan looks
+  // solvent right up until the money is needed.
+  const otherAssetsStart=Math.max(0,Number(p.otherAssets??0)||0);
+  let liq=p.startingLiquid,k401=p.k401Start??210000,otherAssets=otherAssetsStart,tT=0,tC=0,tTx=0,tS=0;
+  // Non-mortgage debt. Absent means zero, and an explicit zero must survive — same
+  // nullish-coalescing reason as k401Start above. See the note at `nw` for why this is a
+  // flat offset and not a drawdown on liq.
+  const otherDebt=Math.abs(Number(p.otherDebt??0))||0;
+
   // Stripe equity is a wholly separate pool from the diversified `liq`. Basis matters
   // because RSU cost basis IS the vest-date FMV — selling at vest produces essentially no
   // capital gain (the W2 tax was already paid), and only post-vest appreciation is ever a
@@ -560,6 +566,9 @@ function run(p,rets,compiledGrants){
     // A negative balance is an unfunded shortfall, not a leveraged position. Compounding it
     // at the portfolio's expected return would model an unlimited margin loan accruing at
     // the same rate the portfolio is assumed to earn, so it stays flat instead.
+    // Same return, and the same stub-year fraction: a position observed in September has only
+    // the remaining months of growth ahead of it, exactly like the diversified pool.
+    otherAssets=otherAssets>0?otherAssets*(1+ret):otherAssets;
     const liqGrown=liq>0?liq*(1+ret):liq;
     // The waterfall trades the AFTER-TAX grant: withheld shares never reach the account, so
     // they can be neither sold for cash nor retained as equity.
