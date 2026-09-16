@@ -1586,6 +1586,10 @@ ELIGIBILITY. Items marked requiresConfirmation carry a question only a professio
 settle. Present those as questions to ask, never as savings to count.`;
 }
 
+// One model for every advisor path so streaming, agentic work and the fallback cannot
+// quietly drift onto different generations.
+const ADVISOR_MODEL = 'claude-sonnet-5';
+
 // ── Anthropic proxy — SSE streaming ──────────────────────────────────────────
 app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) => {
   const { chatId, message, systemPrompt, messages } = req.body;
@@ -1629,7 +1633,7 @@ You can query the user's REAL Monarch Money data with the monarch_* tools (accou
     let loop = 0;
     while (loop++ < 6) {
       const stream = anthropic.messages.stream({
-        model: 'claude-sonnet-4-6',
+        model: ADVISOR_MODEL,
         max_tokens: 4000,
         system: [{ type: 'text', text: sys, cache_control: { type: 'ephemeral' } }],
         messages: convo,
@@ -1789,7 +1793,7 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
     while (loopCount++ < 8) {
       let streamText = '';
       const stream = anthropic.messages.stream({
-        model: 'claude-sonnet-4-6',
+        model: ADVISOR_MODEL,
         max_tokens: 4000,
         system: [{ type: 'text', text: fullSystemPrompt, cache_control: { type: 'ephemeral' } }],
         messages: conversationMsgs,
@@ -1946,7 +1950,7 @@ app.post('/api/advisor/message', requireAuth, advisorLimiter, async (req, res) =
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: ADVISOR_MODEL,
       max_tokens: 4000,
       system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
       messages,

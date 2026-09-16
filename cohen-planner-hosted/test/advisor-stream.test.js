@@ -7,6 +7,7 @@ it('emits and saves structured proposals alongside assistant prose',async()=>{
  let handler,round=0;const emitted=[],saved=[];
  const proposal={status:'proposed',applied:{homePrice:{from:2000000,to:900000}},baseline:{homePrice:2000000},rationale:'Compare a smaller home'};
  const context={app:{post:(_p,...args)=>handler=args.at(-1)},requireAuth(){},advisorLimiter(){},
+   ADVISOR_MODEL:'claude-sonnet-5',
    withTimeout:async p=>p,getMonarchAdvisorTools:async()=>[],TaxRules:{staleness:()=>({})},advisorGrounding:()=>'',
    AdvisorTools:{TOOLS:[]},PLANNER_TOOL_NAMES:new Set(['propose_changes']),runPlannerTool:async()=>proposal,
    anthropic:{messages:{stream:()=>{const first=round++===0;let cb;return{on:(_e,f)=>cb=f,finalMessage:async()=>{

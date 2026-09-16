@@ -5727,12 +5727,37 @@ function advAddMessage(role,content,isThinking,container){
   avatar.textContent=role==='ai'?'AI':'N';
   const bubble=document.createElement('div');
   bubble.className='adv-bubble';
-  if(isThinking){bubble.innerHTML='<div class="adv-thinking"><span></span><span></span><span></span></div>'}
+  if(isThinking){bubble.innerHTML=advThinkingMarkup()}
   else{bubble.innerHTML=role==='ai'?advMarkdown(content):`<p>${advEscape(content).replace(/\n/g,'<br>')}</p>`}
   msg.appendChild(avatar);msg.appendChild(bubble);
   msgs.appendChild(msg);
   msgs.scrollTop=msgs.scrollHeight;
   return bubble;
+}
+
+function advThinkingMarkup(label='Thinking with your plan'){
+  return `<div class="adv-thinking" role="status" aria-live="polite">
+    <span class="adv-orb" aria-hidden="true"><i></i></span>
+    <span class="adv-thinking-copy">${advEscape(label)}<small>Advisor is working</small></span>
+  </div>`;
+}
+
+function advToolStatus(name){
+  const clean=(name||'').replace(/^monarch_/,'');
+  const labels={
+    compute:'Running your projection',
+    get_projection:'Mapping your trajectory',
+    compare_alternatives:'Comparing the scenarios',
+    get_alerts:'Checking what needs attention',
+    get_spending:'Reading your spending',
+    get_tax_position:'Reviewing your tax position',
+    lookup_tax_rule:'Checking the tax rules',
+    GetAccounts:'Reading your live accounts',
+    set_param:'Building the proposed change',
+    run_projection:'Recalculating your plan',
+    save_scenario:'Preparing your scenario',
+  };
+  return labels[clean]||'Working with your financial model';
 }
 
 function advAsk(q){const input=document.getElementById('advInput');if(input){input.value=q;advSend()}}
@@ -5969,9 +5994,13 @@ async function advSendStream(text,chat,liveContext,thinking){
       body:JSON.stringify({chatId:advisorActiveChatId,message:text,systemPrompt:liveContext,messages:advisorConversation})
     });
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`HTTP ${res.status}`)}
-    thinking.innerHTML='';
     let fullReply='';let toolNote='';const structuredResults=[];
-    const _renderBubble=()=>{thinking.innerHTML=toolNote+advMarkdown(fullReply);const m=document.getElementById('advMsgs');if(m)m.scrollTop=m.scrollHeight;};
+    const _renderBubble=(status)=>{
+      thinking.innerHTML=fullReply
+        ? toolNote+advMarkdown(fullReply)
+        : advThinkingMarkup(status||'Thinking with your plan')+toolNote;
+      const m=document.getElementById('advMsgs');if(m)m.scrollTop=m.scrollHeight;
+    };
     const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
     outer:while(true){
       const{done,value}=await reader.read();
@@ -5985,7 +6014,7 @@ async function advSendStream(text,chat,liveContext,thinking){
         if(payload.tool_call){
           const nm=(payload.tool_call.name||'').replace(/^monarch_/,'');
           toolNote=`<div class="adv-tool">${advEscape(nm)}</div>`;
-          _renderBubble();
+          _renderBubble(advToolStatus(payload.tool_call.name));
         }
         if(payload.tool_result)structuredResults.push(payload.tool_result);
         if(payload.delta){
@@ -6019,7 +6048,6 @@ async function advSendAgentic(text,chat,liveContext,thinking){
       body:JSON.stringify({chatId:advisorActiveChatId,message:text,systemPrompt:liveContext,messages:advisorConversation,currentParams:{...P}})
     });
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`HTTP ${res.status}`)}
-    thinking.innerHTML='';
     let fullReply='';
     const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
     outer:while(true){
@@ -6038,6 +6066,7 @@ async function advSendAgentic(text,chat,liveContext,thinking){
         }
         if(payload.tool_call){
           toolLog.push(payload.tool_call);
+          if(!fullReply)thinking.innerHTML=advThinkingMarkup(advToolStatus(payload.tool_call.name));
           advInsertToolCallBubble(payload.tool_call);
         }
         if(payload.done){
