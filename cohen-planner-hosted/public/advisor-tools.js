@@ -41,6 +41,9 @@
     baseVacations:[0,1e6],postKidVacations:[0,1e6],baseMisc:[0,1e6],baseCharity:[0,1e7],
     baseMedical:[0,1e6],childcareMonthly:[0,1e5],
     numKids:[0,12],yeshivaStartAge:[0,22],kid1YeshivaStartAge:[0,22],
+    // WHEN each child arrives, not only how many. numKids alone could add a child without
+    // being able to say what year — and the year is what drives childcare and tuition.
+    kid1Birth:[1950,2100],kid2Birth:[1950,2100],kid3Birth:[1950,2100],kid4Birth:[1950,2100],
     nancyHourlyRate:[0,2000],nancyMaxClients:[0,100],nancyRampClients:[0,100],
     nancyRampYears:[0,40],nancyWeeksPerYear:[0,52],nancyPracticeOverhead:[0,1e6],
     normGrowth:[-0.5,1],normStockGrowth:[-0.5,2],
@@ -51,6 +54,10 @@
   // Per-year comp and return inputs, addressed by index.
   const INDEXED=[
     {prefix:'normCashY',max:10,range:[0,1e8]},
+    // A one-off for a single year — a baby's first year, a wedding, a renovation. Signed:
+    // negative is a year that costs less. See expenseAdjFor in model.js for why it is
+    // neither inflated nor scaled.
+    {prefix:'expenseAdjY',max:10,range:[-1e7,1e7]},
     {prefix:'normStockY',max:10,range:[0,1e8]},
     {prefix:'stripeRetY',max:9,range:[-0.9,3]},
     {prefix:'nancyW2Y',max:3,range:[0,1e7]},
@@ -139,6 +146,58 @@
     }
     return{metrics:out,unknownMetrics:unknown,
       availableMetrics:unknown.length?Object.keys(METRICS):undefined};
+  }
+
+  // ── get_projection ──────────────────────────────────────────────────────
+  // METRICS is a fixed vocabulary of headline figures, which is right for "what happens if"
+  // but useless for "how does 2027 reach $220K" — the advisor could quote the total and not
+  // one thing inside it, so it said it could see the total but not the categories. This
+  // returns the YEARS themselves, each with its expense composition, straight off the same
+  // rows the projection table draws. Nothing is recomputed here and nothing is inferred; a
+  // breakdown the model added up itself would be exactly the unreviewable arithmetic the
+  // rest of this file exists to prevent.
+  function getProjection({P,overrides,from,to}){
+    if(!model||typeof model.run!=='function')
+      return{error:'The projection engine is unavailable, so no figure can be produced.'};
+    const{params,applied,errors}=applyOverrides(P,overrides);
+    if(errors.length)return{error:errors.join(' '),applied:null};
+    let results;
+    try{results=model.run(params)}
+    catch(err){return{error:`The projection failed with these inputs: ${err.message}`}}
+    if(!results||!results.R||!results.R.length)return{error:'These inputs produce no projection years.'};
+    const lo=Number.isFinite(Number(from))?Number(from):-Infinity;
+    const hi=Number.isFinite(Number(to))?Number(to):Infinity;
+    const rows=results.R.filter(r=>r.yr>=lo&&r.yr<=hi);
+    if(!rows.length)return{error:`The plan covers ${results.R[0].yr}–${results.R[results.R.length-1].yr}; that range holds no years.`};
+    return{
+      applied:Object.keys(applied||{}).length?applied:undefined,
+      planYears:`${results.R[0].yr}–${results.R[results.R.length-1].yr}`,
+      years:rows.map(r=>({
+        year:r.yr,
+        // Below 1 this year is a STUB: the plan opened partway through it, so these figures
+        // cover only the months after that date. Say so before comparing it with a full year.
+        fractionOfYearModelled:r.stubFrac,
+        income:{gross:r.gross,tax:r.tax,effectiveRate:r.effRate,
+          cashAvailable:r.inc,normCash:r.normCash,normStock:r.normStock,nancyGross:r.nancyG},
+        // The four components and the one-off, which SUM to total — exactly, because the
+        // engine sums the rounded parts rather than rounding the raw sum.
+        expenses:{housing:r.h,living:r.liv,childcare:r.cc,tuition:r.tu,
+          oneOffAdjustment:r.eAdj||0,total:r.totE,
+          fullYearTotal:r.totEFull,
+          kidsInSchool:r.kiy,propertyTaxWithinHousing:r.ptax},
+        netFlow:r.flow,cashGap:r.gap,incomeGap:r.incGap,
+        balances:{liquidExStripe:r.liq,stripeEquity:r.sEnd,homeEquity:r.eq,
+          retirement:r.k401,netWorth:r.netWorth,netWorthExRetirement:r.nw},
+        stripe:{soldForCash:r.sSold,retained:r.sRet,shareOfNetWorth:r.sPct},
+      })),
+      notes:{
+        expenses:'housing + living + childcare + tuition + oneOffAdjustment = total, exactly. Housing is rent, or mortgage + property tax + insurance + maintenance once the home is bought. Living is groceries, dining, shopping, vacations, transit, utilities, charity, medical and misc, including each child\'s share.',
+        oneOffAdjustment:'A signed dollar amount for that single year (expenseAdjY0…Y10), for a one-time cost like a baby\'s first year or a renovation. It is not inflated and not spread across the year.',
+        fullYearTotal:'What the whole calendar year costs. It differs from total only in a stub year, where total covers just the months the plan models.',
+        cashGap:'Shortfall against CASH pay alone — how much of that year\'s vest must be sold. Closing it consumes no accumulated wealth. Never call it a deficit.',
+        incomeGap:'What is still short after selling every vesting share. THIS is the figure that draws on savings or held Stripe.',
+      },
+    };
   }
 
   // ── compute ─────────────────────────────────────────────────────────────
@@ -368,6 +427,15 @@
       input_schema:{type:'object',properties:{},required:[]},
     },
     {
+      name:'get_projection',
+      description:'Return the projection year by year, each with its EXPENSE COMPOSITION — housing, living, childcare, tuition and any one-off adjustment, which sum exactly to the total — alongside income, tax, net flow and balances. Call this whenever asked what a year costs or how a total breaks down; never say you can see a total but not what is inside it, and never add the parts up yourself. Pass `from`/`to` to narrow to the years being discussed. `overrides` runs a what-if first, so you can show a year before and after a change.',
+      input_schema:{type:'object',properties:{
+        from:{type:'integer',description:'First calendar year to return. Omit for the plan start.'},
+        to:{type:'integer',description:'Last calendar year to return. Omit for the plan end.'},
+        overrides:{type:'object',description:'Optional parameter changes to apply before running, same keys as compute.'},
+      },required:[]},
+    },
+    {
       name:'get_spending',
       description:'Return what was ACTUALLY spent and earned, from the imported transaction ledger: month-by-month income and spending, the category rollup per month, trailing averages, and this month\'s pace against the household\'s own recent months. Call this before any claim about what a category costs, whether spending has drifted, or how the plan\'s cost inputs compare with reality — you have this data, so never ask the user to export a report from Monarch. Amounts are net of refunds; transfers between their own accounts and credit-card payments are excluded on purpose and reported separately so you can say so. Read `coverage` before you compare: `months` is what the ledger holds, `completeMonths` is the subset whose import was verified end-to-end, and the month in progress is a fraction of a month, never a data point.',
       input_schema:{type:'object',properties:{
@@ -383,7 +451,7 @@
 
   const api={TOOLS,METRICS,DEFAULT_METRICS,LIMITS,ENUMS,INDEXED,
     validateOverride,applyOverrides,knownKeys,measure,
-    compute,compareAlternatives,lookupTaxRule,proposeChanges,recordDecision};
+    compute,getProjection,compareAlternatives,lookupTaxRule,proposeChanges,recordDecision};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerAdvisorTools=api;
 })(typeof window!=='undefined'?window:this,

@@ -283,9 +283,10 @@ describe('the numbers on screen add up to the numbers on screen', () => {
 
   it('builds the totals that way in the engine, not by rounding a raw sum', () => {
     const src = fs.readFileSync(new URL('../public/model.js', import.meta.url), 'utf8');
-    expect(src).toContain('const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu);');
+    expect(src).toContain('const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu)+eAdj;');
     expect(src).toContain('const nw=Math.round(liq)+Math.round(stripeEnd)+Math.round(eq)+Math.round(otherAssets)-Math.round(otherDebt);');
     expect(src).not.toContain('const totE=h+liv+cc+tu;');
+    expect(src).not.toContain('const totE=Math.round(h+liv+cc+tu);');
     expect(src).not.toContain('const nw=liq+stripeEnd+eq-otherDebt;');
   });
 });

@@ -235,7 +235,7 @@ describe('The tool schemas tell the model the right things',()=>{
 
   it('offers every tool the advisor needs',()=>{
     expect(Object.keys(byName).sort()).toEqual([
-      'compare_alternatives','compute','get_alerts','get_spending','get_tax_position',
+      'compare_alternatives','compute','get_alerts','get_projection','get_spending','get_tax_position',
       'lookup_tax_rule','propose_changes','record_decision'].sort());
   });
 

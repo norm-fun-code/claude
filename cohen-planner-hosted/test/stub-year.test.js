@@ -261,7 +261,7 @@ describe('the full-year cost of a stub year', () => {
     // four components — a total that disagrees with the year beside it by a few hundred
     // dollars is exactly what this table exists to rule out.
     const src = fs.readFileSync(new URL('../public/model.js', import.meta.url), 'utf8');
-    expect(src).toContain('const totEFull=Math.round(hFull)+Math.round(livFull)+Math.round(ccFull)+Math.round(tuFull);');
+    expect(src).toContain('const totEFull=Math.round(hFull)+Math.round(livFull)+Math.round(ccFull)+Math.round(tuFull)+eAdj;');
     expect(src).toContain('const hFull=h,livFull=liv,ccFull=cc;');
   });
 

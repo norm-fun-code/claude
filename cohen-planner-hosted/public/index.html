@@ -1370,7 +1370,24 @@ function buildControls(){
   h+=ST('👩‍⚕️ Nancy — Gross Income','nancy-income',nancyBody);
 
   // Expenses
-  const expBody=s('Groceries','baseGroceries',4000,15000,500,fmtF)+s('Dining','baseDining',5000,25000,500,fmtF)+s('Shopping','baseShopping',10000,40000,1000,fmtF)+s('Vacations (no kids)','baseVacations',5000,30000,1000,fmtF)+s('Vacations (w/ kids)','postKidVacations',5000,25000,1000,fmtF)+s('Misc','baseMisc',5000,20000,1000,fmtF)+s('Charity','baseCharity',0,20000,500,fmtF)+s('Medical','baseMedical',2000,10000,500,fmtF)+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%');
+  let expBody=s('Groceries','baseGroceries',4000,15000,500,fmtF)+s('Dining','baseDining',5000,25000,500,fmtF)+s('Shopping','baseShopping',10000,40000,1000,fmtF)+s('Vacations (no kids)','baseVacations',5000,30000,1000,fmtF)+s('Vacations (w/ kids)','postKidVacations',5000,25000,1000,fmtF)+s('Misc','baseMisc',5000,20000,1000,fmtF)+s('Charity','baseCharity',0,20000,500,fmtF)+s('Medical','baseMedical',2000,10000,500,fmtF)+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%');
+  {
+    const sy0=P.planStartYear||2026;
+    const set=Array.from({length:11},(_,i)=>[sy0+i,Number(P['expenseAdjY'+i])||0]).filter(([,v])=>v);
+    const free=Array.from({length:11},(_,i)=>sy0+i).filter(y=>!set.some(([sy])=>sy===y));
+    expBody+=`<div style="height:1px;background:var(--bd);margin:6px 0"></div>
+      <div id="expAdjBlock">
+      <div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:4px">One-off costs — a single year only, not repeated and not inflated. Everything above applies to every year.</div>
+      ${set.map(([y,v])=>`<div class="sr" style="display:flex;align-items:center;gap:6px">
+        <span class="sl" style="min-width:34px">${y}</span>
+        <input type="text" value="${(v<0?'−':'')+fmtF(Math.abs(v))}" style="flex:1;min-width:0" onchange="expAdjSet(${y},this.value)" aria-label="One-off cost for ${y}">
+        <button class="ui-btn" style="padding:2px 7px" onclick="expAdjSet(${y},0)" title="Remove the ${y} one-off" aria-label="Remove the ${y} one-off">×</button></div>`).join('')}
+      ${free.length?`<div class="sr" style="display:flex;align-items:center;gap:6px">
+        <select id="expAdjYear" style="min-width:64px" aria-label="Year for a one-off cost">${free.map(y=>`<option value="${y}">${y}</option>`).join('')}</select>
+        <input type="text" id="expAdjAmt" placeholder="e.g. 20,000" style="flex:1;min-width:0" aria-label="Amount of the one-off cost">
+        <button class="ui-btn" style="padding:2px 7px" onclick="expAdjAdd()">Add</button></div>`:''}
+      </div>`;
+  }
   h+=ST('📦 Expenses (couple, 2026)','expenses',expBody);
 
   // Home
@@ -1453,6 +1470,29 @@ for(let i=0;i<10;i++)SF['stripeRetY'+i]=v=>(v*100).toFixed(0)+'%';
 
 function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];markDirty();if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();render();savePlannerState()}
 function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);P[key]=num;if(el)el.value=fmtF(num);markDirty();render();savePlannerState()}
+// ── One-off costs, by year ───────────────────────────────────────────────────
+// Every other expense control is a level or a rate that applies to every year. Setting one
+// of those to represent a single year's cost — a baby's first year, a wedding, a renovation
+// — silently changes every later year too, which is why "add $20K to 2027" had no honest
+// answer here at all. This edits expenseAdjY<i>, a signed amount for that one year.
+function expAdjSet(year,val){
+  const sy=P.planStartYear||2026,i=year-sy;
+  if(i<0||i>10)return;
+  // The typographic minus is what this field DISPLAYS, so it has to be what it accepts —
+  // otherwise editing a negative row and pressing enter silently flips it positive.
+  const n=Math.round(parseFloat(String(val).replace(/−/g,'-').replace(/[^0-9.-]/g,''))||0);
+  if(n)P['expenseAdjY'+i]=n;else delete P['expenseAdjY'+i];
+  markDirty();buildControls();render();savePlannerState();
+}
+function expAdjAdd(){
+  const y=document.getElementById('expAdjYear'),a=document.getElementById('expAdjAmt');
+  if(!y||!a)return;
+  const n=Math.round(parseFloat(String(a.value).replace(/−/g,'-').replace(/[^0-9.-]/g,''))||0);
+  // A row of zero dollars is not an entry, it is an empty form. Saying so beats adding a
+  // line that does nothing and looks like it worked.
+  if(!n){a.focus();showToast('Enter an amount for the one-off cost.','red');return}
+  expAdjSet(Number(y.value),n);
+}
 function USel(key,val){P[key]=val;markDirty();buildControls();render();savePlannerState()}
 // Comp cells additionally refresh their row's derived total, which isn't a P value.
 function UComp(key,val,el){
@@ -1844,7 +1884,14 @@ function render(){
   if(activeTab==='stripe'){renderStripeTab(R,P);return}
   if(activeTab==='projection'&&_projView==='table'){
     // Wide by necessity — this is the audit view. The .tw wrapper scrolls horizontally.
-    const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail','Expenses','Cash gap','Net flow','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW ex-retirement'];
+    // The expense components, beside the total they make. "$220K" with nothing inside it is
+    // the one column a reader cannot check, and it was also the one the advisor could quote
+    // but not break down. Housing, living, childcare and tuition sum to the total exactly.
+    // The one-off column appears only when a year actually carries one.
+    const anyAdj=R.some(r=>r.eAdj);
+    const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail',
+      'Housing','Living','Childcare','Tuition',...(anyAdj?['One-off']:[]),'Expenses',
+      'Cash gap','Net flow','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW ex-retirement'];
     // The first row is usually a STUB: the plan opens on the date the balances were read, so
     // its income, spending and flow cover only the months still ahead — the earlier ones are
     // already inside the opening balances. Every column in that row was printed in the same
@@ -1868,6 +1915,11 @@ function render(){
         `<td style="color:var(--r)">${fmt(r.tax)}</td>`+
         `<td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td>`+
         `<td style="color:var(--g)">${fmt(r.inc)}</td>`+
+        `<td style="color:var(--t2)" title="Rent, or mortgage + property tax + insurance + maintenance once the home is bought">${fmt(r.h)}</td>`+
+        `<td style="color:var(--t2)" title="Groceries, dining, shopping, vacations, transit, utilities, charity, medical and misc — including each child's share">${fmt(r.liv)}</td>`+
+        `<td style="color:var(--t2)">${dash(r.cc)}</td>`+
+        `<td style="color:var(--t2)"${r.kiy?` title="${r.kiy} ${r.kiy===1?'kid':'kids'} in school"`:''}>${dash(r.tu)}</td>`+
+        (anyAdj?`<td style="color:${r.eAdj?'var(--a)':'var(--t3)'}" title="A one-off for this year alone (expenseAdjY), not inflated and not repeated">${r.eAdj?(r.eAdj>0?'+':'−')+fmt(Math.abs(r.eAdj)):'—'}</td>`:'')+
         `<td${stub?` style="color:var(--a)" title="${fmt(r.totE)} for the rest of ${r.yr}. The full year costs ${fmt(r.totEFull)}; the difference is already spent and already inside your opening balances."`:''}>${fmt(r.totE)}${stub?`<small style="display:block;font-size:9px;color:var(--t3);font-weight:400;white-space:nowrap">of ${fmt(r.totEFull)} full yr</small>`:''}</td>`+
         `<td style="color:${r.gap>0?'var(--a)':'var(--t3)'}" title="Shortfall against cash pay alone — how much of the year's vest must be sold">${r.gap>0?'−'+fmt(r.gap):'—'}</td>`+`<td style="color:${r.flow>=0?'var(--g)':'var(--r)'};font-weight:600" title="Total after-tax pay minus total spending. Negative means the year genuinely draws on savings or held Stripe.">${(r.flow>=0?'+':'−')+fmt(Math.abs(r.flow))}</td>`+
         `<td style="color:#6772e5">${dash(r.sSold)}</td>`+
@@ -5312,6 +5364,12 @@ PER-YEAR INCOME INPUTS (editable via set_param)
 • Norm STRIPE STOCK grant, Y0-Y10: ${Array.from({length:11},(_,i)=>fmt(normComp(P,i).stock)).join(' · ')}  [keys: normStockY0 .. normStockY10]
 • Beyond ${planSY+10} each stream compounds on its own: cash at normGrowth (${((P.normGrowth??0.01)*100).toFixed(1)}%/yr), stock at normStockGrowth (${((P.normStockGrowth??P.normGrowth??0.01)*100).toFixed(1)}%/yr).
 • Nancy W2 (only used while yr<nancyRampYear=${P.nancyRampYear}): Y0 ${fmt(P.nancyW2Y0)} · Y1 ${fmt(P.nancyW2Y1)} · Y2 ${fmt(P.nancyW2Y2)} · Y3 ${fmt(P.nancyW2Y3)}  [keys: nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3]
+
+EXPENSES (${planSY}${y26.stubFrac<1?`, part year — only the ${Math.round(y26.stubFrac*100)}% after ${String(P.observedOn||'').slice(0,10)}`:''})
+• Housing ${fmt(y26.h)} · Living ${fmt(y26.liv)} · Childcare ${fmt(y26.cc)} · Tuition ${fmt(y26.tu)}${y26.eAdj?` · One-off ${fmt(y26.eAdj)}`:''} = ${fmt(y26.totE)} total. These four (plus any one-off) sum to the total exactly.
+• Housing is rent, or mortgage + property tax + insurance + maintenance once the home is bought. Living is groceries, dining, shopping, vacations, transit, utilities, charity, medical and misc, including each child's share.
+• For ANY other year's breakdown call get_projection — it returns every year with the same composition. Never say you can see a total but not what is inside it.
+• ONE-OFF COSTS: expenseAdjY0…expenseAdjY10 adjust a SINGLE year (indexed from ${planSY}), signed, not inflated. That is the key for "add $20K in 2027 for the baby". Every other expense input is a level or a rate applying to every year, so raising one of those to model a one-off silently changes every later year.${Array.from({length:11},(_,i)=>P['expenseAdjY'+i]).some(v=>Number(v))?`\n• Currently set: ${Array.from({length:11},(_,i)=>[planSY+i,Number(P['expenseAdjY'+i])||0]).filter(([,v])=>v).map(([y,v])=>`${y} ${fmt(v)}`).join(' · ')}`:''}
 
 SAVED SCENARIOS (${scenarios.length}) — reference these by name if he asks to update one
 ${scenarios.length?scenarios.map(s=>`• "${s.name}"`).join('\n'):'• none saved yet'}

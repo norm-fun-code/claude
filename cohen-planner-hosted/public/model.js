@@ -290,6 +290,27 @@ function yearRemaining(p){
   return Math.min(1,Math.max(0,(end-on)/(end-start)));
 }
 
+// ── One-off spending, in the year it happens ─────────────────────────────────
+// Everything else on the expense side is a LEVEL or a RATE: a monthly rent, a grocery
+// baseline, an inflation assumption. All of them apply to every year, so there was no way to
+// say "2027 costs $20K more because the baby arrives" without also saying it about 2028 and
+// every year after — the advisor's only honest answer was that it could not do it.
+//
+// `expenseAdjY0…Y10` is a signed dollar adjustment for one specific year, indexed from the
+// plan's start. Negative is allowed and means the opposite: a year you skip the holiday.
+//
+// It is NOT inflated. A figure someone typed against a named year is a figure in that year's
+// dollars; compounding it would quietly turn $20,000 in 2027 into something they never said.
+// It is NOT scaled by the stub fraction either, for the same reason — the amount is stated
+// for the year, not spread across it.
+const EXPENSE_ADJ_MAX=10;
+function expenseAdjFor(p,yr,sy){
+  const i=yr-(sy||p.planStartYear||2026);
+  if(i<0||i>EXPENSE_ADJ_MAX)return 0;
+  const v=Number(p&&p['expenseAdjY'+i]);
+  return Number.isFinite(v)?Math.round(v):0;
+}
+
 // Vests are quantised to the dates they actually land on, not to a share of the calendar —
 // a position observed on 11 September has had the February, May and August vests, and only
 // November is still ahead. That is a quarter of the grant, not the 30% of the year that is
@@ -561,9 +582,13 @@ function run(p,rets,compiledGrants){
     // displayed, and on a third of the plan's years the four of them did not add up to the
     // total printed beneath them. Same fault as `nw` and `netWorth`, same fix: the number on
     // screen is the sum of the numbers on screen.
-    const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu);
+    // A one-off for this year alone — see expenseAdjFor. It is real spending, so it lands in
+    // the total the cash waterfall and the net-flow figure are computed from, not in a note
+    // beside it.
+    const eAdj=expenseAdjFor(p,yr,sy);
+    const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu)+eAdj;
     // Same summing discipline: rounded components summed, never a rounded raw sum.
-    const totEFull=Math.round(hFull)+Math.round(livFull)+Math.round(ccFull)+Math.round(tuFull);
+    const totEFull=Math.round(hFull)+Math.round(livFull)+Math.round(ccFull)+Math.round(tuFull)+eAdj;
     const surp=cashAvail-totE; // operating cash flow — retained stock is NOT spendable
     // ── Stripe cash waterfall ──
     // Cash comp funds life first. Whatever it can't cover (including the down payment, a
@@ -680,7 +705,7 @@ function run(p,rets,compiledGrants){
     R.push({yr,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
-      liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),totE,
+      liv:Math.round(liv),cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
       // What the WHOLE calendar year costs, stub or not. On a full year it equals totE.
       totEFull,
       surp:Math.round(surp),
@@ -971,7 +996,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestRemaining,yearRemaining,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

@@ -1437,6 +1437,8 @@ async function runPlannerTool(name, input) {
   switch (name) {
     case 'compute':
       return AdvisorTools.compute({ P, overrides: input.overrides, metrics: input.metrics });
+    case 'get_projection':
+      return AdvisorTools.getProjection({ P, overrides: input.overrides, from: input.from, to: input.to });
     case 'compare_alternatives':
       return AdvisorTools.compareAlternatives({ P, alternatives: input.alternatives, metrics: input.metrics });
     case 'lookup_tax_rule':
@@ -1553,6 +1555,15 @@ ${staleness.coversCurrentYear ? '' : 'IT IS NOW OUT OF DATE — say so before qu
 ALERTS. get_alerts is the only source of truth about whether something is wrong. Explain
 what it found; never report a condition it did not detect. When it says a check was
 SKIPPED, say that the area was not checked and why — do not let silence imply it is clear.
+
+PROJECTION. get_projection returns each year with its expense composition — housing, living,
+childcare, tuition and any one-off, which sum exactly to the total. Call it before saying what
+a year costs. You can always break a total down; never tell the user you can see the total but
+not the categories, and never add the parts up yourself.
+
+ONE-OFF COSTS. A cost that happens in one year is expenseAdjY0…Y10, indexed from the plan's
+start year. Every other expense input is a level or a rate applying to EVERY year, so raising
+one of those to model a single year's cost silently changes every year after it. Never do that.
 
 SPENDING. get_spending reads the imported transaction ledger — real categorised amounts,
 month by month. Call it before any claim about what a category costs or whether spending has
@@ -1752,7 +1763,11 @@ STRIPE EQUITY KEYS — a pool entirely separate from the diversified portfolio:
 • investReturn applies ONLY to the diversified portfolio. It never touches Stripe.
 Selling newly vested stock costs no additional tax (basis = vest-date value; the W-2 tax was already paid). Selling shares held from an earlier year DOES realise a capital gain on appreciation above basis, so defending a higher liquidReserveFloor can cost real tax. Net worth = diversified liquid + Stripe equity + home equity.
 
-Other editable keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normGrowth, normStockGrowth, nancyHourlyRate, nancyMaxClients, nancyRampClients, nancyRampYear, nancyRampYears, nancyWeeksPerYear, pretax401k, mcVol, tuitionInflation, homeAppreciation, capGainsTaxRate, numKids, planStartYear.
+Other editable keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normGrowth, normStockGrowth, nancyHourlyRate, nancyMaxClients, nancyRampClients, nancyRampYear, nancyRampYears, nancyWeeksPerYear, pretax401k, mcVol, tuitionInflation, homeAppreciation, capGainsTaxRate, numKids, planStartYear, kid1Birth, kid2Birth, kid3Birth, kid4Birth.
+
+ONE-OFF SPENDING IN A SINGLE YEAR:
+• expenseAdjY0 … expenseAdjY10 — a signed dollar adjustment to ONE year's expenses, indexed from the plan's start year. This is the key for "add $20K to 2027 for the baby", a wedding, a renovation, a car. Negative means that year costs less. It is not inflated and not spread across the year: the amount lands in the year named, in that year's dollars.
+  Every OTHER expense input is a level or a rate that applies to every year — nycRent, baseGroceries, childcareMonthly, expenseInflation and so on. Raising one of those to represent a single year's cost is wrong and would silently change every later year too. Use expenseAdjY for anything that happens once.
 
 If a request is genuinely ambiguous about WHICH income he means (e.g. just "update my income" with no further context — could be Norm's cash, Norm's stock, Nancy, or a specific year), ask him to clarify rather than guessing which key to change. "A raise" with no further detail usually means cash comp; "more equity"/"a bigger grant" means stock. If he names a year and a person, or the context makes it clear, just do it.
 
