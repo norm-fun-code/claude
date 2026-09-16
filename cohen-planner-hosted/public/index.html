@@ -442,7 +442,7 @@ const COLORS=['#ff6b6b','#ffd43b','#ff922b','#e64980','#20c997','#845ef7','#339a
 const D={
   planStartYear:2026,
   kid1Birth:2027,kid2Birth:2030,kid3Birth:2034,kid4Birth:2037,numKids:3,
-  childcareMonthly:2800,
+  childcareMonthly:2800,childcareStartMonths:0,
   tuitionInflation:.035,yeshivaStartAge:2,yeshivaEndAge:17,kid1YeshivaStartAge:3,
   startingLiquid:1100000,nycRent:5500,
   // Norm — compensation, split into the two streams that behave differently AFTER tax.
@@ -1275,7 +1275,11 @@ function buildControls(){
   h+=ST('👶 Kids','kids',kidsBody);
 
   // Childcare
-  const childcareBody=s('Childcare $/mo','childcareMonthly',1000,6000,100,v=>'$'+v.toLocaleString())+s('Kid 1 yeshiva start','kid1YeshivaStartAge',2,5,1,v=>v+' yrs old')+s('Kids 2+ yeshiva start','yeshivaStartAge',2,5,1,v=>v+' yrs old');
+  const ccStart=Number(P.childcareStartMonths)||0;
+  const childcareBody=s('Childcare $/mo','childcareMonthly',1000,6000,100,v=>'$'+v.toLocaleString())
+    +s('Starts at age','childcareStartMonths',0,24,1,v=>v?v+' mo old':'birth')
+    +`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin:-2px 0 5px">${ccStart?`Leave covers the first ${ccStart} month${ccStart===1?'':'s'}, so a child's first year is charged ${Math.max(0,12-ccStart)} month${Math.max(0,12-ccStart)===1?'':'s'} of care${ccStart>12?` and their second ${Math.max(0,24-ccStart)}`:''}.`:'Charged from birth. Set this if leave covers the first months.'}</div>`
+    +s('Kid 1 yeshiva start','kid1YeshivaStartAge',2,5,1,v=>v+' yrs old')+s('Kids 2+ yeshiva start','yeshivaStartAge',2,5,1,v=>v+' yrs old');
   h+=ST('🍼 Childcare','childcare',childcareBody);
 
   // Tuition
@@ -1469,11 +1473,11 @@ async function confirmRollForward(overlay,curYear,nextYear){
   showToast(`✓ Rolled forward to ${nextYear}`,'green');
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,liquidReserveFloor:v=>v>0?fmtF(v):'None',stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),childcareStartMonths:v=>v?v+' mo old':'birth',yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,liquidReserveFloor:v=>v>0?fmtF(v):'None',stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
 for(let i=0;i<11;i++){SF['normCashY'+i]=fmtF;SF['normStockY'+i]=fmtF}
 for(let i=0;i<10;i++)SF['stripeRetY'+i]=v=>(v*100).toFixed(0)+'%';
 
-function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];markDirty();if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear')buildControls();render();savePlannerState()}
+function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];markDirty();if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear'||key==='childcareStartMonths')buildControls();render();savePlannerState()}
 function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);P[key]=num;if(el)el.value=fmtF(num);markDirty();render();savePlannerState()}
 // ── One-off costs, by year ───────────────────────────────────────────────────
 // Every other expense control is a level or a rate that applies to every year. Setting one
@@ -5410,6 +5414,7 @@ PER-YEAR INCOME INPUTS (editable via set_param)
 
 EXPENSES (${planSY}${y26.stubFrac<1?`, part year — only the ${Math.round(y26.stubFrac*100)}% after ${String(P.observedOn||'').slice(0,10)}`:''})
 • Housing ${fmt(y26.h)} · Living ${fmt(y26.liv)} · Childcare ${fmt(y26.cc)} · Tuition ${fmt(y26.tu)}${y26.eAdj?` · One-off ${fmt(y26.eAdj)}`:''} = ${fmt(y26.totE)} total. These four (plus any one-off) sum to the total exactly.
+• Childcare runs from ${Number(P.childcareStartMonths)||0?`each child's age of ${P.childcareStartMonths} months — leave covers what comes before, so a child's first year is charged ${Math.max(0,12-(Number(P.childcareStartMonths)||0))} months of care`:'birth'} until the year they start yeshiva, at ${fmtF(P.childcareMonthly)}/month per eligible child. [keys: childcareMonthly, childcareStartMonths]
 • Housing is rent, or mortgage + property tax + insurance + maintenance once the home is bought. Living is groceries, dining, shopping, vacations, transit, utilities, charity, medical and misc, including each child's share.
 • For ANY other year's breakdown call get_projection — it returns every year with the same composition. Never say you can see a total but not what is inside it.
 • ONE-OFF COSTS: expenseAdjY0…expenseAdjY10 adjust a SINGLE year (indexed from ${planSY}), signed, not inflated. That is the key for "add $20K in 2027 for the baby". Every other expense input is a level or a rate applying to every year, so raising one of those to model a one-off silently changes every later year.${Array.from({length:11},(_,i)=>P['expenseAdjY'+i]).some(v=>Number(v))?`\n• Currently set: ${Array.from({length:11},(_,i)=>[planSY+i,Number(P['expenseAdjY'+i])||0]).filter(([,v])=>v).map(([y,v])=>`${y} ${fmt(v)}`).join(' · ')}`:''}

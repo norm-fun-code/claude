@@ -1763,6 +1763,8 @@ STRIPE EQUITY KEYS — a pool entirely separate from the diversified portfolio:
 • investReturn applies ONLY to the diversified portfolio. It never touches Stripe.
 Selling newly vested stock costs no additional tax (basis = vest-date value; the W-2 tax was already paid). Selling shares held from an earlier year DOES realise a capital gain on appreciation above basis, so defending a higher liquidReserveFloor can cost real tax. Net worth = diversified liquid + Stripe equity + home equity.
 
+Childcare keys: childcareMonthly (per child, per month) and childcareStartMonths (the child's age in MONTHS when it begins — leave covers what comes before, so a start of 7 charges 5 months in the birth year and 12 thereafter).
+
 Other editable keys: homePrice, downPctg, mortgageRate, homePurchaseYear, propTaxRate, investReturn, startingLiquid, expenseInflation, normGrowth, normStockGrowth, nancyHourlyRate, nancyMaxClients, nancyRampClients, nancyRampYear, nancyRampYears, nancyWeeksPerYear, pretax401k, mcVol, tuitionInflation, homeAppreciation, capGainsTaxRate, numKids, planStartYear, kid1Birth, kid2Birth, kid3Birth, kid4Birth.
 
 ONE-OFF SPENDING IN A SINGLE YEAR:

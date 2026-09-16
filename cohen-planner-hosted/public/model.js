@@ -570,7 +570,19 @@ function run(p,rets,compiledGrants){
     for(let ki=0;ki<kids.length;ki++){
       const kb=kids[ki],a=yr-kb;
       const startAge=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;
-      if(a>=0&&a<startAge)cc+=(p.childcareMonthly??2800)*12;
+      // Childcare does not begin at birth. Leave covers the first months, and charging a
+      // newborn's whole first year is a bill for daycare nobody was using — on the default
+      // plan that is a full twelve months of it, in the year a child arrives.
+      //
+      // `childcareStartMonths` is the child's age in MONTHS when it starts. A year covers the
+      // child's months [a*12, a*12+12), so the months actually charged are that window's
+      // overlap with everything from `start` onward. It falls out right at both ends: a start
+      // of 7 charges 5 months in the birth year and 12 thereafter, and a start of 18 charges
+      // none in the birth year and 6 in the next.
+      if(a>=0&&a<startAge){
+        const months=Math.max(0,Math.min(12,(a+1)*12-(Number(p.childcareStartMonths)||0)));
+        cc+=(p.childcareMonthly??2800)*months;
+      }
     }
     // Spending already incurred this year is behind the observation date and is already
     // reflected in the opening balances, so only the remainder is charged. Every reported

@@ -40,6 +40,8 @@
     nycRent:[0,1e6],baseGroceries:[0,1e6],baseDining:[0,1e6],baseShopping:[0,1e6],
     baseVacations:[0,1e6],postKidVacations:[0,1e6],baseMisc:[0,1e6],baseCharity:[0,1e7],
     baseMedical:[0,1e6],childcareMonthly:[0,1e5],
+    // The child's age in MONTHS when childcare begins — leave covers what comes before it.
+    childcareStartMonths:[0,60],
     numKids:[0,12],yeshivaStartAge:[0,22],kid1YeshivaStartAge:[0,22],
     // WHEN each child arrives, not only how many. numKids alone could add a child without
     // being able to say what year — and the year is what drives childcare and tuition.

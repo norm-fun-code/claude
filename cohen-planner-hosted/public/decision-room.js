@@ -9,6 +9,7 @@ const decisionMoney=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:
 const decisionEsc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function decisionValue(key,value){
   const f=PlannerDecisions.fields[key];
+  if(f.format==='months')return value?value+' mo old':'birth';
   return f.format==='money'?decisionMoney(value):f.format==='percent'?(value*100).toFixed(1)+'%'
     :f.format==='rate'?value.toFixed(3).replace(/0+$/,'').replace(/\.$/,'')+'%'
     :f.format==='pct'?value+'%':String(value);

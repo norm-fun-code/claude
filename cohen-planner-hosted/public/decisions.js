@@ -8,6 +8,10 @@
     mortgageRate:{label:'Mortgage rate',min:0,max:15,step:0.125,format:'rate'},
     downPctg:{label:'Down payment',min:0,max:100,step:5,format:'pct'},
     childcareMonthly:{label:'Childcare / child / month',min:0,max:12000,step:100,format:'money'},
+    // When it starts, in months of the child's age. Leave is the lever people actually pull
+    // here — "back a month earlier" and "a month later" are real choices, and they move the
+    // year a child arrives more than the monthly rate does.
+    childcareStartMonths:{label:'Childcare starts at',min:0,max:24,step:1,format:'months'},
     nancyMaxClients:{label:'Nancy’s clients / week',min:0,max:40,step:1,format:'number'},
     investReturn:{label:'Annual portfolio return',min:0,max:0.12,step:0.005,format:'percent'},
   };
