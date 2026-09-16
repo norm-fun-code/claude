@@ -46,8 +46,7 @@
   //   scored        both sides known, the difference is real
   //   unobservable  the plan models it, the accounts cannot see it (home equity)
   //   unknown       the accounts should see it but did not report it
-  function lines(planned,observed,opts){
-    const o=opts||{};
+  function lines(planned,observed){
     const s=observed||{};
     const ret=Number(s.byClass&&s.byClass.retirement?s.byClass.retirement.total:NaN);
     const out=[];
@@ -89,7 +88,7 @@
     const s=o.observed;
     if(!s||!o.accountsAvailable)return{year,available:false,
       reason:'No account balances to score the year against.'};
-    const body=lines(planned,s,o);
+    const body=lines(planned,s);
     if(!body.scored)return{year,available:false,reason:'Nothing in the plan matched what the accounts report.'};
     const verdict=body.diff===0?'exactly as planned'
       :body.diff>0?`${money(body.diff)} ahead of plan`:`${money(-body.diff)} behind plan`;

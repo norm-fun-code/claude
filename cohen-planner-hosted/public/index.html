@@ -719,7 +719,7 @@ async function runMonarchDiagnostics(){
   el.innerHTML=`<div class="glass-card" style="padding:12px 14px">
     <div style="font-size:11px;font-weight:700;color:var(--tx);margin-bottom:8px">🩺 Monarch connection</div>
     ${rows||'<div style="font-size:11px;color:var(--t3)">No checks returned.</div>'}
-    ${firstFail?`<div style="margin-top:10px;font-size:10.5px;color:var(--t2);line-height:1.55"><strong style="color:var(--tx)">First thing to fix:</strong> ${advEscape(firstFail.name)}. ${advEscape(String(firstFail.detail||''))}${firstFail.fix?` ${advEscape(String(firstFail.fix))}`:''}</div>`:'<div style="margin-top:10px;font-size:10.5px;color:var(--g)">Everything checks out — try loading again.</div>'}
+    ${firstFail?`<div style="margin-top:10px;font-size:10.5px;color:var(--t2);line-height:1.55"><strong style="color:var(--tx)">First thing to fix:</strong> ${advEscape(firstFail.name)}. ${advEscape(String(firstFail.detail||''))}</div>`:'<div style="margin-top:10px;font-size:10.5px;color:var(--g)">Everything checks out — try loading again.</div>'}
     ${firstFail&&firstFail.fix?`<div style="margin-top:8px;font-size:10.5px;color:var(--t2);line-height:1.55">${advEscape(String(firstFail.fix))}</div>`:''}
   </div>`;
 }
@@ -1098,10 +1098,20 @@ async function saveSnapshot(silent,labelOverride){
   const label=labelOverride||dflt;
   const summary={finalNW:last.netWorth,final401k:last.k401,totalTuition:tT,deficitYears:def,startingLiquid:P.startingLiquid,liqFloor:Math.min(...R.map(r=>r.liq))};
   const snap={id:advUuid(),label,planYear:P.planStartYear||2026,params:{...P},summary};
-  try{await fetch('/api/snapshots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(snap)});}catch(e){}
-  snapshots.push({...snap,plan_year:snap.planYear,created_at:new Date().toISOString()});
+  // Whether it REACHED the server, reported rather than swallowed. The snapshot is still kept
+  // locally either way — a session's work is not thrown away because the network blinked — but
+  // a caller that must not proceed without a durable copy can now tell. The year-end roll
+  // forward is exactly that caller: it rewrites the projection the closing year is scored
+  // against, so a snapshot that never saved destroys the comparison with no way back.
+  let ok=true;
+  try{
+    const r=await fetch('/api/snapshots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(snap)});
+    ok=r.ok;
+  }catch(e){ok=false}
+  snapshots.push({...snap,plan_year:snap.planYear,created_at:new Date().toISOString(),unsaved:!ok});
   renderSnapshotBar();
-  if(!silent)showToast(`📸 Snapshot saved: "${label}"`,'green');
+  if(!silent)showToast(ok?`📸 Snapshot saved: "${label}"`:`Snapshot kept for this session only — it did not reach the server.`,ok?'green':'red');
+  return ok;
 }
 async function deleteSnapshot(id){
   const s=snapshots.find(x=>x.id===id);if(!s)return;
@@ -1211,7 +1221,10 @@ function buildControls(){
     if(!r){const F=(window.PlannerOpening&&PlannerOpening.FIELDS||[]).find(f=>f.key===key);
       return sTxt(F?F.label:key,key);}
     const manual=r.mode==='manual';
-    const balanceDate=_ovw?.asOf||monarchSnapshot?.syncedAt;
+    // Only a SUCCESSFUL read dates the balances. Falling through to the legacy sync's timestamp
+  // when _ovw is an error object painted a green "Balances read today" over a failed read —
+  // the freshness dot claiming currency precisely when there is none.
+  const balanceDate=(_ovw&&!_ovw.error&&_ovw.asOf)||monarchSnapshot?.syncedAt;
   const asOf=balanceDate?new Date(balanceDate):null;
     const dated=asOf&&Number.isFinite(asOf.getTime());
     const src=manual?'Your figure — not tracking your accounts'
@@ -1969,7 +1982,9 @@ function render(){
         const byYr={};sr.R.forEach(r=>{byYr[r.yr]=deflK(r.netWorth,r.yr)});
         // Same basis and same anchor as the live Total NW line it is overlaid on.
         byYr[snSy-1]=Math.round(((sn.params.startingLiquid||P.startingLiquid)+(sn.params.startingStripeEquity||0)+(sn.params.k401Start||0)+Math.max(0,Number(sn.params.otherAssets)||0)-Math.abs(Number(sn.params.otherDebt||0)))/1000);
-        const snData=nwLabels.map(lbl=>{const v=byYr[parseInt(lbl,10)];return v===undefined?null:v});
+        // Index by POSITION, not by parsing the label as a year. The anchor's label became a
+        // date ("Sep 16"), so parseInt returned NaN and the overlay's opening point vanished.
+        const snData=nwLabels.map((lbl,i)=>{const v=i===0?byYr[snSy-1]:byYr[parseInt(lbl,10)];return v===undefined?null:v});
         ds.push({label:'📸 '+sn.label+' (NW)',data:snData,borderColor:'#bf6900',fill:false,tension:.3,pointRadius:0,borderWidth:2,borderDash:[6,3],spanGaps:false});
       }
     }
@@ -3266,7 +3281,11 @@ function renderPortfolioTab(R,P){
 
   const inv=monarchInvestments;
   const holdings=inv.holdings||[];
-  const totalVal=inv.totalValue||0;
+  // Summed from the positions when the payload omits a total: rendering $0 beside real
+  // holdings reports a portfolio worth nothing, which is never what an absent field means.
+  const totalVal=Number.isFinite(Number(inv.totalValue))&&Number(inv.totalValue)>0
+    ?Number(inv.totalValue)
+    :(inv.holdings||[]).reduce((a,h)=>a+(Number(h.value)||0),0);
 
   // Period selector
   const periods=['1W','1M','3M','YTD','1Y'];
@@ -3323,7 +3342,9 @@ function renderPortfolioTab(R,P){
 
   const typeLabel={equity:'Equity',etf:'ETF',mutual_fund:'Fund',cash:'Cash',crypto:'Crypto',bond:'Bond',option:'Option'};
 
-  const periodIsReturn=inv.periodMetric!=='current_holdings_growth';
+  // Absent means UNKNOWN, not "return". The server shaping that set this was removed with the
+  // Monarch client, so defaulting to true labelled plain price growth "contribution-aware".
+  const periodIsReturn=inv.periodMetric==='return';
   const periodLabel=periodIsReturn?'Portfolio Return':'Holdings Growth';
   const periodSub=periodIsReturn
     ? signPct(inv.periodChangePct)+' · contribution-aware'
@@ -3417,7 +3438,7 @@ function renderPortfolioTab(R,P){
    </div>
   </div>
   </details>
-  <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings from Monarch via NormOS. Period: ${inv.periodStart} → ${inv.periodEnd}. ${periodIsReturn?'Portfolio return is Monarch’s contribution-aware performance for this window.':'Growth reprices today’s positions over the window; it is not a contribution-adjusted return and does not measure deposits or withdrawals.'} Holding movers show price movement applied to today’s position size.</div>
+  <div style="font-size:9px;color:var(--t3);padding:0 2px">Holdings from Monarch via NormOS.${inv.periodStart&&inv.periodEnd?` Period: ${advEscape(String(inv.periodStart))} → ${advEscape(String(inv.periodEnd))}.`:''} ${periodIsReturn?'Portfolio return is Monarch’s contribution-aware performance for this window.':'Growth reprices today’s positions over the window; it is not a contribution-adjusted return and does not measure deposits or withdrawals.'} Holding movers show price movement applied to today’s position size.</div>
 
   ${(()=>{
     // ── Portfolio analysis blurb ─────────────────────────────────────────────
@@ -4671,7 +4692,10 @@ function renderNavLive(){
 
   // Freshness. The dot states which of three things is true, and the text never claims
   // more than the dot: connected and current, connected and stale, or not connected.
-  const balanceDate=_ovw?.asOf||monarchSnapshot?.syncedAt;
+  // Only a SUCCESSFUL read dates the balances. Falling through to the legacy sync's timestamp
+  // when _ovw is an error object painted a green "Balances read today" over a failed read —
+  // the freshness dot claiming currency precisely when there is none.
+  const balanceDate=(_ovw&&!_ovw.error&&_ovw.asOf)||monarchSnapshot?.syncedAt;
   const asOf=balanceDate?new Date(balanceDate):null;
   const dated=asOf&&Number.isFinite(asOf.getTime());
   const days=dated?Math.round((Date.now()-asOf.getTime())/86400000):null;
@@ -4937,7 +4961,8 @@ function _storyMilestones(R,P){
     // closing milestone cannot drift onto three different definitions of the same word.
     .map(m=>({...m,row:m.yr===sy
       ?{nwExRetHome:Math.round((P.startingLiquid||0)+(P.startingStripeEquity||0)
-          -Math.abs(Number(P.otherDebt||0))),liq:Math.round(P.startingLiquid||0)}
+          +Math.max(0,Number(P.otherAssets)||0)-Math.abs(Number(P.otherDebt||0))),
+        liq:Math.round(P.startingLiquid||0)}
       :(R.find(r=>r.yr===m.yr)||R[0])}));
 }
 // Like _sparkSVG, but highlights a specific index (not just the last point) with a guide line.

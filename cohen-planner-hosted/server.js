@@ -1,7 +1,6 @@
 const normalizeAccountSnapshot = require('./account-snapshot');
 'use strict';
 require('dotenv').config();
-const crypto = require('crypto');
 
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   console.error('FATAL: SESSION_SECRET env var must be set in production');
@@ -391,10 +390,6 @@ app.get('/api/debug/db', requireDebug, async (req, res) => {
 // oauth_tokens and speaking to api.monarch.com directly. Balances come from the NormOS
 // account bridge now, so none of it has anything left to authenticate.
 
-const RETIREMENT_SUBTYPES = new Set([
-  '401k','403b','457b','traditional_ira','roth_ira','roth401k',
-  'sep_ira','simple_ira','pension','retirement','defined_benefit','defined_contribution',
-]);
 
 
 app.get('/api/monarch-status', requireAuth, async (req, res) => {
@@ -410,8 +405,6 @@ app.post('/api/monarch-disconnect', requireAuth, async (req, res) => {
   catch { res.status(503).json({ error: 'Could not pause sync' }); }
 });
 
-// Which Monarch precondition is actually failing. Booleans and upstream messages only —
-// never the token itself. Exists because every failure mode looks identical in the UI.
 // ── Transaction sync ────────────────────────────────────────────────────────
 // A backfill walks months of history and can run far longer than a request should stay open,
 // so it runs detached and reports through /status. One at a time: two concurrent backfills
@@ -706,9 +699,8 @@ function num(v) {
   return 0;
 }
 
-// Unwrap a FastMCP tool result into its parsed JSON payload
-// Resolve a promise but give up (with a fallback) after `ms` so a slow Monarch
-// handshake can never hang the advisor response.
+// Resolve a promise but give up (with a fallback) after `ms`, so one slow upstream read
+// can never hang the advisor response.
 const withTimeout = (p, ms, fallback) =>
   Promise.race([p.catch(() => fallback), new Promise(r => setTimeout(() => r(fallback), ms))]);
 

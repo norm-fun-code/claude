@@ -98,10 +98,14 @@
        note:'After-tax value of the vests still ahead. A private position only re-prices at the February tender, so nothing here is appreciation.'},
       {key:'home',label:'Home equity',value:r0(row.eq-o.home),
        note:'Down payment plus principal paid and appreciation since.'},
+      {key:'other',label:'Private assets',value:r0((row.otherAssets||0)-(o.other||0)),
+       note:'Holdings that are not vested Stripe, compounding at the portfolio return. Counted here, never in what you can spend.'},
       {key:'debt',label:'Change in what you owe',value:r0(o.debt-(row.otherDebt||0)),
        note:'The revolving balance the plan carries, held flat unless you change it.'},
     ];
-    if(!exRetirement)out.splice(3,0,{key:'retirement',label:'Retirement contributions and growth',
+    // Spliced before `debt` by NAME rather than by a hard index, which silently pointed at the
+    // wrong row the moment a pool was added between them.
+    if(!exRetirement)out.splice(Math.max(0,out.findIndex(p=>p.key==='debt')),0,{key:'retirement',label:'Retirement contributions and growth',
       value:r0(row.k401-o.retirement),
       note:'Your contributions, the employer match, and return on the balance already there.'});
     return out.filter(p=>p.value!==0);

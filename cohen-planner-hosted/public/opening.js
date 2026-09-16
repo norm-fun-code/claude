@@ -42,7 +42,7 @@
     {key:'otherAssets',label:'Other private assets',
      read:s=>Math.max(0,total(s,'private')-(Number(s.stripeVested)||0)),
      backing:s=>Math.max(0,cnt(s,'private')-vestedStripeCount(s)),
-     note:'private holdings that are not vested Stripe — held flat, since we have no return path for them'},
+     note:'private holdings that are not vested Stripe — they compound at the portfolio return, but are never counted as spendable'},
     {key:'otherDebt',label:'Revolving balance',
      read:s=>Number(s.debt)||0,
      backing:s=>cnt(s,'debt'),

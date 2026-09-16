@@ -375,7 +375,6 @@
 .nav-spark>span{display:flex;justify-content:space-between;gap:8px;
   font-size:11px;color:var(--t4);font-variant-numeric:tabular-nums}
 .nav-spark:hover>span{color:var(--t3)}
-.nav-spark:hover>span i{color:var(--t2)}
 
 /* On a phone the rail is a bottom bar, so the footer has nowhere to live. */
 @media(max-width:760px){.nav-live{display:none}.nav-badge{min-width:17px;height:17px;line-height:17px;font-size:10px}}

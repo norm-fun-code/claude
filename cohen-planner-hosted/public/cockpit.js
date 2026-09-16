@@ -1,5 +1,8 @@
 /* Presentation only: reads the existing account cache and shared projection engine. */
 let cockpitYear=null;
+// Inputs the path-ahead delta was last rendered with, so the year scrub can rebuild it.
+let _cpDeltaCtx={todayNw:null,openingGap:0,gapParts:null};
+function cockpitDeltaContext(){return _cpDeltaCtx}
 // Retirement is wealth you cannot reach for decades. Some questions are about everything you
 // own; others are about what is actually available before 59½, and a 401(k) that dwarfs the
 // rest drowns those out. `cockpitExRet` toggles the whole cockpit between the two — hero,
@@ -99,6 +102,9 @@ function renderCockpit(R){
     +(cockpitExRet?0:(Number(P.k401Start)||0))-Math.abs(Number(P.otherDebt)||0);
   const todayNw=obsNw!=null?obsNw:openingNw;
   const openingGap=obsNw!=null?Math.round(obsNw-openingNw):0;
+  // Remembered so the year scrub can rebuild the delta with the same inputs the render used,
+  // rather than recomputing a summary it does not have.
+  _cpDeltaCtx={todayNw,openingGap,gapParts:null};
   // WHY the plan's opening is not today's balance, taken from the module that decides it
   // rather than inferred from class arithmetic. Each opening field either follows the
   // accounts or says what stopped it — set by hand, balances unreadable, nothing classified
@@ -132,6 +138,7 @@ function renderCockpit(R){
       const priv=Math.round((Number(s?.byClass?.private?.total)||0)-(Number(s?.stripeVested)||0)-(Number(P.otherAssets)||0));
       if(Math.abs(priv)>=1000)gapParts.push(`${UI.money(priv,{exact:true})} in private holdings the plan is not carrying`);
     }catch(_){}
+    _cpDeltaCtx.gapParts=gapParts;
   }
 
   const metric=(title,value,detail,action)=>`<button class="cp-metric" onclick="cockpitGo('${action}')"><span>${title}</span><strong>${value}</strong><small>${detail}</small></button>`;
@@ -407,6 +414,16 @@ function cockpitSelectYear(year){
   set('cp-year',year+' year-end '+cpLabel());
   set('cp-value',UI.money(deflate(cpNw(row),row.yr)));
   set('cp-range-label',year);
+  // The movement from today is a property of the year being shown, so it moves with the
+  // scrub. Left behind, it reported 2026's change under 2041's figure — the exact class of
+  // stale-number bug the delta was added to expose.
+  const deltaEl=document.querySelector('.cp-delta');
+  if(deltaEl&&typeof cockpitDeltaContext==='function'){
+    const c=cockpitDeltaContext();
+    const html=cockpitDelta(deflate(cpNw(row),row.yr),c.todayNw,row,c.openingGap,c.gapParts);
+    if(html){const t=document.createElement('template');t.innerHTML=html;deltaEl.replaceWith(t.content.firstChild);}
+    else deltaEl.remove();
+  }
 
   // The hero follows the scrub only while it is showing a PROJECTED figure. An observed
   // balance belongs to today and must not be relabelled as some future year's.
@@ -463,9 +480,14 @@ function cockpitRenderYearEnd(R){
   </div>`).join(''):'';
 
   const behind=due.yearsBehind>1?`${due.yearsBehind} years`:'a year';
+  // One step at a time, deliberately: each year gets its own snapshot and its own scorecard,
+  // and jumping straight to the current year would throw away every year in between. The card
+  // simply reappears until the plan has caught up — so the button promises the year it can
+  // actually reach, not the one on the calendar.
+  const more=due.yearsBehind>1?` You are ${due.yearsBehind} years behind, so this is the first of ${due.yearsBehind} steps — each year keeps its own snapshot and scorecard.`:'';
   host.innerHTML=`<section class="cp-card cp-yearend">
     <div class="cp-section-head"><div><h3>${due.closingYear} has closed</h3></div></div>
-    <p>This plan still describes ${due.closingYear}, so every projection on screen is ${behind} behind. Rolling it forward shifts each assumption a year and re-reads your opening balances from the accounts. Your ${due.closingYear} plan is saved as a snapshot first, so this comparison survives it.</p>
+    <p>This plan still describes ${due.closingYear}, so every projection on screen is ${behind} behind. Rolling it forward shifts each assumption a year and re-reads your opening balances from the accounts. Your ${due.closingYear} plan is saved as a snapshot first, so this comparison survives it.${more}</p>
     ${card&&card.available?`
       <div class="cp-ye-head"><span>${due.closingYear}</span><em>Planned</em><em>Actual</em><strong>Difference</strong><small></small></div>
       <div class="cp-ye-rows">${rows}</div>
@@ -475,7 +497,7 @@ function cockpitRenderYearEnd(R){
           : ''}${card.complete?'':' · one pool was not reported, and is left out of the total rather than counted as zero'}</p>`
       :`<p class="cp-ye-verdict" data-dir="flat">${e((card&&card.reason)||'No scorecard for this year.')}</p>`}
     <div class="cp-ye-actions">
-      <button class="cp-primary" onclick="cockpitRollForward(${due.closingYear})">Roll forward to ${due.currentYear}</button>
+      <button class="cp-primary" onclick="cockpitRollForward(${due.closingYear})">Roll forward to ${due.closingYear+1}</button>
       <button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button>
     </div>
   </section>`;
@@ -485,7 +507,12 @@ function cockpitRenderYearEnd(R){
 // the closing year is scored against, and a comparison you can only make once is not one.
 async function cockpitRollForward(closingYear){
   try{
-    await saveSnapshot(true,`${closingYear} plan · as it stood when ${closingYear} closed`);
+    // saveSnapshot() swallows its own transport error, so awaiting it proves nothing. The
+    // snapshot is confirmed present before anything advances: rolling forward rewrites the
+    // projection this year is scored against, and doing that on a snapshot that never saved
+    // destroys the comparison with no way back.
+    const label=`${closingYear} plan · as it stood when ${closingYear} closed`;
+    if(await saveSnapshot(true,label)!==true)throw new Error('the snapshot did not reach the server, so the plan was left alone');
     P=PlanMigrate.rollForwardParams(P);
     // The new opening is whatever the accounts report now, by the same rules as every other
     // day — not a figure typed at the boundary.
