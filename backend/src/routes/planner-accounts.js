@@ -37,12 +37,16 @@ function createPlannerAccountsRouter({
     if (!snapshot) throw new Error(warning || 'Waiting for a successful Monarch account sync in NormOS.');
     return {...snapshot, warning, stale:now()-Date.parse(snapshot.asOf)>86400000};
   }
-  router.get('/accounts', async (req,res) => {
+  function authorize(req,res,next) {
     res.set('Cache-Control','no-store');
     const token = env.PLANNER_BRIDGE_TOKEN;
     if (!token) return res.status(503).json({error:'Planner connection is not configured.'});
     const a=Buffer.from(req.get('authorization')||''), b=Buffer.from(`Bearer ${token}`);
     if(a.length!==b.length || !crypto.timingSafeEqual(a,b)) return res.status(401).json({error:'unauthorized'});
+    next();
+  }
+  require('./planner-holdings').installHoldingsRoute(router,{db,api,env,now,authorize});
+  router.get('/accounts', authorize, async (req,res) => {
     try {
       if(!pending)pending=read().finally(()=>{pending=null;});
       res.json(await pending);

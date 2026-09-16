@@ -94,4 +94,17 @@ async function getTransactions(token, { startDate, endDate }) {
   return out;
 }
 
-module.exports = { login, getAccounts, getTransactions };
+async function getPlannerHoldings(token, window) {
+  const { HOLDINGS_QUERY, mapHoldings } = require('./planner-holdings');
+  const input = {...window, includeHiddenHoldings:false, topMoversLimit:100};
+  let d;
+  try { d = await gql(token, HOLDINGS_QUERY, {input}); }
+  catch (err) {
+    // Retry only schema-level scope errors, never auth or rate-limit failures.
+    if (!String(err.message).startsWith('Monarch GraphQL error:')) throw err;
+    const accounts = await getAccounts(token);
+    d = await gql(token, HOLDINGS_QUERY, {input:{...input,accountIds:accounts.map(a=>a.id)}});
+  }
+  return mapHoldings(d.portfolio);
+}
+module.exports = { login, getAccounts, getTransactions, getPlannerHoldings };
