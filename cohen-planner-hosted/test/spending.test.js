@@ -291,11 +291,14 @@ describe('the spending scope filter', () => {
   const ctx = () => {
     const c = { _spendScope: { kind: 'all' } };
     vm.createContext(c);
-    vm.runInContext(src.slice(src.indexOf('function spendScopeMonths'), src.indexOf('function setSpendScope')), c);
+    vm.runInContext(src.slice(src.indexOf('function spendCurrentYear'), src.indexOf('function setSpendScope(')), c);
     vm.runInContext(src.slice(src.indexOf('function monthLabel'), src.indexOf('\n\nfunction renderSpendingTab')), c);
     return c;
   };
   const all = Array.from({ length: 12 }, (_, i) => ({ month: `2026-${String(i + 1).padStart(2, '0')}` }));
+  // Two calendar years: all of 2025, then January–August 2026 closed.
+  const twoYears = [...Array.from({ length: 12 }, (_, i) => ({ month: `2025-${String(i + 1).padStart(2, '0')}` })),
+    ...Array.from({ length: 8 }, (_, i) => ({ month: `2026-${String(i + 1).padStart(2, '0')}` }))];
 
   it('narrows to a rolling window, taking the most recent months', () => {
     const c = ctx();
@@ -337,6 +340,50 @@ describe('the spending scope filter', () => {
     }
   });
 
+  it('takes the year to date from the OBSERVATION date, not the last closed month', () => {
+    // In January the most recent closed month is December of the year before. Reading the
+    // current year off that would quietly report last year under a "YTD" label.
+    const c = ctx();
+    c._spendScope = { kind: 'ytd' };
+    expect(c.spendScopeMonths(twoYears, '2026-09-16').map(m => m.month))
+      .toEqual(['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08']);
+    // Standing in January 2027, with nothing closed in 2027 yet.
+    expect(c.spendScopeMonths(twoYears, '2027-01-09')).toHaveLength(twoYears.length);
+  });
+
+  it('narrows to one named year, including a year that has fully closed', () => {
+    const c = ctx();
+    c._spendScope = { kind: 'year', year: '2025' };
+    const got = c.spendScopeMonths(twoYears, '2026-09-16');
+    expect(got).toHaveLength(12);
+    expect(got.every(m => m.month.startsWith('2025-'))).toBe(true);
+  });
+
+  it('falls back to everything for a year with no records, never an empty donut', () => {
+    const c = ctx();
+    c._spendScope = { kind: 'year', year: '2019' };
+    expect(c.spendScopeMonths(twoYears, '2026-09-16')).toHaveLength(twoYears.length);
+  });
+
+  it('says which year and how much of it, so YTD is not mistaken for a full year', () => {
+    const c = ctx();
+    c._spendScope = { kind: 'ytd' };
+    expect(c.spendScopeLabel(twoYears, '2026-09-16')).toBe('2026 so far — 8 closed months');
+    c._spendScope = { kind: 'year', year: '2025' };
+    expect(c.spendScopeLabel(twoYears, '2026-09-16')).toBe('2025');
+  });
+
+  it('routes one dropdown to the right scope', () => {
+    // Years and months share a control, so `year:2025` and `month:2025-03` arrive together.
+    const src2 = src.slice(src.indexOf('function setSpendScopeFromSelect'), src.indexOf('function setSpendScopeFromSelect') + 400);
+    expect(src2).toContain("String(v||'').split(':')");
+    expect(src2).toContain("if(!kind)return setSpendScope('all')");
+  });
+
+  it('does not offer the current year beside YTD, which would be the same set', () => {
+    expect(src).toContain(".filter(y=>y!==thisYear).sort().reverse()");
+  });
+
   it('writes a month the way a person does', () => {
     const c = ctx();
     expect(c.monthLabel('2026-01')).toBe('January 2026');
@@ -349,5 +396,22 @@ describe('the spending scope filter', () => {
     const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
     expect(cockpit).toContain('labels:months.map(m=>monthLabel(m.month)+');
     expect(cockpit).not.toContain('labels:months.map(m=>m.month+');
+  });
+});
+
+// ── What the filter must NOT change ──────────────────────────────────────
+// Scoping the donut silently rescoped two things beside it that describe the whole imported
+// history, producing a line that contradicted itself and a trend built from nothing.
+describe('the scope filter leaves the history summary alone', () => {
+  const src = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  it('counts the imported months, not the scoped ones, in the coverage line', () => {
+    // "8 past months with records · 20 verified full months" — both true, together nonsense.
+    expect(src).toContain('${completeAll.length} past month${completeAll.length===1?\'\':\'s\'} with records · ${verifiedCount} verified full months');
+  });
+
+  it('claims a trend only when the CHOSEN period holds enough months for one', () => {
+    // A one-month scope leaves `prior` empty, so every category reads as risen from zero.
+    expect(src).toContain('const canTrend=complete.length>=6&&');
   });
 });

@@ -2977,12 +2977,26 @@ const ordinal=n=>{const s=['th','st','nd','rd'],v=n%100;return s[(v-20)%10]||s[v
 // Defaulting to every complete month preserves what this screen showed before a filter
 // existed, so the figure nobody changed does not move underneath them.
 let _spendScope={kind:'all'};
-function spendScopeMonths(all){
+// The calendar year the data is standing in, taken from the observation date rather than
+// inferred from the last complete month. In January the most recent complete month is
+// December of the year before, and reading YTD off that would quietly report last year.
+function spendCurrentYear(asOf){return String(asOf||'').slice(0,4)||String(new Date().getFullYear())}
+function spendScopeMonths(all,asOf){
   const rows=all||[];
   if(_spendScope.kind==='month'){
     const hit=rows.filter(m=>m.month===_spendScope.month);
     // A month that has dropped out of the loaded history falls back to everything rather than
     // rendering an empty donut that looks like a month with no spending.
+    return hit.length?hit:rows;
+  }
+  if(_spendScope.kind==='year'){
+    const hit=rows.filter(m=>String(m.month).slice(0,4)===String(_spendScope.year));
+    return hit.length?hit:rows;
+  }
+  if(_spendScope.kind==='ytd'){
+    const hit=rows.filter(m=>String(m.month).slice(0,4)===spendCurrentYear(asOf));
+    // Before the first month of a year has closed there is no year to date yet — showing
+    // everything is honest, showing nothing would read as a year with no spending.
     return hit.length?hit:rows;
   }
   if(_spendScope.kind==='recent'){
@@ -2992,9 +3006,15 @@ function spendScopeMonths(all){
   return rows;
 }
 // What the current scope is called, for the caption and the chart's own label.
-function spendScopeLabel(all){
+function spendScopeLabel(all,asOf){
   const rows=all||[];
   if(_spendScope.kind==='month'&&rows.some(m=>m.month===_spendScope.month))return monthLabel(_spendScope.month);
+  if(_spendScope.kind==='year'&&rows.some(m=>String(m.month).slice(0,4)===String(_spendScope.year)))return String(_spendScope.year);
+  if(_spendScope.kind==='ytd'){
+    const y=spendCurrentYear(asOf);
+    const n=rows.filter(m=>String(m.month).slice(0,4)===y).length;
+    if(n)return `${y} so far — ${n} closed month${n===1?'':'s'}`;
+  }
   if(_spendScope.kind==='recent'){
     const n=Math.min(Math.max(1,Number(_spendScope.months)||0),rows.length);
     return `the last ${n} month${n===1?'':'s'}`;
@@ -3003,10 +3023,19 @@ function spendScopeLabel(all){
 }
 function setSpendScope(kind,value){
   _spendScope=kind==='month'?{kind:'month',month:value}
+    :kind==='year'?{kind:'year',year:String(value)}
+    :kind==='ytd'?{kind:'ytd'}
     :kind==='recent'?{kind:'recent',months:Number(value)}:{kind:'all'};
   // Not persisted: this is a question being asked now, not a setting. Calling savePlannerState
   // here would write nothing and imply it survives a reload.
   render();
+}
+// One dropdown carries both years and months, so `year:2025` and `month:2025-03` arrive on the
+// same channel and are split here rather than needing two controls side by side.
+function setSpendScopeFromSelect(v){
+  const [kind,value]=String(v||'').split(':');
+  if(!kind)return setSpendScope('all');
+  setSpendScope(kind,value);
 }
 // "2026-01" → "January 2026". Used by the donut's scope control and the trend chart's axis,
 // so a month is written the same way wherever it appears.
@@ -3075,7 +3104,7 @@ function renderSpendingTab(R,P){
   // twelve months and last March are different questions with different answers. The month in
   // progress stays out of every scope: a category two-thirds through its month reads as a
   // fall that has not happened.
-  const complete=spendScopeMonths(completeAll);
+  const complete=spendScopeMonths(completeAll,asOf);
   const verifiedCount=(cov.completeMonths||[]).length;
   const closedTotal=complete.reduce((n,m)=>n+(m.expense||0),0);
 
@@ -3109,7 +3138,7 @@ function renderSpendingTab(R,P){
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
       ${rollCard('Rolling 3-month',roll.m3,3)}${rollCard('Rolling 6-month',roll.m6,6)}${rollCard('Rolling 12-month',roll.m12,12)}
     </div>
-    <div style="font-size:9.5px;color:var(--t3);margin-top:7px">${complete.length} past month${complete.length===1?'':'s'} with records · ${verifiedCount} verified full months${cov.partial?` · ${cov.partial} is ${Math.round((cov.fractionElapsed||0)*100)}% elapsed and excluded from every average`:''}.</div>
+    <div style="font-size:9.5px;color:var(--t3);margin-top:7px">${completeAll.length} past month${completeAll.length===1?'':'s'} with records · ${verifiedCount} verified full months${cov.partial?` · ${cov.partial} is ${Math.round((cov.fractionElapsed||0)*100)}% elapsed and excluded from every average`:''}.</div>
   </div>`;
 
   // ── Where the money goes ──
@@ -3129,7 +3158,7 @@ function renderSpendingTab(R,P){
     // With fewer than six there is nothing to compare, so no trend is claimed at all.
     const recent=complete.slice(-3),prior=complete.slice(-6,-3);
     const sumFor=(months,id)=>months.reduce((s,m)=>s+((m.categories||[]).find(c=>c.id===id)?.net||0),0);
-    const canTrend=PlannerSpending.observedAverage(months,6,asOf)!=null;
+    const canTrend=complete.length>=6&&PlannerSpending.observedAverage(months,6,asOf)!=null;
     const rows=[...agg.values()].map(a=>{
       const perMonth=a.net/n;
       let trend=null;
@@ -3146,17 +3175,26 @@ function renderSpendingTab(R,P){
     // rather than shown selected-but-identical, which would imply a longer view exists.
     const scopeChip=(kind,value,label,on)=>`<button class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}" onclick="setSpendScope('${kind}',${value==null?'null':`'${value}'`})">${label}</button>`;
     const ranges=[3,6,12].filter(n=>n<completeAll.length);
+    const thisYear=spendCurrentYear(asOf);
+    const closedThisYear=completeAll.filter(m=>String(m.month).slice(0,4)===thisYear).length;
+    // Every year the records touch, newest first. The CURRENT year is left out of the list:
+    // "2026" and "YTD" would be the same set of closed months while 2026 is still running, and
+    // two controls for one answer is worse than one.
+    const years=[...new Set(completeAll.map(m=>String(m.month).slice(0,4)))]
+      .filter(y=>y!==thisYear).sort().reverse();
     const scopeControl=`<div class="spend-scope" role="group" aria-label="Period for this breakdown">
       ${ranges.map(n=>scopeChip('recent',n,`${n}M`,_spendScope.kind==='recent'&&Number(_spendScope.months)===n)).join('')}
+      ${closedThisYear?scopeChip('ytd',null,'YTD',_spendScope.kind==='ytd'):''}
       ${scopeChip('all',null,'All',_spendScope.kind==='all')}
-      <label class="spend-scope-month"><span class="ui-sr">Single month</span>
-        <select onchange="this.value?setSpendScope('month',this.value):setSpendScope('all')">
-          <option value="">A single month…</option>
-          ${completeAll.slice().reverse().map(m=>`<option value="${m.month}"${_spendScope.kind==='month'&&_spendScope.month===m.month?' selected':''}>${advEscape(monthLabel(m.month))}</option>`).join('')}
+      <label class="spend-scope-month"><span class="ui-sr">A year or a single month</span>
+        <select onchange="setSpendScopeFromSelect(this.value)">
+          <option value="">Pick a period…</option>
+          ${years.length?`<optgroup label="Full year">${years.map(y=>`<option value="year:${y}"${_spendScope.kind==='year'&&String(_spendScope.year)===y?' selected':''}>${y}</option>`).join('')}</optgroup>`:''}
+          <optgroup label="Single month">${completeAll.slice().reverse().map(m=>`<option value="month:${m.month}"${_spendScope.kind==='month'&&_spendScope.month===m.month?' selected':''}>${advEscape(monthLabel(m.month))}</option>`).join('')}</optgroup>
         </select>
       </label>
     </div>`;
-    h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${advEscape(spendScopeLabel(completeAll))}${_spendScope.kind==='month'?'':' · current month excluded'}</p>${scopeControl}<div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
+    h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${advEscape(spendScopeLabel(completeAll,asOf))}${_spendScope.kind==='month'||_spendScope.kind==='year'?'':' · current month excluded'}</p>${scopeControl}<div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
     <section class="cp-card"><h3>Income & spending</h3><p>Every imported month · current and unverified months are labeled${_spendScope.kind!=='all'?' · not narrowed by the period above':''}</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section></div>`;
 
     h+=`<div class="glass-card" style="padding:16px 18px">
