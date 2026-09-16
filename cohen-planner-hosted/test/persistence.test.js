@@ -205,8 +205,11 @@ describe('the trajectory anchor is labelled for when the balance was true', () =
     expect(fn).toContain(':String(sy0-1);');
   });
 
-  it('only calls the marker "Today" when the anchor really is today', () => {
-    expect(src).toContain("chart.$anchorIsToday===false?'Plan start · ':'Today · '");
+  it('draws no marker at all when the plan starts from today, as it normally does', () => {
+    // The axis tick carries the date and the line begins there; a pill repeating it is one
+    // more thing to read for a fact already on the page.
+    expect(src).toContain('if(chart.$anchorIsToday!==false)return;');
+    expect(src).toContain("const text='Plan start · '+fmtK(v);");
     // …and the flag has to survive the chart-reuse path, or a stale one outlives its chart.
     expect(src).toContain('if(charts.main)charts.main.$anchorIsToday=anchorIsToday;');
   });

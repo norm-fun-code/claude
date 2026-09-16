@@ -1597,6 +1597,14 @@ const todayMarker={
     // Anchored to the ex-retirement line, not the total: retirement is locked until 59½, so
     // a "today" that silently includes $297K you cannot reach is not the figure anyone is
     // checking the chart against — and it is not what the cockpit hero beside it reports.
+    // Nothing is drawn in the ordinary case. The plan starts from today's balances, the axis
+    // tick carries the date they were read, and the line visibly begins there — a pill
+    // repeating it is one more thing to read for a fact already on the page.
+    //
+    // It survives for the case it is actually needed in: when the plan's opening is NOT what
+    // you hold, the anchor is a different figure from the cockpit hero, and it says so rather
+    // than leaving two numbers to be discovered.
+    if(chart.$anchorIsToday!==false)return;
     const want=/^Net worth ex-retirement/;
     let i=chart.data.datasets.findIndex(d=>want.test(d.label||''));
     if(i<0)i=chart.data.datasets.findIndex(d=>/^Total net worth/.test(d.label||''));
@@ -1607,7 +1615,7 @@ const todayMarker={
     if(!pt||v==null)return;
     // `v` is already in thousands, which is what fmtK expects. Scaling it here is what
     // turned $1.28M into $1284M the last time this existed.
-    const text=(chart.$anchorIsToday===false?'Plan start · ':'Today · ')+fmtK(v);
+    const text='Plan start · '+fmtK(v);
     const ctx=chart.ctx, area=chart.chartArea;
     ctx.save();
     ctx.font='600 11px Inter, system-ui, sans-serif';
