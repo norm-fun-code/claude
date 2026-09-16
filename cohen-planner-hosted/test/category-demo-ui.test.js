@@ -32,4 +32,13 @@ describe('inputs and safe presentation mode',()=>{
     expect(html).toContain('fictional numbers only');
     expect(html).toContain('function exitDemoMode(){location.reload()}');
   });
+
+  it('renders the full case switcher inside Inputs and preserves the live baseline',()=>{
+    expect(html).toContain('renderInputScenarioSwitcher()');
+    expect(html).toContain('Plan cases');
+    expect(html).toContain('function selectCurrentPlanInInputs()');
+    expect(html).toContain('function saveInputScenario()');
+    expect(html).toContain('livePlanParams');
+    expect(html).toContain('if(activeTab!==\'inputs\')h+=');
+  });
 });

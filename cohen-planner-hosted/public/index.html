@@ -66,6 +66,16 @@ body[data-view=inputs] #controls{display:block!important;max-height:none;width:1
 .demo-banner{display:flex;align-items:center;justify-content:center;gap:9px;background:linear-gradient(90deg,#4038a7,#635bff);color:#fff;
   padding:8px 14px;margin:-14px -18px 12px;font-size:11px;font-weight:650;letter-spacing:.15px;position:sticky;top:0;z-index:80}
 .demo-banner button{border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;border-radius:7px;padding:4px 9px;font:inherit;cursor:pointer}
+.inputs-cases{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:16px 18px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
+.inputs-cases-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.inputs-cases-title{font-size:12px;font-weight:750;color:var(--tx);letter-spacing:.1px}.inputs-cases-sub{font-size:10px;color:var(--t3);margin-top:3px}
+.inputs-case-list{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.inputs-case{display:inline-flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid var(--bd);border-radius:9px;background:var(--s2);color:var(--t2);font:600 11px/1 inherit;cursor:pointer;transition:all .14s}
+.inputs-case:hover{border-color:var(--bd2);color:var(--tx);transform:translateY(-1px)}.inputs-case.is-current{color:var(--tx);box-shadow:0 0 0 2px color-mix(in srgb,var(--case-color,var(--accent)) 18%,transparent);border-color:var(--case-color,var(--accent));background:color-mix(in srgb,var(--case-color,var(--accent)) 10%,var(--s1))}
+.inputs-case-dot{width:7px;height:7px;border-radius:50%;background:var(--case-color,var(--accent));flex:none}.inputs-case-check{color:var(--case-color,var(--accent));font-size:12px}.inputs-case-x{border:0;background:none;color:var(--t3);padding:0 0 0 2px;cursor:pointer;font:inherit}.inputs-case-x:hover{color:var(--r)}
+.inputs-case-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--bd)}
+.inputs-case-actions button{font:600 10px/1 inherit;padding:7px 10px;border:1px solid var(--bd);border-radius:7px;background:var(--s2);color:var(--t2);cursor:pointer}.inputs-case-actions button:hover{color:var(--tx);border-color:var(--bd2)}
+.inputs-case-actions .inputs-case-primary{background:var(--accent);color:#fff;border-color:var(--accent)}.inputs-case-actions .inputs-case-primary:hover{color:#fff;background:var(--accent-d)}
+.inputs-case-save{display:flex;gap:6px;flex:1;min-width:220px}.inputs-case-save input{flex:1;min-width:0;padding:7px 9px;border:1px solid var(--bd2);border-radius:7px;background:var(--s1);color:var(--tx);font:11px inherit;outline:none}.inputs-case-save input:focus{border-color:var(--accent)}
 .mono{font-family:'SF Mono','Fira Code','Courier New',monospace}
 .hdr{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid var(--bd);padding-bottom:10px;margin-bottom:14px}
 .hdr h1{font-size:16px;font-weight:600;color:var(--tx);letter-spacing:-.3px}
@@ -509,7 +519,7 @@ const D={
   taxInflation:.025,
   planEndYear:2058,
 };
-let P={...D};let scenarios=[];let compareMode=false;let _demoMode=false;
+let P={...D};let scenarios=[];let compareMode=false;let _demoMode=false;let _livePlanParams=null;
 // Which saved case is loaded, and whether it has been edited since. These are deliberately
 // separate: editing a case must NOT eject you from it, or there is no way to save back into
 // the case you are working in — the only offer left would be "save as new".
@@ -550,9 +560,11 @@ let _planLoaded=false;
 function savePlannerState(){
   if(typeof _demoMode!=='undefined'&&_demoMode)return;
   if(!_planLoaded){setSyncStatus('error');return;}
+  if(typeof activeScenarioIdx==='number'&&activeScenarioIdx<0&&typeof _livePlanParams!=='undefined')_livePlanParams={...P};
   setSyncStatus('saving');
   const revision=++_saveRevision;
-  const payload=JSON.stringify({state:{P,compareMode,activeTab,_projView,_todayView,_homeView,cockpitNwBasis:cockpitExRet?'exRetirement':'total',activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:7}});
+  const livePlanParams=typeof _livePlanParams!=='undefined'?_livePlanParams:null;
+  const payload=JSON.stringify({state:{P,livePlanParams,compareMode,activeTab,_projView,_todayView,_homeView,cockpitNwBasis:cockpitExRet?'exRetirement':'total',activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:7}});
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Serialize writes so a slower earlier request cannot overwrite newer state.
@@ -592,6 +604,8 @@ async function loadFromServer(){
       if(s._homeView!==undefined)_homeView=s._homeView;
       if(s.cockpitNwBasis!==undefined)cockpitExRet=s.cockpitNwBasis!=='total';
       if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
+      if(s.livePlanParams)_livePlanParams={...D,...migrateP(s.livePlanParams)};
+      else if(activeScenarioIdx<0)_livePlanParams={...P};
       if(s.scenarioDirty!==undefined)scenarioDirty=!!s.scenarioDirty;
       if(PlannerDecisions.usableSnapshot(s.monarchSnapshot)&&!monarchSnapshot)monarchSnapshot=s.monarchSnapshot; // don't clobber a fresh auto-sync
     }else{
@@ -1267,7 +1281,7 @@ function buildControls(){
   const ST=(label,key,body)=>{const c=_collapsedSections.has(key);return`<div class="st" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none" onclick="toggleSection('${key}')"><span>${label}</span><span style="font-size:9px;color:var(--t3);opacity:.6">${c?'▶':'▼'}</span></div>${c?'':body}`};
   const sy=P.planStartYear||2026;
   let h=`<div style="font-size:10px;font-weight:700;margin-bottom:8px">⚙️ Parameters</div>`;
-  h+=`<div style="margin-bottom:8px">
+  if(activeTab!=='inputs')h+=`<div style="margin-bottom:8px">
     <div id="scenarioSaveArea">
       <button class="btn btn-g" onclick="showSaveInput()" style="margin-bottom:3px">💾 Save as New</button>
     </div>
@@ -1640,6 +1654,7 @@ function UComp(key,val,el){
 // is how a case could project 2026 ending BELOW today — it was still starting from a balance
 // sheet months out of date, with the hero beside it reading the live one.
 function loadScenario(i){
+  if(activeScenarioIdx<0)_livePlanParams={...P};
   P={...D,...migrateP(attachObserved(scenarios[i].params))};
   activeScenarioIdx=i;scenarioDirty=false;buildControls();render();savePlannerState();
 }
@@ -1701,6 +1716,7 @@ async function confirmSaveScenario(){
 async function saveScenario(n){
   if(!n){n='Scenario '+(scenarios.length+1);}
   const id=advUuid();
+  if(activeScenarioIdx<0)_livePlanParams={...P};
   const s={id,name:n,params:keepAssumptions({...P}),results:run(P),color:COLORS[scenarios.length%COLORS.length]};
   scenarios.push(s);
   activeScenarioIdx=scenarios.length-1;scenarioDirty=false;
@@ -1734,7 +1750,12 @@ async function deleteScenario(i){
   const s=scenarios[i];
   scenarios.splice(i,1);
   if(!scenarios.length)compareMode=false;
-  if(activeScenarioIdx===i){activeScenarioIdx=-1;scenarioDirty=false;}
+  if(activeScenarioIdx===i){
+    // Deleting the selected case should return to the real unsaved plan, not leave the
+    // deleted case's assumptions masquerading as "Current plan" in Inputs.
+    if(_livePlanParams)P={...D,...migrateP(attachObserved(_livePlanParams))};
+    activeScenarioIdx=-1;scenarioDirty=false;
+  }
   else if(activeScenarioIdx>i)activeScenarioIdx--;
   // Compare tab's diff-view selector holds a scenario index too — without this it goes
   // stale after a delete (either points past the end, silently hiding the diff table, or
@@ -5067,9 +5088,45 @@ function setTab(t){
 function renderInputsTab(){
   const ca=document.getElementById('chartArea'),controls=document.getElementById('controls');
   destroyCharts();
-  ca.innerHTML=`<div style="margin:2px 2px 14px"><div class="hero-eyebrow">Plan inputs</div><h2 style="font-size:24px;letter-spacing:-.5px;margin-top:5px">The assumptions behind your plan</h2><p style="color:var(--t2);margin-top:6px">Income, family, spending, housing, investments, and taxes—all in one auditable place.</p></div>`;
+  ca.innerHTML=`${renderInputScenarioSwitcher()}<div style="margin:2px 2px 14px"><div class="hero-eyebrow">Plan inputs</div><h2 style="font-size:24px;letter-spacing:-.5px;margin-top:5px">The assumptions behind your plan</h2><p style="color:var(--t2);margin-top:6px">The assumptions behind each case. Select a case above, then edit its inputs below.</p></div>`;
   ca.appendChild(controls);controls.classList.add('inputs-panel');
   document.getElementById('summaries').innerHTML='';
+}
+
+function renderInputScenarioSwitcher(){
+  const currentName=activeScenarioIdx>=0?(scenarios[activeScenarioIdx]?.name||'Selected case'):'Current plan';
+  const currentColor=activeScenarioIdx>=0?(scenarios[activeScenarioIdx]?.color||'var(--accent)'):'var(--accent)';
+  const saved=scenarios.map((s,i)=>`<button class="inputs-case ${activeScenarioIdx===i?'is-current':''}" style="--case-color:${s.color||'var(--accent)'}" onclick="loadScenario(${i})" aria-pressed="${activeScenarioIdx===i}">
+    <span class="inputs-case-dot"></span><span>${advEscape(s.name)}</span>${activeScenarioIdx===i?'<span class="inputs-case-check">✓</span>':''}
+    <span class="inputs-case-x" role="button" aria-label="Delete ${advEscape(s.name)}" onclick="event.stopPropagation();deleteScenario(${i})">×</span></button>`).join('');
+  return `<section class="inputs-cases" aria-label="Plan cases">
+    <div class="inputs-cases-head"><div><div class="inputs-cases-title">Plan cases</div><div class="inputs-cases-sub">Editing <strong style="color:${currentColor}">${advEscape(currentName)}</strong> · changes stay with the selected case</div></div>
+      ${activeScenarioIdx>=0&&scenarioDirty?`<span style="font-size:10px;color:var(--a);font-weight:650">● Unsaved edits</span>`:`<span style="font-size:10px;color:var(--t3)">${scenarios.length} saved case${scenarios.length===1?'':'s'}</span>`}</div>
+    <div class="inputs-case-list"><button class="inputs-case ${activeScenarioIdx<0?'is-current':''}" style="--case-color:var(--accent)" onclick="selectCurrentPlanInInputs()" aria-pressed="${activeScenarioIdx<0}"><span class="inputs-case-dot"></span><span>Current plan</span>${activeScenarioIdx<0?'<span class="inputs-case-check">✓</span>':''}</button>${saved||'<span style="font-size:10px;color:var(--t3);padding:8px 2px">Save a case to compare different futures here.</span>'}</div>
+    <div class="inputs-case-actions">
+      ${activeScenarioIdx>=0?`<button class="inputs-case-primary" onclick="updateScenario(${activeScenarioIdx})">🔄 Update “${advEscape(currentName)}”</button>`:''}
+      <button onclick="toggleInputScenarioSave()">＋ Save current as case</button>${scenarios.length?`<button onclick="toggleCompare()">📊 Compare cases</button>`:''}
+      <div class="inputs-case-save" id="inputsCaseSaveForm" hidden><input id="inputsCaseName" type="text" placeholder="Case name…" value="Scenario ${scenarios.length+1}" onkeydown="if(event.key==='Enter')saveInputScenario();if(event.key==='Escape')toggleInputScenarioSave(false)"><button class="inputs-case-primary" onclick="saveInputScenario()">Save</button></div>
+    </div>
+  </section>`;
+}
+
+function selectCurrentPlanInInputs(){
+  // The live plan is always the unsaved baseline. Scenario assumptions are copied only when
+  // explicitly selected, so returning here cannot overwrite or silently save any case.
+  if(activeScenarioIdx<0)return;
+  const live=_livePlanParams||P;
+  P={...D,...migrateP(attachObserved(live))};
+  activeScenarioIdx=-1;scenarioDirty=false;buildControls();render();
+}
+function toggleInputScenarioSave(force){
+  const f=document.getElementById('inputsCaseSaveForm');if(!f)return;
+  f.hidden=force===undefined?!f.hidden:!force;
+  if(!f.hidden){const i=document.getElementById('inputsCaseName');if(i){i.focus();i.select();}}
+}
+async function saveInputScenario(){
+  const i=document.getElementById('inputsCaseName'),name=i?.value.trim()||('Scenario '+(scenarios.length+1));
+  toggleInputScenarioSave(false);await saveScenario(name);
 }
 
 function enterDemoMode(){
