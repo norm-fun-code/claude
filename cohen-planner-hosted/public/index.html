@@ -2970,6 +2970,53 @@ function paceCard(p){
 }
 const ordinal=n=>{const s=['th','st','nd','rd'],v=n%100;return s[(v-20)%10]||s[v]||s[0]};
 
+// ── The period the donut is answering for ────────────────────────────────
+// "Where does my money go" has a period attached to it, and twelve months and last March are
+// different questions. `_spendScope` is a rolling window in months, or one named month.
+//
+// Defaulting to every complete month preserves what this screen showed before a filter
+// existed, so the figure nobody changed does not move underneath them.
+let _spendScope={kind:'all'};
+function spendScopeMonths(all){
+  const rows=all||[];
+  if(_spendScope.kind==='month'){
+    const hit=rows.filter(m=>m.month===_spendScope.month);
+    // A month that has dropped out of the loaded history falls back to everything rather than
+    // rendering an empty donut that looks like a month with no spending.
+    return hit.length?hit:rows;
+  }
+  if(_spendScope.kind==='recent'){
+    const n=Math.max(1,Number(_spendScope.months)||0);
+    return rows.slice(-n);
+  }
+  return rows;
+}
+// What the current scope is called, for the caption and the chart's own label.
+function spendScopeLabel(all){
+  const rows=all||[];
+  if(_spendScope.kind==='month'&&rows.some(m=>m.month===_spendScope.month))return monthLabel(_spendScope.month);
+  if(_spendScope.kind==='recent'){
+    const n=Math.min(Math.max(1,Number(_spendScope.months)||0),rows.length);
+    return `the last ${n} month${n===1?'':'s'}`;
+  }
+  return `${rows.length} past month${rows.length===1?'':'s'}`;
+}
+function setSpendScope(kind,value){
+  _spendScope=kind==='month'?{kind:'month',month:value}
+    :kind==='recent'?{kind:'recent',months:Number(value)}:{kind:'all'};
+  // Not persisted: this is a question being asked now, not a setting. Calling savePlannerState
+  // here would write nothing and imply it survives a reload.
+  render();
+}
+// "2026-01" → "January 2026". Used by the donut's scope control and the trend chart's axis,
+// so a month is written the same way wherever it appears.
+function monthLabel(ym,{short=false}={}){
+  const m=/^(\d{4})-(\d{2})$/.exec(String(ym||''));
+  if(!m)return String(ym||'');
+  const d=new Date(Date.UTC(Number(m[1]),Number(m[2])-1,1));
+  return d.toLocaleDateString(undefined,{month:short?'short':'long',year:'numeric',timeZone:'UTC'});
+}
+
 function renderSpendingTab(R,P){
   let spendingViz=null;
   const ca=document.getElementById('chartArea');
@@ -3023,7 +3070,12 @@ function renderSpendingTab(R,P){
 
   const months=d.months||[],cov=d.coverage||{},tot=d.totals||{},cnt=d.counts||{};
   const asOf=d.endDate||new Date().toISOString().slice(0,10);
-  const complete=months.filter(m=>m.month<asOf.slice(0,7));
+  const completeAll=months.filter(m=>m.month<asOf.slice(0,7));
+  // The donut answers "where does it go", and that question has a period attached to it —
+  // twelve months and last March are different questions with different answers. The month in
+  // progress stays out of every scope: a category two-thirds through its month reads as a
+  // fall that has not happened.
+  const complete=spendScopeMonths(completeAll);
   const verifiedCount=(cov.completeMonths||[]).length;
   const closedTotal=complete.reduce((n,m)=>n+(m.expense||0),0);
 
@@ -3090,8 +3142,22 @@ function renderSpendingTab(R,P){
     const shown=rows.slice(0,16),rest=rows.slice(16);
     const restNet=rest.reduce((s,r)=>s+r.net,0);
     spendingViz={rows,months,asOf,verified:cov.completeMonths||[]};
-    h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${complete.length} past months · current month excluded</p><div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
-    <section class="cp-card"><h3>Income & spending</h3><p>Imported records · current and unverified months are labeled</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section></div>`;
+    // The control sits with the chart it changes. Ranges wider than the history are hidden
+    // rather than shown selected-but-identical, which would imply a longer view exists.
+    const scopeChip=(kind,value,label,on)=>`<button class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}" onclick="setSpendScope('${kind}',${value==null?'null':`'${value}'`})">${label}</button>`;
+    const ranges=[3,6,12].filter(n=>n<completeAll.length);
+    const scopeControl=`<div class="spend-scope" role="group" aria-label="Period for this breakdown">
+      ${ranges.map(n=>scopeChip('recent',n,`${n}M`,_spendScope.kind==='recent'&&Number(_spendScope.months)===n)).join('')}
+      ${scopeChip('all',null,'All',_spendScope.kind==='all')}
+      <label class="spend-scope-month"><span class="ui-sr">Single month</span>
+        <select onchange="this.value?setSpendScope('month',this.value):setSpendScope('all')">
+          <option value="">A single month…</option>
+          ${completeAll.slice().reverse().map(m=>`<option value="${m.month}"${_spendScope.kind==='month'&&_spendScope.month===m.month?' selected':''}>${advEscape(monthLabel(m.month))}</option>`).join('')}
+        </select>
+      </label>
+    </div>`;
+    h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${advEscape(spendScopeLabel(completeAll))}${_spendScope.kind==='month'?'':' · current month excluded'}</p>${scopeControl}<div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
+    <section class="cp-card"><h3>Income & spending</h3><p>Every imported month · current and unverified months are labeled${_spendScope.kind!=='all'?' · not narrowed by the period above':''}</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section></div>`;
 
     h+=`<div class="glass-card" style="padding:16px 18px">
       <details class="spend-details"><summary>Category details · exact amounts & refunds</summary>

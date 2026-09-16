@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'module';
+import fs from 'node:fs';
+import vm from 'node:vm';
 const require = createRequire(import.meta.url);
 const S = require('../public/spending.js');
 
@@ -278,5 +280,74 @@ describe('averages from imported records',()=>{
   });
   it('leaves an observed average unavailable for a missing calendar month',()=>{
     expect(S.observedAverage([{month:'2026-06',expense:100},{month:'2026-08',expense:200}],3,'2026-09-10')).toBe(null);
+  });
+});
+
+// ── The period the category breakdown answers for ────────────────────────
+// "Where does my money go" has a period attached to it, and twelve months and last March are
+// different questions. The filter has to re-aggregate, not relabel.
+describe('the spending scope filter', () => {
+  const src = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const ctx = () => {
+    const c = { _spendScope: { kind: 'all' } };
+    vm.createContext(c);
+    vm.runInContext(src.slice(src.indexOf('function spendScopeMonths'), src.indexOf('function setSpendScope')), c);
+    vm.runInContext(src.slice(src.indexOf('function monthLabel'), src.indexOf('\n\nfunction renderSpendingTab')), c);
+    return c;
+  };
+  const all = Array.from({ length: 12 }, (_, i) => ({ month: `2026-${String(i + 1).padStart(2, '0')}` }));
+
+  it('narrows to a rolling window, taking the most recent months', () => {
+    const c = ctx();
+    c._spendScope = { kind: 'recent', months: 3 };
+    expect(c.spendScopeMonths(all).map(m => m.month)).toEqual(['2026-10', '2026-11', '2026-12']);
+  });
+
+  it('narrows to one named month', () => {
+    const c = ctx();
+    c._spendScope = { kind: 'month', month: '2026-07' };
+    expect(c.spendScopeMonths(all).map(m => m.month)).toEqual(['2026-07']);
+  });
+
+  it('falls back to everything when the chosen month has left the loaded history', () => {
+    // An empty donut reads as a month with no spending, which is a different claim entirely.
+    const c = ctx();
+    c._spendScope = { kind: 'month', month: '2019-01' };
+    expect(c.spendScopeMonths(all)).toHaveLength(12);
+  });
+
+  it('defaults to every complete month, so the figure nobody changed does not move', () => {
+    expect(ctx().spendScopeMonths(all)).toHaveLength(12);
+  });
+
+  it('cannot ask for more months than exist, or fewer than one', () => {
+    const c = ctx();
+    c._spendScope = { kind: 'recent', months: 999 };
+    expect(c.spendScopeMonths(all)).toHaveLength(12);
+    c._spendScope = { kind: 'recent', months: 0 };
+    expect(c.spendScopeMonths(all)).toHaveLength(1);
+  });
+
+  it('survives an empty history without throwing', () => {
+    const c = ctx();
+    for (const scope of [{ kind: 'all' }, { kind: 'recent', months: 3 }, { kind: 'month', month: '2026-01' }]) {
+      c._spendScope = scope;
+      expect(c.spendScopeMonths([])).toEqual([]);
+      expect(c.spendScopeMonths(undefined)).toEqual([]);
+    }
+  });
+
+  it('writes a month the way a person does', () => {
+    const c = ctx();
+    expect(c.monthLabel('2026-01')).toBe('January 2026');
+    expect(c.monthLabel('2026-12')).toBe('December 2026');
+    // …and hands back anything unparseable untouched rather than inventing a date.
+    for (const junk of ['', null, 'nonsense', '2026']) expect(c.monthLabel(junk)).toBe(String(junk ?? ''));
+  });
+
+  it('labels the trend axis with the same formatter, not the raw key', () => {
+    const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
+    expect(cockpit).toContain('labels:months.map(m=>monthLabel(m.month)+');
+    expect(cockpit).not.toContain('labels:months.map(m=>m.month+');
   });
 });

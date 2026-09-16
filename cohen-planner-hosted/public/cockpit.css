@@ -287,3 +287,16 @@ body,body.home-view{background:radial-gradient(ellipse at 80% -20%,#1a2b47 0,tra
   .cp-ye-row em:first-of-type::before{content:'planned ';color:var(--t3);font-size:10px}
   .cp-ye-row em:last-of-type::before{content:'actual ';color:var(--t3);font-size:10px}
 }
+
+/* ── The period the category breakdown is answering for ────────────────────
+   Sits with the chart it changes, not in a toolbar away from it. */
+.spend-scope{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 12px}
+.spend-scope-chip{min-height:30px;padding:5px 12px;border-radius:8px;border:1px solid var(--bd);
+  background:var(--s2);color:var(--t2);font:inherit;font-size:11.5px;cursor:pointer}
+.spend-scope-chip:hover{color:var(--tx)}
+.spend-scope-chip.is-on{background:rgba(139,128,255,.18);color:#bcb4ff;border-color:#776cea}
+.spend-scope-month select{min-height:30px;padding:5px 10px;border-radius:8px;border:1px solid var(--bd);
+  background:var(--s1);color:var(--tx);font:inherit;font-size:11.5px;max-width:190px}
+.ui-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}
+@media(max-width:700px){.spend-scope-month select{max-width:100%;width:100%}}
