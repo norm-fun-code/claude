@@ -304,19 +304,90 @@ function matchCompletionCorrections(resolved, { items = [], targetType = 'commit
  *  match the common "X-Ypm" shape a compiled assertion's subject/objectValue
  *  plausibly carries (the compiler prompt sees the ORIGINAL question, which
  *  is where a time range like this usually comes from). */
-function extractClockTimeRange(text) {
-  const m = String(text || '').match(/\b(\d{1,2})(?::(\d{2}))?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+const END_OF_DAY_MIN = 24 * 60;
+
+/** Pure: one clock token -> minutes since midnight, plus whether it NAMED
+ *  midnight. Accepts "5pm", "5:30 pm", "17:00", "midnight", "noon", and a
+ *  bare "5" whose meridiem is supplied by the other side of the range. */
+function parseClockToken(token, inheritedMeridiem) {
+  const t = String(token || '').trim().toLowerCase();
+  if (/^midnight$/.test(t)) return { min: 0, isMidnight: true };
+  if (/^noon|^12\s*(?:noon)$/.test(t)) return { min: 12 * 60, isMidnight: false };
+  const m = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
   if (!m) return null;
-  const [, h1, min1, h2, min2, meridiem] = m;
-  const to24 = (h, mm) => {
-    let hour = parseInt(h, 10) % 12;
-    if (meridiem.toLowerCase() === 'pm') hour += 12;
-    return hour * 60 + (mm ? parseInt(mm, 10) : 0);
-  };
-  const startMin = to24(h1, min1);
-  const endMin = to24(h2, min2);
-  if (!Number.isFinite(startMin) || !Number.isFinite(endMin) || endMin <= startMin) return null;
-  return { startMin, endMin };
+  const hour = parseInt(m[1], 10);
+  const mins = m[2] ? parseInt(m[2], 10) : 0;
+  if (!Number.isFinite(hour) || hour > 24 || mins > 59) return null;
+  const meridiem = m[3] || inheritedMeridiem || null;
+  // 24-hour form ("17:00") — no meridiem, and an hour that can only be 24h.
+  if (!meridiem) {
+    if (hour > 23) return { min: END_OF_DAY_MIN, isMidnight: true };
+    return { min: hour * 60 + mins, isMidnight: hour === 0 };
+  }
+  let h24 = hour % 12;
+  if (meridiem === 'pm') h24 += 12;
+  return { min: h24 * 60 + mins, isMidnight: meridiem === 'am' && hour === 12 };
+}
+
+const CLOCK_TOKEN = String.raw`\d{1,2}(?::\d{2})?\s*(?:am|pm)?|midnight|noon`;
+const CLOCK_RANGE_RE = new RegExp(
+  String.raw`\b(${CLOCK_TOKEN})\s*(?:-|–|—|to|until|till|through)\s*(${CLOCK_TOKEN})\b`, 'i'
+);
+
+/**
+ * Pure: an explicit clock range out of free text.
+ *
+ * Rewritten because the old pattern required a SINGLE meridiem after the
+ * second number, so it silently failed on essentially every natural
+ * phrasing — "5pm-12am", "5pm to midnight" and even "9am-5pm" all returned
+ * null, which meant a calendar classification could never bind to the block
+ * it described and the correction was quietly dropped.
+ *
+ * A midnight END is normalized to end-of-day (1440) rather than 0. "5pm to
+ * 12am" means seven hours of that evening, not a range that ends before it
+ * begins — and the old `endMin <= startMin` guard rejected it outright.
+ * A midnight START is untouched, so "12am to 6am" still reads as 0->360.
+ */
+function extractClockTimeRange(text) {
+  const m = String(text || '').match(CLOCK_RANGE_RE);
+  if (!m) return null;
+  // No leading \b: there is no word boundary between "9" and "pm", so an
+  // anchored \b(am|pm)\b never sees the meridiem in "9pm" — which silently
+  // disabled the whole trailing-meridiem-applies-to-both rule.
+  const meridiemOf = (tok) => (String(tok).match(/(am|pm)/i) || [])[1]?.toLowerCase() || null;
+  const startMeridiem = meridiemOf(m[1]);
+  const endMeridiem = meridiemOf(m[2]);
+  // A trailing-only meridiem applies to both sides ("5-12pm"); a leading-only
+  // one likewise ("5pm-12" reads as 5pm-12pm).
+  const start = parseClockToken(m[1], startMeridiem || endMeridiem);
+  const end = parseClockToken(m[2], endMeridiem || startMeridiem);
+  if (!start || !end) return null;
+  let endMin = end.min;
+  if (endMin <= start.min && end.isMidnight) endMin = END_OF_DAY_MIN;
+  if (!Number.isFinite(start.min) || !Number.isFinite(endMin) || endMin <= start.min) return null;
+  return { startMin: start.min, endMin };
+}
+
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+/**
+ * Pure: does this text describe a WEEKLY RECURRING arrangement, and on which
+ * weekday?
+ *
+ * A classification is otherwise pinned to the single date it was stated on
+ * (see the date-scoping note in matchCalendarClassifications' doc comment),
+ * which is right for a one-off correction and wrong for a standing weekly
+ * block: the user re-answers the same question every week and it never
+ * sticks. Returns 0-6 (Sunday=0) or null.
+ */
+function extractWeeklyRecurrence(text) {
+  const t = String(text || '').toLowerCase();
+  if (!/\b(every|each|weekly|recurring|standing)\b|\b\w+days\b/.test(t)) return null;
+  for (let i = 0; i < WEEKDAYS.length; i++) {
+    const day = WEEKDAYS[i];
+    if (new RegExp(String.raw`\b(?:every|each|on)?\s*${day}s?\b`, 'i').test(t)) return i;
+  }
+  return null;
 }
 
 const CLASSIFICATION_MATCH_THRESHOLD = 0.34;
@@ -380,9 +451,26 @@ function matchCalendarClassifications(resolved, { calendar = [], workBusy = [], 
     const assertion = resolved.assertionById.get(rel.sourceAssertionId);
     if (!assertion) continue;
 
+    // Hoisted above the date gate: a WEEKLY recurrence is read out of this
+    // same text, and it decides whether the gate applies at all.
+    const probeText = `${assertion.subject || ''} ${assertion.objectValue || ''} ${assertion.rawText || ''}`;
+
     if (targetLocalDate && rel.windowStart) {
       const relDate = localDateStr(tz, new Date(rel.windowStart));
-      if (relDate !== targetLocalDate) continue;
+      if (relDate !== targetLocalDate) {
+        // A standing weekly arrangement is not "the same clock window next
+        // week silently inheriting this week's classification" — it is the
+        // user telling us the block recurs. Pinning it to the single date it
+        // was stated on is why a recurring block (a Friday 5pm-midnight
+        // Sabbath block on the work calendar) got re-flagged as meeting load
+        // every single week no matter how many times it was explained.
+        // Anything WITHOUT an explicit weekly recurrence keeps the original
+        // strict date binding.
+        const weekday = extractWeeklyRecurrence(probeText);
+        if (weekday == null) continue;
+        const targetDay = new Date(`${targetLocalDate}T12:00:00Z`).getUTCDay();
+        if (targetDay !== weekday) continue;
+      }
     }
 
     // Priority 0: exact stable block-identity match — see the doc comment.
@@ -396,8 +484,6 @@ function matchCalendarClassifications(resolved, { calendar = [], workBusy = [], 
       });
       continue;
     }
-
-    const probeText = `${assertion.subject || ''} ${assertion.objectValue || ''} ${assertion.rawText || ''}`;
 
     // Priority 2: explicit clock-time range against REAL block intervals.
     const range = extractClockTimeRange(probeText);
@@ -673,6 +759,6 @@ module.exports = {
   getResolvedUncertainties, getUnresolvedUncertainties,
   getRelevantContext, summarizeResolvedContext,
   // Exposed for focused unit tests:
-  scoreRelation, EVIDENCE_WEIGHT, describeAssertion, targetKey, extractClockTimeRange,
+  scoreRelation, EVIDENCE_WEIGHT, describeAssertion, targetKey, extractClockTimeRange, extractWeeklyRecurrence,
   isTemporallyEligible, isDurableAssertion, isForwardEpisodic, temporalAnchorSuffix, partitionRawContext,
 };
