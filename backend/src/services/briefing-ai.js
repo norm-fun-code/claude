@@ -742,7 +742,8 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   //     every other class has its offending sentence deterministically stripped
   //     (neutralizeClaimViolations). Absent facts, this is a no-op, so every
   //     existing caller keeps working unchanged.
-  const { neutralizeClaimViolations, ensureRequiredFieldsPresent, assessChiefBriefQuality, buildQualityRetryPrompt } = require('../brain/claimValidator');
+  const { neutralizeClaimViolations, ensureRequiredFieldsPresent, assessChiefBriefQuality, buildQualityRetryPrompt,
+    REQUIRED_BRIEF_FIELDS, isGroundedFallbackText } = require('../brain/claimValidator');
   const goalViolations = findFalseGoalCompletions(result, openGoals);
   const { violations: claimViolations } = validateChiefBriefClaims(result, snapshotFacts);
   if (claimViolations.length) {
@@ -756,7 +757,7 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
   // FINAL quality result off `out` alone can only see THAT it's degraded,
   // never WHY — assessChiefBriefQuality re-validates the already-neutralized
   // text and (correctly) finds nothing left to flag.
-  const finalizeSafe = (r, failedAttempt) => {
+  const finalizeSafe = (r, failedAttempt, alternates = []) => {
     const gv = findFalseGoalCompletions(r, openGoals);
     let out = gv.length ? rewriteFalseGoalCompletions(r, gv) : r;
     const { violations: cv } = validateChiefBriefClaims(out, snapshotFacts);
@@ -787,6 +788,41 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
     if (cv.length) {
       console.error(`[briefing-ai] neutralizing ${cv.length} surviving claim contradiction(s) deterministically (${cv.map((v) => v.check).join(', ')}) [correlationId=${correlationId}]`);
       out = neutralizeClaimViolations(out, cv, snapshotFacts);
+    }
+    // Before stubbing a destroyed field, look for a CLEAN version of it in a
+    // candidate we already generated this build.
+    //
+    // This is the fix for the symptom the user actually reports: "clicking the
+    // notification only surfaces the one-line brief." Neutralization strips
+    // whole SENTENCES, and the synthesis is typically a single sentence — so
+    // one flagged claim anywhere in it destroys the entire headline, and
+    // ensureRequiredFieldsPresent backstops it with a six-word grounded stub
+    // ("Recovery is red at 35 today."). Meanwhile action/risk/move, generated
+    // in the same response, are often untouched and excellent.
+    //
+    // We have already paid for an earlier attempt whose version of that field
+    // may be perfectly clean — violations are per-field, so an attempt that
+    // tripped only on `move` still has a good synthesis. Finalizing one attempt
+    // wholesale threw that away. Adopting it costs no extra call, no latency,
+    // and no weakening of the contract: the candidate field is re-validated
+    // against the SAME facts, and only adopted when it introduces no violation
+    // of its own and is not itself a grounded stub.
+    for (const field of REQUIRED_BRIEF_FIELDS) {
+      const current = out?.chiefBrief?.[field];
+      const destroyed = typeof current !== 'string' || !current.trim();
+      if (!destroyed) continue;
+      for (const alt of alternates || []) {
+        const candidate = alt?.chiefBrief?.[field];
+        if (typeof candidate !== 'string' || !candidate.trim()) continue;
+        if (isGroundedFallbackText(field, candidate, snapshotFacts)) continue;
+        const probe = { ...out, chiefBrief: { ...out.chiefBrief, [field]: candidate } };
+        const gv = findFalseGoalCompletions(probe, openGoals).filter((v) => v.field === field);
+        const { violations: cv2 } = validateChiefBriefClaims(probe, snapshotFacts);
+        if (gv.length || cv2.some((v) => v.field === field)) continue;
+        out = probe;
+        console.log(`[briefing-ai] recovered a clean '${field}' from an earlier attempt instead of stubbing it [correlationId=${correlationId}]`);
+        break;
+      }
     }
     // Backstop: guarantee no required field shipped blank, independent of
     // WHY it might be (neutralization stripped every sentence, the model
@@ -825,7 +861,7 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
     // The quality retry introduced a NEW contradiction — do not ship it;
     // finalize the ORIGINAL underfilled-but-correct result deterministically.
     console.error(`[briefing-ai] quality retry introduced a contradiction — discarding it, finalizing the original result instead. [correlationId=${correlationId}]`);
-    const { out: safe, diag } = finalizeSafe(result, 'quality_retry_contradicted');
+    const { out: safe, diag } = finalizeSafe(result, 'quality_retry_contradicted', [qualityRetry]);
     return { ...safe, chiefBriefQuality: assessChiefBriefQuality(safe, snapshotFacts, diag) };
   }
 
@@ -870,7 +906,7 @@ async function generateChiefBrief(emailData, currentDay, workoutPlan, calendarEv
     }
     // The retry STILL contradicts canonical state — do NOT ship it as-is.
     console.error(`[briefing-ai] semantic correction retry still contradicted state (goals:${retryGoalViolations.length}, claims:${retryClaimViolations.map((v) => v.check).join('|') || 0}) — finalizing deterministically. [correlationId=${correlationId}]`);
-    const { out: safe, diag } = finalizeSafe(retry, 'semantic_correction_retry_contradicted');
+    const { out: safe, diag } = finalizeSafe(retry, 'semantic_correction_retry_contradicted', [result]);
     return { ...safe, chiefBriefQuality: assessChiefBriefQuality(safe, snapshotFacts, diag) };
   }
   // The correction retry failed entirely — finalize the FIRST valid result

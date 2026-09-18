@@ -60,6 +60,36 @@ const BAND_SYNONYMS = {
 };
 const RECOVERY_CONTEXT_RE = /\brecover|\bhrv\b|\bband\b|\brested\b|\breadiness\b/i;
 
+// Negation cues. A phrase sitting inside one is being DENIED, not asserted.
+//
+// This is the third time the same class of bug has degraded a morning brief:
+// a check matches a phrase and infers a claim from it, without noticing the
+// sentence says the opposite. "rather than explain" read as asserting a cause;
+// now "not fully recovered", "not a green light" and "nowhere near fully
+// rested" — three correct descriptions of a RED morning — each read as
+// claiming GREEN. Because the synthesis is usually a single sentence, flagging
+// it destroys the entire headline, which is the one-line brief the user keeps
+// seeing.
+const NEGATION_CUE_RE = /\b(?:not|never|no|none|nothing|hardly|barely|scarcely|far from|nowhere near|short of|less than|rather than|instead of|without|isn'?t|aren'?t|wasn'?t|weren'?t|don'?t|doesn'?t|didn'?t|won'?t|can'?t|cannot|couldn'?t|shouldn'?t|wouldn'?t)\b/i;
+
+/**
+ * Pure: is the match at `index` inside a negated clause?
+ *
+ * Scans back only to the nearest CLAUSE boundary (, ; : — – . or start), not
+ * across the whole sentence. That precision is the point: "recovery isn't bad —
+ * it's green at 90" on a red day must STILL be caught, because the negation
+ * belongs to the previous clause, not to "green". A whole-sentence search would
+ * swallow that genuine contradiction and turn this guard into a loophole.
+ */
+function isNegatedAt(sentence, index) {
+  const before = String(sentence).slice(0, index);
+  const boundary = Math.max(
+    before.lastIndexOf(','), before.lastIndexOf(';'), before.lastIndexOf(':'),
+    before.lastIndexOf('\u2014'), before.lastIndexOf('\u2013'), before.lastIndexOf('.')
+  );
+  return NEGATION_CUE_RE.test(before.slice(boundary + 1));
+}
+
 function checkRecoveryBand(fields, facts) {
   const band = facts.recoveryBand;
   if (!band || !BAND_SYNONYMS[band]) return [];
@@ -69,7 +99,9 @@ function checkRecoveryBand(fields, facts) {
       if (!RECOVERY_CONTEXT_RE.test(sentence)) continue;
       for (const [claimedBand, re] of Object.entries(BAND_SYNONYMS)) {
         if (claimedBand === band) continue;
-        if (re.test(sentence)) {
+        const m = re.exec(sentence);
+        if (m && isNegatedAt(sentence, m.index)) continue;
+        if (m) {
           violations.push({
             check: 'recovery_band', field, sentence, severity: 'high',
             expected: band, actual: claimedBand,
@@ -1482,6 +1514,7 @@ function buildClaimCorrectionPrompt(basePrompt, violations) {
 
 module.exports = {
   stripQualityProse,
+  isNegatedAt,
   validateChiefBriefClaims, buildClaimCorrectionPrompt, neutralizeClaimViolations,
   REQUIRED_BRIEF_FIELDS, groundedFallbackSentence, ensureRequiredFieldsPresent,
   // Chief Brief quality contract — fresh/degraded/failed, the authoritative
