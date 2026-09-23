@@ -1604,7 +1604,30 @@ settle. Present those as questions to ask, never as savings to count.`;
 
 // One model for every advisor path so streaming, agentic work and the fallback cannot
 // quietly drift onto different generations.
-const ADVISOR_MODEL = 'claude-sonnet-5';
+//
+// Opus 5.5 over Sonnet 5 at twice the token price: this is one household's adviser doing
+// tool-using reasoning about real money, a few dozen turns a day. The difference works out
+// around twelve dollars a month, which is nothing set against an advisor that misreads a
+// balance sheet.
+//
+// Two settings are explicit rather than defaulted, for reasons particular to this model.
+// Effort, because Opus 5.5 is the one model whose default is `medium` rather than `high` —
+// left alone the advisor would have become the least thorough route in the app. And the
+// token ceiling, because thinking is always on here and cannot be disabled, and thinking
+// tokens are charged against max_tokens: at the 4000 this ran on before, a long answer after
+// a few tool calls would have been truncated mid-sentence.
+const ADVISOR_MODEL = 'claude-opus-5-5';
+const ADVISOR_MAX_TOKENS = 16000;
+const ADVISOR_EFFORT = { effort: 'high' };
+
+// A refusal arrives as a 200 with `stop_reason: 'refusal'` and no usable content, so a loop
+// that knows only `tool_use` and `end_turn` falls straight through it and returns an empty
+// answer — the advisor appearing to have nothing to say rather than having declined.
+function advisorRefusal(msg) {
+  if (!msg || msg.stop_reason !== 'refusal') return null;
+  const why = msg.stop_details && msg.stop_details.category;
+  return `That request was declined by a safety filter${why ? ` (${why})` : ''}, so there is no answer to give here. Rephrasing it, or asking the same thing about your own plan figures, usually gets through.`;
+}
 
 // ── Anthropic proxy — SSE streaming ──────────────────────────────────────────
 app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) => {
@@ -1650,7 +1673,8 @@ You can query the user's REAL Monarch Money data with the monarch_* tools (accou
     while (loop++ < 6) {
       const stream = anthropic.messages.stream({
         model: ADVISOR_MODEL,
-        max_tokens: 4000,
+        max_tokens: ADVISOR_MAX_TOKENS,
+        output_config: ADVISOR_EFFORT,
         system: [{ type: 'text', text: sys, cache_control: { type: 'ephemeral' } }],
         messages: convo,
         tools: [...AdvisorTools.TOOLS, ...monarchTools],
@@ -1658,6 +1682,9 @@ You can query the user's REAL Monarch Money data with the monarch_* tools (accou
       stream.on('text', (text) => { fullReply += text; send({ delta: text }); });
       const msg = await stream.finalMessage();
       lastUsage = msg.usage;
+
+      const declined = advisorRefusal(msg);
+      if (declined) { fullReply += declined; send({ delta: declined }); break; }
 
       if (msg.stop_reason === 'tool_use') {
         const toolResults = [];
@@ -1812,7 +1839,8 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
       let streamText = '';
       const stream = anthropic.messages.stream({
         model: ADVISOR_MODEL,
-        max_tokens: 4000,
+        max_tokens: ADVISOR_MAX_TOKENS,
+        output_config: ADVISOR_EFFORT,
         system: [{ type: 'text', text: fullSystemPrompt, cache_control: { type: 'ephemeral' } }],
         messages: conversationMsgs,
         tools: [...ADVISOR_TOOLS, ...monarchTools],
@@ -1825,6 +1853,9 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
       });
 
       const msg = await stream.finalMessage();
+
+      const declined = advisorRefusal(msg);
+      if (declined) { fullReply += declined; send({ delta: declined }); break; }
 
       if (msg.stop_reason === 'end_turn') break;
 
@@ -1995,12 +2026,13 @@ app.post('/api/advisor/message', requireAuth, advisorLimiter, async (req, res) =
   try {
     const response = await anthropic.messages.create({
       model: ADVISOR_MODEL,
-      max_tokens: 4000,
+      max_tokens: ADVISOR_MAX_TOKENS,
+      output_config: ADVISOR_EFFORT,
       system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
       messages,
     });
 
-    const reply = response.content
+    const reply = advisorRefusal(response) || response.content
       .filter(b => b.type === 'text')
       .map(b => b.text)
       .join('\n');

@@ -16,7 +16,7 @@
     "vitest": "^2.0.0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.126.0",
+    "@anthropic-ai/sdk": "^0.128.0",
     "compression": "^1.7.4",
     "connect-pg-simple": "^9.0.1",
     "cors": "^2.8.5",
