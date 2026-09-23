@@ -4407,7 +4407,7 @@ function renderSensitivityTab(R,P){
     h+=`<div style="display:grid;grid-template-columns:148px 56px 1fr 1fr;align-items:center;padding:5px 12px;border-bottom:1px solid var(--bd);background:${rowBg}">
       <div>
         <div style="font-size:10px;font-weight:600;color:var(--tx)">${r.label}</div>
-        <div style="font-size:8px;color:var(--t3);font-family:'SF Mono',monospace">${r.fmtV(r.vBase)} base</div>
+        <div style="font-size:8px;color:var(--t3);font-variant-numeric:tabular-nums">${r.fmtV(r.vBase)} base</div>
       </div>
       <div style="padding:0 4px">
         <input type="text" value="${deltaDisplay}" data-key="${r.key}" data-rawdelta="${r.delta}"
