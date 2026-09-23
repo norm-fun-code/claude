@@ -862,3 +862,7 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .exp-pill-under{color:#8ce8c7;background:rgba(122,227,195,.12);border-color:rgba(122,227,195,.3)}
 .exp-pill-flat{color:var(--t2);background:var(--s3);border-color:var(--bd2)}
 .exp-actual-note{margin:10px 0 0!important;font-size:11px!important;color:var(--t3)!important;line-height:1.6}
+
+/* The demo's advisor: one example exchange and a note in place of the composer. */
+.adv-demo-note{margin:0;padding:14px 16px;border:1px dashed var(--bd2);border-radius:12px;
+  color:var(--t2);font-size:13px;line-height:1.55;background:var(--s1)}

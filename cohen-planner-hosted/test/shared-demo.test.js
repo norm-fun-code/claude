@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 
 const root = new URL('../', import.meta.url);
 const server = fs.readFileSync(new URL('server.js', root), 'utf8');
@@ -10,10 +12,11 @@ const realD = vm.runInNewContext('(' + html.match(/const D=(\{[\s\S]*?\n\});/)[1
 
 // Build the demo page exactly as the server does, by running the server's own code — not a
 // reimplementation of it, which would let the two drift and pass anyway.
-function buildDemoPage(source = server) {
-  const body = source.slice(source.indexOf('const DEMO_OVERRIDES'), source.indexOf('buildDemoPage();') + 16);
+const DemoModule = require('../public/demo-data.js');
+function buildDemoPage(source = server, demo = DemoModule) {
+  const body = source.slice(source.indexOf('const Demo = require'), source.indexOf('buildDemoPage();') + 16);
   const ctx = { fs, vm, path, console: { error() {} }, __dirname: new URL('.', root).pathname,
-    Math, Object, String, JSON, Error };
+    Math, Object, String, JSON, Error, require: () => demo };
   vm.createContext(ctx);
   vm.runInContext(body + '\nglobalThis.__page=demoPage;globalThis.__err=demoPageError;', ctx);
   return { page: ctx.__page, error: ctx.__err };
@@ -72,9 +75,8 @@ describe('when it cannot be sanitised it serves nothing', () => {
     // The guard that caught a demo value which happened to equal the real one.
     // Replace the demo's own value, rather than prepending a duplicate key — in an object
     // literal the later one wins, so a prepended override does nothing at all.
-    const leaky = server.replace('startingLiquid: 725000,', `startingLiquid: ${realD.startingLiquid},`);
-    expect(leaky).not.toBe(server);
-    const { page, error } = buildDemoPage(leaky);
+    const leaky = { ...DemoModule, demoDefaults: D => ({ ...DemoModule.demoDefaults(D), startingLiquid: D.startingLiquid }) };
+    const { page, error } = buildDemoPage(server, leaky);
     expect(page).toBeFalsy();
     expect(error).toMatch(/startingLiquid was not replaced/);
   });

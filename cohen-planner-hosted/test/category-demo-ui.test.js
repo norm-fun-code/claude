@@ -28,7 +28,9 @@ describe('inputs and safe presentation mode',()=>{
     expect(html).toContain("if(typeof _demoMode!=='undefined'&&_demoMode)return;");
     expect(html).toMatch(/async function loadOverview\(\)\{\s*if\(_demoMode\)return;/);
     expect(html).toMatch(/async function loadSpending\(\)\{\s*if\(_demoMode\)return;/);
-    expect(html).toContain('Advisor paused in Demo Mode');
+    // The advisor shows one computed example instead of a paused page, and still cannot send.
+    expect(html).toContain('async function advSend(){\n  if(_demoMode)return;');
+    expect(html).toContain('Live questions are off in the demo — nothing is sent anywhere.');
     expect(html).toContain('fictional numbers only');
     expect(html).toContain('function exitDemoMode(){location.reload()}');
   });

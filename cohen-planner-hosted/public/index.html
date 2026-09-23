@@ -25,6 +25,7 @@
 <script src="/tax-plan.js"></script>
 <script src="/inbox-state.js"></script>
 <script src="/advisor-tools.js"></script>
+<script src="/demo-data.js"></script>
 <script src="/decisions.js"></script>
 <script src="/decision-room.js"></script>
 <style>
@@ -2026,8 +2027,15 @@ function render(){
     renderDecisionRoom(R);return;
   }
   if(activeTab==='advisor'){
-    if(_demoMode){ca.innerHTML=`<div class="empty-state" style="padding:54px 24px;text-align:center"><h2 style="margin-bottom:8px">Advisor paused in Demo Mode</h2><p style="color:var(--t2);max-width:520px;margin:auto">Demo Mode never sends questions or retrieves connected-account data, so your private financial context cannot appear while you present.</p></div>`;return}
-    renderAdvisorTab(R,P);return
+    renderAdvisorTab(R,P);
+    // A demo never sends a question anywhere. It shows one example exchange, computed from the
+    // demo projection, and says plainly that it is an example — the composer is replaced, not
+    // disabled, so there is nothing to type into and wonder why it did nothing.
+    if(_demoMode){
+      const c=document.querySelector('.adv-composer');
+      if(c)c.innerHTML=`<p class="adv-demo-note">An example answer, worked out from this demo household's projection. Live questions are off in the demo — nothing is sent anywhere.</p>`;
+    }
+    return
   }
   if(activeTab==='inputs'){renderInputsTab();return}
   if(activeTab==='today'){
@@ -2557,6 +2565,8 @@ function syncOpeningFromAccounts(){
   showToast(`Opening balances updated from your accounts: ${names}`,'green');
 }
 async function takeWealthSnapshot(){
+  // Pressing this while presenting used to post a real snapshot of the real balances.
+  if(_demoMode){showToast('Snapshots are off in the demo — nothing is saved.','amber');return}
   const r=await fetch('/api/wealth/snapshot',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
   const d=await r.json().catch(()=>({}));
   if(!r.ok){showToast(d.error||'Could not take a snapshot','red');return}
@@ -5170,45 +5180,30 @@ function enterDemoMode(opts){
       document.querySelectorAll(sel).forEach(el=>el.remove());
   }
   const year=new Date().getFullYear();
-  // A coherent fictional household, deliberately rounded and materially different from the
-  // saved plan. It exists only in memory; Exit reloads the untouched server-backed state.
-  P={...D,planStartYear:year,startingLiquid:725000,startingStripeEquity:210000,k401Start:285000,
-    homePrice:1850000,homePurchaseYear:year+3,nycRent:4800,numKids:2,kid1Birth:year+1,kid2Birth:year+4,
-    normCashY0:240000,normCashY1:255000,normCashY2:270000,normStockY0:115000,normStockY1:125000,normStockY2:135000,
-    nancyW2Y0:105000,nancyW2Y1:115000,nancyW2Y2:120000,baseMisc:8500,baseShopping:15000};
-  scenarios=[];activeScenarioIdx=-1;scenarioDirty=false;
-  const now=new Date().toISOString();
-  monarchSnapshot={netWorth:1180000,liquid:725000,retirement:285000,assets:1220000,liabilities:40000,syncedAt:now,partial:false};
-  monarchAccounts=[
-    {name:'Everyday checking',institution:'Demo Bank',category:'cash',balance:42000},
-    {name:'High-yield savings',institution:'Demo Bank',category:'cash',balance:168000},
-    {name:'Brokerage',institution:'Demo Investments',category:'investment',balance:515000},
-    {name:'401(k)',institution:'Demo Retirement',category:'retirement',balance:285000},
-    {name:'Private company equity',institution:'Demo Employer',category:'other_asset',balance:210000},
-    {name:'Credit cards',institution:'Demo Bank',category:'liability',balance:-40000},
-  ];
-  monarchInvestments={totalValue:515000,periodMetric:'growth',periodChange:18400,periodChangePct:3.7,allTimeChange:97000,allTimePct:23.2,asOf:now,
-    holdings:[
-      {ticker:'US INDEX',name:'US Total Market',securityType:'mutual_fund',value:285000,periodChange:11800,periodChangePct:4.3},
-      {ticker:'INTL',name:'International Index',securityType:'etf',value:105000,periodChange:2100,periodChangePct:2},
-      {ticker:'BONDS',name:'Bond Index',securityType:'etf',value:85000,periodChange:900,periodChangePct:1.1},
-      {ticker:'CASH',name:'Money Market',securityType:'cash',value:40000,periodChange:0,periodChangePct:0},
-    ],topGainers:[],topLosers:[]};
-  _ovw={error:'Detailed connected-account controls are hidden in Demo Mode.'};_hist=null;
-  const demoMonths=[];
-  for(let back=12;back>=1;back--){
-    const dt=new Date(Date.UTC(year,new Date().getUTCMonth()-back,1)),ym=dt.toISOString().slice(0,7);
-    const cats=[['housing','Housing',4800],['shopping','Shopping',1750],['groceries','Groceries',1050],['dining','Dining',850],['travel','Travel',700],['other','Other',950]];
-    demoMonths.push({month:ym,expense:10100,income:30000,transfer:4500,cardPayment:6200,investment:9500,count:84,pending:0,
-      categories:cats.map(([id,name,net])=>({id,name,net,gross:net,refunds:0,count:Math.max(2,Math.round(net/180))}))});
-  }
-  const demoTotal=demoMonths.reduce((s,m)=>s+m.expense,0);
-  _spend={months:demoMonths,endDate:new Date().toISOString().slice(0,10),
-    coverage:{first:demoMonths[0].month,last:demoMonths.at(-1).month,completeMonths:demoMonths.map(m=>m.month),partial:null},
-    totals:{expense:demoTotal,income:360000,transfer:54000,cardPayment:74400,investment:114000,refund:0,hidden:0,splitParents:0},
-    counts:{expense:780,income:24,transfer:36,cardPayment:120,investment:24,refund:0},rolling:{m3:10100,m6:10100,m12:10100}};
-  _syncStatus={transactions:1008,firstDate:demoMonths[0].month+'-01',lastDate:demoMonths.at(-1).month+'-28',lastSyncAt:now,pending:0,running:false};
-  _inbox=null;
+  // One fictional household, from public/demo-data.js — the same module the server uses to
+  // rewrite the shared page. The shared page's D is already scrubbed; the owner's is not, and
+  // this used to start from it with a dozen keys overridden, so every other budget line still
+  // showed the real household while presenting. Every money figure goes through the scrub now.
+  const base=window.__SHARED_DEMO__?D:PlannerDemo.demoDefaults(D);
+  P={...base,...PlannerDemo.demoShape(year),childcareStartMonths:6};
+  // Everything a screen reads from the server, replaced — including what would otherwise
+  // carry the owner's real history into the room: saved snapshots, advisor conversations, the
+  // watchlist's last briefing.
+  const demo=PlannerDemo.buildDemoState(P,{Accounts:PlannerAccounts,Spending:PlannerSpending,
+    Pace:PlannerPace,Monitors:PlannerMonitors,TaxPlan:PlannerTaxPlan,TaxRules:PlannerTaxRules,
+    Liquidity:PlannerLiquidity,Snapshots:PlannerSnapshots,run});
+  scenarios=demo.scenarios.map((sc,i)=>({id:'demo-case-'+i,name:sc.name,params:sc.params,
+    results:run(sc.params),color:COLORS[i%COLORS.length]}));
+  activeScenarioIdx=-1;scenarioDirty=false;_livePlanParams=null;
+  snapshots=[];overlaySnapId=null;
+  advisorChats={};advisorActiveChatId=null;
+  advisorConversation=PlannerDemo.advisorSample(P,run(P).R,v=>UI.money(v,{exact:true}));
+  monarchSnapshot=demo.snapshot;
+  monarchAccounts=demo.accounts.map(a=>({name:a.name,institution:a.institution,category:a.category,balance:a.balance}));
+  monarchInvestments=demo.investments;
+  _ovw=demo.ovw;_ovwLoading=false;_hist=demo.hist;
+  _spend=demo.spend;_spendLoading=false;_syncStatus=demo.syncStatus;
+  _inbox=demo.inbox;_inboxLoading=false;_inboxError=null;_briefing=null;
   document.body.insertAdjacentHTML('afterbegin',_sharedDemo
     ?'<div class="demo-banner" id="demoBanner">◈ Demo · every figure here is invented. Nobody\'s real finances are in this page.</div>'
     :'<div class="demo-banner" id="demoBanner">◈ Demo Mode · fictional numbers only <button onclick="exitDemoMode()">Exit demo</button></div>');
@@ -6024,6 +6019,7 @@ async function advAutoBrief(){
 // Closing after a chat switch is still wanted, so that keeps its own name.
 function _advHideRailMobile(){advToggleRail(false)}
 async function advNewChat(){
+  if(_demoMode){advisorConversation=[];advRenderMessages();return;}
   _advHideRailMobile();
   const id=advUuid();
   try{
@@ -6152,6 +6148,7 @@ function advExportChats(){
 }
 
 async function advSend(){
+  if(_demoMode)return;
   const input=document.getElementById('advInput');
   const text=input.value.trim();
   if(!text)return;
