@@ -450,13 +450,13 @@ describe('the year-to-date scope', () => {
   it('says which of the two is happening, from the scope rather than its name', () => {
     // "current month excluded" is true whenever the partial month is out of range — including
     // when year-to-date falls back for want of records this year — and false when it is in.
-    expect(src).toContain("${partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}");
+    expect(src).toContain("${singleMonth?'':partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}");
   });
 
   it('divides per-month figures by months ELAPSED, not months listed', () => {
     // 53% of September counted as a whole month would report the run rate about half again
     // too low — the one way including the partial month could mislead.
-    expect(src).toContain('const n=(closedScoped.length+(partialInScope?(Number(cov.fractionElapsed)||1):0))||1;');
+    expect(src).toContain('const n=singleMonth?1:((closedScoped.length+(partialInScope?(Number(cov.fractionElapsed)||1):0))||1);');
   });
 
   it('offers the chip even before a month of the year has closed', () => {
@@ -588,5 +588,55 @@ describe('the drift chart when the history is too short to drift', () => {
     // empty by arithmetic, whatever it drew.
     expect(html).toContain("fetch('/api/monarch/spending?months=36')");
     expect(html).not.toContain("fetch('/api/monarch/spending?months=12')");
+  });
+});
+
+// ── The one month you could not ask about ───────────────────────────────────
+// The period picker listed every closed month and stopped at August. September — the month
+// being lived in, and the one most likely to be asked about — was the single month absent
+// from a list of single months.
+describe('the month in progress is selectable', () => {
+  const src = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  it('is in the list, marked as still running', () => {
+    expect(src).toContain('<optgroup label="Single month">${months.slice().reverse().map(');
+    expect(src).toContain("${m.month===asOf.slice(0,7)?' · in progress':''}");
+    // …built from the full history, not the closed months it used to read.
+    expect(src).not.toContain('<optgroup label="Single month">${completeAll.slice()');
+  });
+
+  it('resolves to that month rather than falling back to everything', () => {
+    // The month branch searched the CLOSED months only, so picking September found nothing
+    // and the fallback showed the whole of history under a September label.
+    const branch = src.slice(src.indexOf("if(_spendScope.kind==='month'){"), src.indexOf("if(_spendScope.kind==='year'){"));
+    expect(branch).toContain('const src=(every&&every.length?every:rows);');
+    expect(branch).toContain('const hit=src.filter(m=>m.month===_spendScope.month);');
+  });
+
+  it('says "so far" when the month it names has not finished', () => {
+    // Otherwise it sits in a list beside twelve whole months and reads like a thirteenth.
+    expect(src).toContain("const running=String(asOf||'').slice(0,7)===_spendScope.month;");
+    expect(src).toContain("return monthLabel(_spendScope.month)+(running?' so far':'');");
+  });
+
+  it('does not extrapolate a part month to a whole one', () => {
+    // Dividing by the share elapsed answers "at this pace, the whole month" — right for a
+    // year-to-date average, wrong when the reader asked what September has cost.
+    expect(src).toContain("const singleMonth=_spendScope.kind==='month'&&complete.length===1;");
+    expect(src).toContain('const n=singleMonth?1:((closedScoped.length+(partialInScope?(Number(cov.fractionElapsed)||1):0))||1);');
+  });
+
+  it('drops the per-month caption that would no longer be true', () => {
+    expect(src).toContain("${singleMonth?'':partialInScope?' · per-month figures divide by months elapsed'");
+    expect(src).toContain('still running, ${Math.round((Number(cov.fractionElapsed)||1)*100)}% elapsed, so these are the totals so far rather than a whole month');
+  });
+
+  it('leaves the rolling windows keeping it out, because those are averages', () => {
+    // 3M/6M/12M and All are means across months; a category two-thirds through its month
+    // reads there as a fall that has not happened.
+    const fn = src.slice(src.indexOf('function spendScopeMonths'), src.indexOf('function spendScopeLabel'));
+    const recent = fn.slice(fn.indexOf("if(_spendScope.kind==='recent'){"));
+    expect(recent).toContain('return rows.slice(-n);');
+    expect(recent).not.toContain('every');
   });
 });

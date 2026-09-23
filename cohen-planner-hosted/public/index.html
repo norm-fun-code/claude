@@ -3213,14 +3213,20 @@ let _spendScope={kind:'ytd'};
 // December of the year before, and reading YTD off that would quietly report last year.
 function spendCurrentYear(asOf){return String(asOf||'').slice(0,4)||String(new Date().getFullYear())}
 // `all` is the closed months; `every` is the full history including the month in progress.
-// Only year-to-date reads from `every` — "so far this year" that stops at the end of last
-// month is not what the phrase means, and in early September it would be missing a fortnight
-// of the answer. Every other scope still keeps the partial month out, because a category
-// two-thirds through its month reads as a fall that has not happened.
+// Year-to-date and a NAMED month read from `every` — the full history including the month in
+// progress. "So far this year" that stops at the end of last month is not what the phrase
+// means, and picking "September 2026" from a list and being shown August or the whole of
+// history instead is worse still: the one month you cannot ask about was the one you are
+// living in.
+//
+// The rolling windows (3M, 6M, 12M) and All still keep the partial month out, because those
+// are averages, and a category two-thirds through its month reads there as a fall that has
+// not happened.
 function spendScopeMonths(all,asOf,every){
   const rows=all||[];
   if(_spendScope.kind==='month'){
-    const hit=rows.filter(m=>m.month===_spendScope.month);
+    const src=(every&&every.length?every:rows);
+    const hit=src.filter(m=>m.month===_spendScope.month);
     // A month that has dropped out of the loaded history falls back to everything rather than
     // rendering an empty donut that looks like a month with no spending.
     return hit.length?hit:rows;
@@ -3245,7 +3251,15 @@ function spendScopeMonths(all,asOf,every){
 // What the current scope is called, for the caption and the chart's own label.
 function spendScopeLabel(all,asOf,every){
   const rows=all||[];
-  if(_spendScope.kind==='month'&&rows.some(m=>m.month===_spendScope.month))return monthLabel(_spendScope.month);
+  if(_spendScope.kind==='month'){
+    const src=(every&&every.length?every:rows);
+    if(src.some(m=>m.month===_spendScope.month)){
+      // A month that has not finished is not a month's spending, and the label is the only
+      // place that can say so before someone compares it with the twelve beside it.
+      const running=String(asOf||'').slice(0,7)===_spendScope.month;
+      return monthLabel(_spendScope.month)+(running?' so far':'');
+    }
+  }
   if(_spendScope.kind==='year'&&rows.some(m=>String(m.month).slice(0,4)===String(_spendScope.year)))return String(_spendScope.year);
   if(_spendScope.kind==='ytd'){
     const y=spendCurrentYear(asOf),partial=String(asOf||'').slice(0,7);
@@ -3402,7 +3416,13 @@ function renderSpendingTab(R,P){
     }
     // Per-month divides by months ELAPSED, not months listed: counting a month that is 53%
     // through as a whole one would report a run rate about half again too low.
-    const n=(closedScoped.length+(partialInScope?(Number(cov.fractionElapsed)||1):0))||1;
+    //
+    // Except when the scope IS one month. Dividing a part-month by the share of it that has
+    // passed answers "at this pace, the whole month" — the right answer for a year-to-date
+    // average and the wrong one here, where the reader asked what September has cost and
+    // would be shown a figure September has not spent.
+    const singleMonth=_spendScope.kind==='month'&&complete.length===1;
+    const n=singleMonth?1:((closedScoped.length+(partialInScope?(Number(cov.fractionElapsed)||1):0))||1);
     // Trend compares the most recent three complete months against the three before them.
     // With fewer than six there is nothing to compare, so no trend is claimed at all.
     const recent=closedScoped.slice(-3),prior=closedScoped.slice(-6,-3);
@@ -3443,11 +3463,11 @@ function renderSpendingTab(R,P){
         <select onchange="setSpendScopeFromSelect(this.value)">
           <option value="">Pick a period…</option>
           ${years.length?`<optgroup label="Full year">${years.map(y=>`<option value="year:${y}"${_spendScope.kind==='year'&&String(_spendScope.year)===y?' selected':''}>${y}</option>`).join('')}</optgroup>`:''}
-          <optgroup label="Single month">${completeAll.slice().reverse().map(m=>`<option value="month:${m.month}"${_spendScope.kind==='month'&&_spendScope.month===m.month?' selected':''}>${advEscape(monthLabel(m.month))}</option>`).join('')}</optgroup>
+          <optgroup label="Single month">${months.slice().reverse().map(m=>`<option value="month:${m.month}"${_spendScope.kind==='month'&&_spendScope.month===m.month?' selected':''}>${advEscape(monthLabel(m.month))}${m.month===asOf.slice(0,7)?' · in progress':''}</option>`).join('')}</optgroup>
         </select>
       </label>
     </div>`;
-    h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${advEscape(spendScopeLabel(completeAll,asOf,months))}${partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}</p>${scopeControl}<div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
+    h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${advEscape(spendScopeLabel(completeAll,asOf,months))}${singleMonth?'':partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}</p>${scopeControl}<div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
     <div class="spend-stack">
     <section class="cp-card"><h3>Run-rate drift</h3><p>The last twelve closed months · each point is the twelve-month average ending there</p><div class="spend-ltm-wrap"><canvas id="spendLtmChart" role="img" aria-label="Rolling twelve-month average income and spending"></canvas></div><p class="spend-caption" id="spendLtmNote">Each point averages the twelve months ending there, so one unusual month barely moves it: flat is a steady run rate, and a rising or falling line is real drift. The series breaks across any gap in the records rather than drawing through it.</p></section>
     <section class="cp-card"><h3>Income & spending</h3><p>Every imported month · current and unverified months are labeled${_spendScope.kind!=='all'?' · not narrowed by the period above':''}</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Month by month, as recorded. Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section>
@@ -3455,7 +3475,7 @@ function renderSpendingTab(R,P){
 
     h+=`<div class="glass-card" style="padding:16px 18px">
       <details class="spend-details"><summary>Category details · exact amounts & refunds</summary>
-      <div style="font-size:10px;color:var(--t2);margin-bottom:10px">${closedScoped.length} past month${closedScoped.length===1?'':'s'} with imported records, net of refunds${partialInScope?` · plus ${advEscape(monthLabel(cov.partial||asOf.slice(0,7)))} in progress, counted as ${Math.round((Number(cov.fractionElapsed)||1)*100)}% of a month`:cov.partial?` · ${cov.partial} excluded as partial`:''}. ${canTrend?'Trend compares the last 3 months with the 3 before; unverified coverage can affect the comparison.':'Six consecutive months of records are needed for a trend.'}</div>
+      <div style="font-size:10px;color:var(--t2);margin-bottom:10px">${singleMonth?`${advEscape(monthLabel(complete[0].month))} alone, net of refunds${partialInScope?` — still running, ${Math.round((Number(cov.fractionElapsed)||1)*100)}% elapsed, so these are the totals so far rather than a whole month`:''}.`:`${closedScoped.length} past month${closedScoped.length===1?'':'s'} with imported records, net of refunds${partialInScope?` · plus ${advEscape(monthLabel(cov.partial||asOf.slice(0,7)))} in progress, counted as ${Math.round((Number(cov.fractionElapsed)||1)*100)}% of a month`:cov.partial?` · ${cov.partial} excluded as partial`:''}.`} ${canTrend?'Trend compares the last 3 months with the 3 before; unverified coverage can affect the comparison.':'Six consecutive months of records are needed for a trend.'}</div>
       ${rows.length?`<div class="tw" style="max-height:none"><table style="font-size:11px">
         <thead><tr><th style="text-align:left">Category</th><th>Per month</th><th>Total</th><th>Share</th>${canTrend?'<th>Trend</th>':''}<th>Rows</th></tr></thead>
         <tbody>${shown.map(r=>{
