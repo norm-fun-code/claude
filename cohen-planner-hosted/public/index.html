@@ -4412,11 +4412,11 @@ function renderSensitivityTab(R,P){
       <div style="padding:0 4px">
         <input type="text" value="${deltaDisplay}" data-key="${r.key}" data-rawdelta="${r.delta}"
           onchange="sensiUpdateDelta(this)"
-          style="width:100%;font-size:9px;font-family:'SF Mono',monospace;text-align:center;padding:3px 4px;border:1px solid var(--bd);border-radius:4px;background:var(--s1);color:var(--tx);outline:none"
+          style="width:100%;font-size:9px;font-variant-numeric:tabular-nums;text-align:center;padding:3px 4px;border:1px solid var(--bd);border-radius:4px;background:var(--s1);color:var(--tx);outline:none"
           title="Change step size for ${r.label}">
       </div>
-      <div style="text-align:right;padding-right:12px;font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${dColor}">${dSign}${fmt(downsideVal)}</div>
-      <div style="text-align:right;padding-right:4px;font-size:9.5px;font-family:'SF Mono',monospace;font-weight:600;color:${uColor}">${uSign}${fmt(upsideVal)}</div>
+      <div style="text-align:right;padding-right:12px;font-size:9.5px;font-variant-numeric:tabular-nums;font-weight:600;color:${dColor}">${dSign}${fmt(downsideVal)}</div>
+      <div style="text-align:right;padding-right:4px;font-size:9.5px;font-variant-numeric:tabular-nums;font-weight:600;color:${uColor}">${uSign}${fmt(upsideVal)}</div>
     </div>`;
   });
 
@@ -4432,8 +4432,10 @@ function renderSensitivityTab(R,P){
   document.getElementById('summaries').innerHTML='';
 
   const tlabels=results.map(r=>r.label);
-  const upsideData=results.map(r=>Math.round(Math.max(0,r.better===1?r.hiDelta:r.loDelta)/1000));
-  const downsideData=results.map(r=>Math.round(Math.min(0,r.better===1?r.loDelta:r.hiDelta)/1000));
+  // Dollars, not thousands. The axis and tooltips format through UI.money like every other
+  // figure in the app; dividing by 1,000 here is what produced "$10000K".
+  const upsideData=results.map(r=>Math.round(Math.max(0,r.better===1?r.hiDelta:r.loDelta)));
+  const downsideData=results.map(r=>Math.round(Math.min(0,r.better===1?r.loDelta:r.hiDelta)));
   const tCtx=document.getElementById('tornadoChart').getContext('2d');
   charts.main=new Chart(tCtx,{
     type:'bar',
@@ -4450,17 +4452,21 @@ function renderSensitivityTab(R,P){
       maintainAspectRatio:false,
       plugins:{
         legend:{display:false},
-        tooltip:{..._GLASS_TOOLTIP,callbacks:{label:ctx=>{const v=ctx.raw;const sign=v>=0?'+':'';return`  ${ctx.dataset.label}: ${sign}$${Math.abs(v)}K on final NW`;}}}
+        // Exact dollars with commas and a real minus sign. The old label dropped the sign
+        // on downside bars — "Downside: $1234K" read as a gain.
+        tooltip:{..._GLASS_TOOLTIP,callbacks:{label:ctx=>`  ${ctx.dataset.label}: ${UI.money(ctx.raw,{exact:true,signed:true})} on ${ey} net worth`}}
       },
       scales:{
         x:{
-          grid:{color:'rgba(10,37,64,.05)'},border:{display:false},
-          ticks:{callback:v=>`${v>=0?'+':''}$${Math.abs(v)}K`,font:{size:10,family:"'SF Mono','Fira Code',monospace"},color:'#8898aa'},
-          title:{display:true,text:`Impact on ${ey} Net Worth ($K)`,font:{size:10},color:'#8898aa'}
+          grid:{color:'#27364b'},border:{display:false},
+          // Same rule as the cockpit and the table: $10M, $500K, −$2.5M.
+          ticks:{callback:v=>v===0?'$0':UI.money(v,{signed:true}),font:{size:12,family:"'Inter',sans-serif"},color:'#b6c3d6'},
+          title:{display:true,text:`Change in ${ey} net worth`,font:{size:12,family:"'Inter',sans-serif"},color:'#8fa2bb'}
         },
         y:{
           grid:{display:false},
-          ticks:{font:{size:11,family:"'Inter',sans-serif"},color:'#0a2540'}
+          // Was #0a2540 — navy, from the light theme, on a dark card.
+          ticks:{font:{size:13,family:"'Inter',sans-serif",weight:'500'},color:'#eef3fc'}
         }
       }
     }
