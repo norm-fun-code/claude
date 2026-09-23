@@ -13,9 +13,27 @@
 //
 // 2. "ABOVE TYPICAL" MEANS OUTSIDE YOUR OWN RANGE, not above an arbitrary percentage.
 //    A household whose months swing by $2,000 either way is not having an unusual month
-//    when it swings $1,500. The band is built from the dispersion of the prior months
-//    themselves, and the range is reported in dollars, because "$2,400–$3,400 is normal
-//    for you by the 12th" is actionable and "47% above" is not.
+//    when it swings $1,500. The band is built from the prior months themselves, and the
+//    range is reported in dollars, because "$2,400–$3,400 is normal for you by the 12th"
+//    is actionable and "47% above" is not.
+//
+//    It is built from PERCENTILES OF THE LAST TWELVE MONTHS, not mean ± one standard
+//    deviation over all history. Both parts of that were wrong, and they compounded:
+//
+//      A standard deviation is inflated by the very outliers it is meant to see past. One
+//      $2,400 charitable gift two years ago widens the band for every judgement after it —
+//      the more unusual a month was, the less this notices the next one. On real data that
+//      produced a "normal range" of $1,782–$10,516 against a typical of $6,149: a band
+//      1.4x as wide as the figure it describes, which no month could fall outside. And
+//      ±1 SD is a coin flip anyway — a third of months sit outside it by construction,
+//      so it was never the "normal range" it was labelled as.
+//
+//      Twenty-four months is not this household either. A plan with a baby arriving and
+//      income that has moved is not measured against the year before last.
+//
+//    So: the centre is the MEDIAN of the trailing twelve months at this day, which a single
+//    unusual month cannot move, and the band is the 20th to 80th percentile — "six of your
+//    last ten months landed in this range by now", which is a sentence that means something.
 //
 // 3. DISCRETIONARY IS DECLARED, NOT INFERRED. Committed costs — housing, tuition, care,
 //    insurance, utilities, debt service — are not a spending decision this month, and
@@ -58,6 +76,28 @@
     const m=mean(a);
     return Math.sqrt(a.reduce((s,x)=>s+(x-m)*(x-m),0)/(a.length-1));
   }
+  // Linear-interpolated percentile over a sorted copy. Robust where mean and standard
+  // deviation are not: one enormous month moves a percentile by one position and a mean by
+  // its whole size.
+  function percentile(a,q){
+    const v=(a||[]).filter(Number.isFinite).slice().sort((x,y)=>x-y);
+    if(!v.length)return 0;
+    if(v.length===1)return v[0];
+    const i=(v.length-1)*Math.min(1,Math.max(0,q));
+    const lo=Math.floor(i),hi=Math.ceil(i);
+    return lo===hi?v[lo]:v[lo]+(v[hi]-v[lo])*(i-lo);
+  }
+  const median=a=>percentile(a,0.5);
+  // Where this month sits among the prior ones: 0 means below all of them, 1 above all.
+  // Ties count as half, so a month exactly equal to its history reads as the middle rather
+  // than the top.
+  function rankOf(value,sample){
+    const v=(sample||[]).filter(Number.isFinite);
+    if(!v.length)return 0.5;
+    let below=0,equal=0;
+    for(const x of v){ if(x<value)below++; else if(x===value)equal++; }
+    return (below+equal/2)/v.length;
+  }
 
   // ── Cumulative discretionary spend by day of month ───────────────────────
   // Returns {month -> {day -> cumulative}} plus a per-category breakdown, in one pass.
@@ -96,16 +136,31 @@
   }
 
   // ── Verdict bands ────────────────────────────────────────────────────────
-  // Built from the household's own dispersion. z is how many standard deviations this
-  // month sits from its own history at the same point.
+  // Where this month sits AMONG the prior ones, as a rank from 0 to 1 — not how many
+  // standard deviations from their mean. The old thresholds called anything inside ±0.6 SD
+  // "about normal", and with an SD inflated by its own outliers that swallowed a month
+  // running 32% hot. A rank cannot be inflated: being above eight of your last twelve
+  // months is being above eight of your last twelve months.
+  //
+  // The middle band is p30–p70 — four months in ten are "about normal" — because the point
+  // of this card is to be worth reading, and a verdict that is almost always "normal" is
+  // not. It is still generous enough that ordinary variation is not an alarm.
   const BANDS=[
-    {max:-1.5,verdict:'well below',tone:'good'},
-    {max:-0.6,verdict:'below',tone:'good'},
-    {max:0.6,verdict:'about',tone:'neutral'},
-    {max:1.5,verdict:'above',tone:'warn'},
+    {max:0.10,verdict:'well below',tone:'good'},
+    {max:0.30,verdict:'below',tone:'good'},
+    {max:0.70,verdict:'about',tone:'neutral'},
+    {max:0.90,verdict:'above',tone:'warn'},
     {max:Infinity,verdict:'well above',tone:'bad'},
   ];
-  const bandFor=z=>BANDS.find(b=>z<b.max)||BANDS[BANDS.length-1];
+  const bandFor=rank=>BANDS.find(b=>rank<b.max)||BANDS[BANDS.length-1];
+
+  // How much history the range is built from. Twelve months: long enough to hold a seasonal
+  // swing, short enough to still be this household.
+  const WINDOW_MONTHS=12;
+  // The percentiles the "normal range" spans, and the narrowest it may get. A household
+  // whose months barely vary would otherwise be told a $60 difference is well above normal.
+  const BAND_LO=0.20,BAND_HI=0.80;
+  const floorWidth=typical=>Math.max(typical*0.10,100);
 
   // ── Why a category is up ─────────────────────────────────────────────────
   // A category name and a dollar figure leave the reader to open their statement. What they
@@ -175,7 +230,11 @@
     const current=byMonth.get(thisMonth);
     // Prior COMPLETE months only. The month in progress is not a data point, and the
     // most recent complete month is still a sample of one.
-    const priors=[...byMonth.keys()].filter(m=>m<thisMonth).sort();
+    // The trailing window, most recent first in the slice: the last twelve complete months,
+    // or everything there is if the ledger is shorter.
+    const windowMonths=Math.max(1,Number(o.windowMonths)||WINDOW_MONTHS);
+    const allPriors=[...byMonth.keys()].filter(m=>m<thisMonth).sort();
+    const priors=allPriors.slice(-windowMonths);
 
     const needs=[];
     if(priors.length<minMonths)needs.push({
@@ -192,19 +251,34 @@
     const committedRule=o.committedCategories?'your list'
       :o.discretionaryCategories?'your list':'default pattern';
     if(needs.length)return{status:'insufficient',needs,asOf,month:thisMonth,day,
-      monthsAvailable:priors.length,committedRule,
+      monthsAvailable:allPriors.length,committedRule,
       note:'Pace cannot be judged yet. Nothing here is a verdict.'};
 
-    // The comparison, at the same day of month in every prior month.
+    // The comparison, at the same day of month in every prior month of the window.
     const priorAtDay=priors.map(m=>byMonth.get(m).days[day]);
-    const typical=mean(priorAtDay);
-    const sd=stdev(priorAtDay);
     const mtd=current.days[day];
-    // With no dispersion at all, any difference is infinitely surprising, which is not a
-    // useful thing to say. Fall back to a proportional band.
-    const spread=sd>1?sd:Math.max(typical*0.15,50);
-    const z=(mtd-typical)/spread;
-    const band=bandFor(z);
+    // Median, not mean: a single $2,400 gift should not move what "typical" means.
+    const typical=median(priorAtDay);
+    // The band, widened to a floor so a very consistent household is not told that sixty
+    // dollars is a finding. Widening moves both edges around the median, keeping it centred.
+    const rawLow=percentile(priorAtDay,BAND_LO),rawHigh=percentile(priorAtDay,BAND_HI);
+    const half=Math.max((rawHigh-rawLow)/2,floorWidth(typical));
+    const normalLow=Math.max(0,typical-half),normalHigh=typical+half;
+    // THE RANGE DRAWN IS THE VERDICT. A card that shades a month green and calls it "well
+    // above normal" in the same breath has told the reader to trust neither. So the band is
+    // decided first, and the rank only grades how far past its edge this month is.
+    //
+    // Rank alone could not do this: a household whose months are near-identical has every
+    // month above all twelve of its predecessors by a few dollars, and rank 1.0 would call
+    // sixty dollars "well above" while the drawn range said it was fine.
+    const rank=rankOf(mtd,priorAtDay);
+    const band=mtd>normalHigh?bandFor(Math.max(rank,0.75))
+      :mtd<normalLow?bandFor(Math.min(rank,0.25))
+      :bandFor(0.5);
+    // Kept for anything still reading it, and for the evidence line: how far from typical
+    // in units of the band's own half-width.
+    const spread=half;
+    const z=half>0?(mtd-typical)/half:0;
 
     const lastMonthKey=priors[priors.length-1];
     const lastAtDay=byMonth.get(lastMonthKey).days[day];
@@ -221,15 +295,24 @@
     for(const name of names){
       const now=(current.cats.get(name)||[])[day]||0;
       const hist=priors.map(p=>(byMonth.get(p).cats.get(name)||[])[day]||0);
-      const cTypical=mean(hist),cSd=stdev(hist);
-      const cSpread=cSd>1?cSd:Math.max(cTypical*0.2,40);
-      const cZ=(now-cTypical)/cSpread;
+      // Median and rank here too. A category is where the outliers actually live — charity
+      // running $2,911 against $233 in a normal month is exactly the shape that inflates a
+      // standard deviation until nothing can ever be unusual again.
+      const cTypical=median(hist);
+      const cRank=rankOf(now,hist);
+      const cSpread=Math.max((percentile(hist,BAND_HI)-percentile(hist,BAND_LO))/2,cTypical*0.2,40);
       const over=now-cTypical;
-      drivers.push({category:name,mtd:now,typical:cTypical,over,z:cZ,
+      drivers.push({category:name,mtd:now,typical:cTypical,over,rank:cRank,
+        z:cSpread>0?(now-cTypical)/cSpread:0,
         shareOfGap:gap>0?over/gap:0,
-        // Material means it moves the headline: a fifth of the gap, or $250, whichever
-        // is smaller, so a modest month still surfaces its own drivers.
-        flagged:cZ>1&&over>0&&(over>=Math.min(250,Math.abs(gap)*0.2)),
+        // Two tests, and it needs both. Unusual for itself — above at least four fifths of
+        // the months in the window — and material.
+        //
+        // Material is a fifth of the gap or $250, whichever is smaller, so a modest month
+        // still surfaces its own drivers — but never less than $100 whatever the gap. On a
+        // month running dead normal that share collapses towards nothing, and a category
+        // that moved twenty-four dollars was being named as the thing driving it.
+        flagged:cRank>=0.8&&over>0&&over>=Math.max(100,Math.min(250,Math.abs(gap)*0.2)),
       });
     }
     drivers.sort((a,b)=>b.over-a.over);
@@ -240,11 +323,16 @@
 
     return{
       status:'ok',asOf,month:thisMonth,day,
-      mtd,typical,sd:spread,z,
+      mtd,typical,sd:spread,z,rank,
       verdict:band.verdict,tone:band.tone,
       // The normal range in dollars. "$2,400–$3,400 is normal for you by the 12th" is
       // something a person can act on; "47% above" is not.
-      normalLow:Math.max(0,typical-spread),normalHigh:typical+spread,
+      normalLow,normalHigh,
+      // What the range is, so the card can say it rather than asserting "normal".
+      bandPct:[BAND_LO,BAND_HI],windowMonths,
+      // How many of the window's months this one is running above — the plainest possible
+      // statement of the same fact, and the one worth printing.
+      monthsAbove:priorAtDay.filter(v=>mtd>v).length,
       over:mtd-typical,
       overPct:typical>0?(mtd-typical)/typical:null,
       lastMonth:{month:lastMonthKey,atDay:lastAtDay,
@@ -265,7 +353,8 @@
     };
   }
 
-  const api={COMMITTED,BANDS,isCommitted,cumulate,pace,bandFor,mean,stdev,explainDriver};
+  const api={COMMITTED,BANDS,WINDOW_MONTHS,BAND_LO,BAND_HI,isCommitted,cumulate,pace,bandFor,
+    mean,stdev,percentile,median,rankOf,explainDriver};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerPace=api;
 })(typeof window!=='undefined'?window:this);

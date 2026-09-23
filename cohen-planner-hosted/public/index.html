@@ -3158,8 +3158,9 @@ function paceCard(p){
     </div>
     <p class="pace-sub">
       Normal for you by this day is <b>${m(p.normalLow)}–${m(p.normalHigh)}</b>${
-        p.over>0?`, so you are <b>${m(p.over)}</b> above the middle of that range`
-                :p.over<-1?`, and you are <b>${m(-p.over)}</b> below the middle of it`:''}.
+        p.over>0?`, so you are <b>${m(p.over)}</b> above typical`
+                :p.over<-1?`, and you are <b>${m(-p.over)}</b> below typical`:''}.
+      ${p.monthsAbove!=null&&p.monthsCompared?`This month is running above <b>${p.monthsAbove} of your last ${p.monthsCompared}</b> at the same point.`:''}
       ${lastPct!=null?`Last month by the same day: <b>${M(p.lastMonth.atDay)}</b>.`:''}
     </p>
 
@@ -3189,7 +3190,8 @@ function paceCard(p){
     </div>`:`<p class="pace-clear">No single category is out of its usual range.</p>`}
 
     <footer class="pace-foot">
-      Compared against the same day of ${p.monthsCompared} earlier month${p.monthsCompared===1?'':'s'}
+      Same day of your last ${p.monthsCompared} month${p.monthsCompared===1?'':'s'}${
+        p.bandPct?` · the range is where the middle ${Math.round((p.bandPct[1]-p.bandPct[0])*100)}% of them landed`:''}
       · committed costs excluded by ${e(p.committedRule)}
       · ${UI.prov('observed','from your transactions')}
     </footer>

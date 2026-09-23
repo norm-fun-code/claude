@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
 import { createRequire } from 'module';
 const require=createRequire(import.meta.url);
 const Pace=require('../public/pace.js');
@@ -406,5 +407,180 @@ describe('the spending card does not say it twice', () => {
     const css = require('node:fs').readFileSync(new URL('../public/cockpit.css', import.meta.url), 'utf8');
     expect(css).toContain('.pace-driver{flex-wrap:wrap}');
     expect(css).toMatch(/\.pace-why\{flex:1 1 100%/);
+  });
+});
+
+// ── The band that could not be fallen out of ────────────────────────────────
+// On real data this card read "$8,127 · about normal" against a normal range of
+// $1,782–$11K — a band 1.4x as wide as the typical it described, built from mean ± one
+// standard deviation over twenty-four months. Two faults compounding:
+//
+//   A standard deviation is inflated by the outliers it is meant to see past, so the more
+//   unusual a month was, the less the card notices the next one. And ±1 SD is a coin flip
+//   anyway: a third of months sit outside it by construction.
+//
+// A month running 32% above typical was being called normal.
+describe('The normal range is built from the trailing year, robustly',()=>{
+  // Twelve ordinary months near $6,000 by the 20th, plus two old blowouts that a standard
+  // deviation would never recover from.
+  const history=(n,{outliers=[]}={})=>{
+    const rows=[];
+    for(let i=n;i>=1;i--){
+      const d=new Date(Date.UTC(2026,8-i,1)),mk=d.toISOString().slice(0,7);
+      const base=6000+((i*211)%400);
+      for(let day=1;day<=20;day++)
+        rows.push({date:`${mk}-${String(day).padStart(2,'0')}`,amount:-(base/20),categoryName:'Dining'});
+      if(outliers.includes(i))rows.push({date:`${mk}-11`,amount:-9000,categoryName:'Charity'});
+    }
+    return rows;
+  };
+  const thisMonth=(total)=>Array.from({length:20},(_,i)=>
+    ({date:`2026-09-${String(i+1).padStart(2,'0')}`,amount:-(total/20),categoryName:'Dining'}));
+
+  it('reads the last twelve months, not everything on the ledger',()=>{
+    // Two years ago is a different household: a baby arriving, income that has moved.
+    const p=Pace.pace([...history(24),...thisMonth(6000)],null,{asOf:'2026-09-20'});
+    expect(p.monthsCompared).toBe(12);
+    expect(p.windowMonths).toBe(12);
+  });
+
+  it('takes a shorter window when asked, and everything there is when the ledger is short',()=>{
+    expect(Pace.pace([...history(24),...thisMonth(6000)],null,{asOf:'2026-09-20',windowMonths:6}).monthsCompared).toBe(6);
+    expect(Pace.pace([...history(5),...thisMonth(6000)],null,{asOf:'2026-09-20'}).monthsCompared).toBe(5);
+  });
+
+  it('is not widened by one enormous month in the history',()=>{
+    // The whole failure in one assertion: two $9,000 months used to blow the band open far
+    // enough that nothing after them could ever be unusual.
+    const clean=Pace.pace([...history(12),...thisMonth(6000)],null,{asOf:'2026-09-20'});
+    const spiked=Pace.pace([...history(12,{outliers:[3,8]}),...thisMonth(6000)],null,{asOf:'2026-09-20'});
+    const width=p=>p.normalHigh-p.normalLow;
+    expect(width(spiked)).toBeLessThan(width(clean)*2);
+    expect(Math.abs(spiked.typical-clean.typical)).toBeLessThan(clean.typical*0.1);
+  });
+
+  it('keeps the range narrower than the figure it describes',()=>{
+    // $1,782–$10,516 around a typical of $6,149 was not a range anyone could fall outside.
+    const p=Pace.pace([...history(12,{outliers:[3,8]}),...thisMonth(6000)],null,{asOf:'2026-09-20'});
+    expect(p.normalHigh-p.normalLow).toBeLessThan(p.typical);
+  });
+
+  it('calls a month running a third above typical what it is',()=>{
+    const p=Pace.pace([...history(12),...thisMonth(8100)],null,{asOf:'2026-09-20'});
+    expect(p.over/p.typical).toBeGreaterThan(0.25);
+    expect(['above','well above']).toContain(p.verdict);
+    expect(p.tone).not.toBe('neutral');
+  });
+
+  it('still calls an ordinary month ordinary',()=>{
+    const p=Pace.pace([...history(12),...thisMonth(6150)],null,{asOf:'2026-09-20'});
+    expect(p.verdict).toBe('about');
+    expect(p.tone).toBe('neutral');
+  });
+
+  it('says how many of the window this month is running above, which needs no trust',()=>{
+    const p=Pace.pace([...history(12),...thisMonth(20000)],null,{asOf:'2026-09-20'});
+    expect(p.monthsAbove).toBe(12);
+    expect(p.rank).toBe(1);
+    expect(p.verdict).toBe('well above');
+  });
+
+  it('does not tell a steady household that sixty dollars is a finding',()=>{
+    // Percentiles alone would make a household whose months barely vary permanently alarmed.
+    const flat=[];
+    for(let i=12;i>=1;i--){
+      const mk=new Date(Date.UTC(2026,8-i,1)).toISOString().slice(0,7);
+      for(let d=1;d<=20;d++)flat.push({date:`${mk}-${String(d).padStart(2,'0')}`,amount:-100,categoryName:'Dining'});
+    }
+    const p=Pace.pace([...flat,...thisMonth(2060)],null,{asOf:'2026-09-20'});
+    expect(p.normalHigh-p.normalLow).toBeGreaterThanOrEqual(200);   // a floor under the band
+    expect(p.verdict).toBe('about');
+  });
+});
+
+describe('The statistics behind it',()=>{
+  it('interpolates percentiles rather than picking the nearest sample',()=>{
+    expect(Pace.percentile([1,2,3,4,5,6,7,8,9,10],0.5)).toBeCloseTo(5.5,6);
+    expect(Pace.percentile([1,2,3,4,5,6,7,8,9,10],0.2)).toBeCloseTo(2.8,6);
+    expect(Pace.percentile([],0.5)).toBe(0);
+    expect(Pace.percentile([7],0.9)).toBe(7);
+  });
+
+  it('uses a median that one huge month cannot move',()=>{
+    expect(Pace.median([100,110,105,95,2500])).toBe(105);
+    expect(Pace.mean([100,110,105,95,2500])).toBeGreaterThan(500);   // what it used to use
+  });
+
+  it('counts a tie as half, so an exactly typical month reads as the middle',()=>{
+    expect(Pace.rankOf(5,[5,5,5,5])).toBe(0.5);
+    expect(Pace.rankOf(9,[1,2,3])).toBe(1);
+    expect(Pace.rankOf(0,[1,2,3])).toBe(0);
+    expect(Pace.rankOf(5,[])).toBe(0.5);
+  });
+
+  it('bands on rank among prior months, not on standard deviations',()=>{
+    expect(Pace.bandFor(0.5).verdict).toBe('about');
+    expect(Pace.bandFor(0.95).verdict).toBe('well above');
+    expect(Pace.bandFor(0.05).verdict).toBe('well below');
+  });
+});
+
+describe('The card says what the range actually is',()=>{
+  const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+
+  it('calls the centre typical, not "the middle of that range"',()=>{
+    expect(html).toContain('above typical`');
+    expect(html).not.toContain('above the middle of that range');
+  });
+
+  it('prints the count of months it is running above',()=>{
+    expect(html).toContain('running above <b>${p.monthsAbove} of your last ${p.monthsCompared}</b>');
+  });
+
+  it('explains what the band is instead of asserting "normal"',()=>{
+    expect(html).toContain('the range is where the middle ${Math.round((p.bandPct[1]-p.bandPct[0])*100)}% of them landed');
+    expect(html).not.toContain('Compared against the same day of ${p.monthsCompared} earlier month');
+  });
+});
+
+// A card that draws a month inside the range it labels normal and calls it "well above" in
+// the same breath has told the reader to trust neither half.
+describe('The range drawn is the verdict',()=>{
+  const steady=(perDay)=>{
+    const rows=[];
+    for(let i=12;i>=1;i--){
+      const mk=new Date(Date.UTC(2026,8-i,1)).toISOString().slice(0,7);
+      for(let d=1;d<=20;d++)rows.push({date:`${mk}-${String(d).padStart(2,'0')}`,amount:-perDay,categoryName:'Dining'});
+    }
+    return rows;
+  };
+  const now=(total)=>Array.from({length:20},(_,i)=>
+    ({date:`2026-09-${String(i+1).padStart(2,'0')}`,amount:-(total/20),categoryName:'Dining'}));
+
+  it('never calls a month inside the drawn range anything but normal',()=>{
+    // Rank alone said "well above": every month of an identical history is above all twelve
+    // of its predecessors by a few dollars, so rank hits 1.0 on sixty dollars.
+    const p=Pace.pace([...steady(100),...now(2060)],null,{asOf:'2026-09-20'});
+    expect(p.rank).toBe(1);
+    expect(p.mtd).toBeLessThanOrEqual(p.normalHigh);
+    expect(p.verdict).toBe('about');
+  });
+
+  it('never calls a month outside the drawn range normal',()=>{
+    for (const total of [3200, 900]) {
+      const p=Pace.pace([...steady(100),...now(total)],null,{asOf:'2026-09-20'});
+      const outside=p.mtd>p.normalHigh||p.mtd<p.normalLow;
+      expect(outside).toBe(true);
+      expect(p.verdict).not.toBe('about');
+    }
+  });
+
+  it('holds across a spread of months, in both directions',()=>{
+    for(const total of [500,1500,1900,2000,2100,2500,6000,20000]){
+      const p=Pace.pace([...steady(100),...now(total)],null,{asOf:'2026-09-20'});
+      const inside=p.mtd>=p.normalLow&&p.mtd<=p.normalHigh;
+      expect(p.verdict==='about').toBe(inside);
+      expect(p.tone==='neutral').toBe(inside);
+    }
   });
 });
