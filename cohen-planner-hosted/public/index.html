@@ -971,7 +971,7 @@ function printPDF(){
     {l:`Post-Down Liquid (${P.homePurchaseYear})`,v:fmtK(pliq),s:`${P.downPctg}% down on ${fmtK(P.homePrice||0)}`,c:pliq>800000?'#1a8754':'#bf6900'},
     {l:'Total Tuition',v:fmtK(tT),s:`${P.numKids} kid${P.numKids!==1?'s':''}`,c:'#cd3d64'},
     {l:'Tax on Stock Sales',v:fmtK(tTx),s:`${fmtK(tS)} sold`,c:'#cd3d64'},
-    {l:`Liquid Floor (${minL.yr})`,v:fmtK(minL.liq),s:`${defYrs} deficit yr${defYrs!==1?'s':''}`,c:minL.liq>500000?'#1a8754':'#cd3d64'},
+    {l:`Liquid Floor (${minL.yr})`,v:fmtK(minL.liq),s:`${defYrs} deficit yr${defYrs!==1?'s':''}`,c:minL.liq>(P.liquidReserveFloor??D.liquidReserveFloor)?'#1a8754':'#cd3d64'},
     {l:`Final NW (${last.yr})`,v:fmtK(last.nw),s:`+${fmtK(last.k401)} in 401k`,c:'#1a8754'},
     {l:'Total w/ 401k',v:fmtK(last.nw+last.k401),s:`over ${planYears} yrs`,c:'#0891b2'},
   ];
@@ -1961,7 +1961,7 @@ function render(){
     <div class="kpi"><div class="kpi-l">🏠 Post-Down</div><div class="kpi-v" style="color:${pliq>800000?'var(--g)':'var(--a)'}">${fmt(pliq)}</div><div class="kpi-s">${P.homePurchaseYear}</div></div>
     <div class="kpi"><div class="kpi-l">🎓 Tuition</div><div class="kpi-v" style="color:var(--r)">${fmt(tT)}</div><div class="kpi-s">${P.numKids} kids</div></div>
     <div class="kpi"><div class="kpi-l">💸 Tax on Sales</div><div class="kpi-v" style="color:var(--r)">${fmt(tTx)}</div><div class="kpi-s">${fmt(tS)} sold</div></div>
-    <div class="kpi"><div class="kpi-l">📉 Liquid Floor</div><div class="kpi-v" style="color:${minL.liq>500000?'var(--g)':'var(--a)'}">${fmt(minL.liq)}</div><div class="kpi-s">${minL.yr}</div></div>
+    <div class="kpi"><div class="kpi-l">📉 Liquid Floor</div><div class="kpi-v" style="color:${minL.liq>(P.liquidReserveFloor??D.liquidReserveFloor)?'var(--g)':'var(--a)'}">${fmt(minL.liq)}</div><div class="kpi-s">${minL.yr}</div></div>
     <div class="kpi"><div class="kpi-l">🏁 NW (${last.yr})</div><div class="kpi-v" style="color:var(--g)">${fmt(last.nw)}</div><div class="kpi-s">+${fmt(last.k401)} 401k</div></div>
     <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--tx)">${fmt(last.nw+last.k401)}</div><div class="kpi-s">incl. retirement</div></div>
     ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 ${monarchSnapshot.partial?'Known balances':'Latest NW'}</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div></div>`:''}`;
@@ -1987,7 +1987,7 @@ function render(){
   const np=document.getElementById('norm_preview');
   const _sy=P.planStartYear||2026;const _lastY=_sy+10;
   if(np&&StripeGrants.active(P)){const c=normComp(P,10);np.textContent=`${_lastY}: ${fmtF(c.cash)} cash + ${fmtF(c.stock)} stock · ${StripeGrants.usesGrants(P,_lastY)?'calculated from grants':'manual compensation'}`;}
-  else if(np){const _c=P.normCashY10??304000,_s=P.normStockY10??150000,_cg=P.normGrowth??0.01,_sg=P.normStockGrowth??_cg;
+  else if(np){const _c=P.normCashY10??D.normCashY10,_s=P.normStockY10??D.normStockY10,_cg=P.normGrowth??0.01,_sg=P.normStockGrowth??_cg;
     np.textContent=`${_lastY}: ${fmtF(_c+_s)} (${fmtF(_c)} cash + ${fmtF(_s)} stock) · ${_lastY+10}: ${fmtF(Math.round(_c*(1+_cg)**10+_s*(1+_sg)**10))} at ${(_cg*100).toFixed(1)}% / ${(_sg*100).toFixed(1)}% growth`;}
   const nap=document.getElementById('nancy_preview');
   if(nap){const matYr=P.nancyRampYear+P.nancyRampYears;const nc=Math.min(P.nancyMaxClients,P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*Math.max(0,Math.min(1,(matYr-P.nancyRampYear)/P.nancyRampYears)));nap.textContent=`${matYr}: ~${Math.round(nc)} clients → ${fmtF(Math.round(nc*P.nancyHourlyRate*P.nancyWeeksPerYear))} gross`}
@@ -2351,7 +2351,7 @@ function renderStripeTab(R,P){
   if(row.sHold>0){
     h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(103,114,229,.3)">
       <h3>◆ Held shares sold in ${yr}</h3>
-      <p style="line-height:1.6">This year's vest and the portfolio (down to its ${fmt(P.liquidReserveFloor??500000)} reserve floor) still left ${fmt(row.need-row.sSold)} uncovered, so <strong style="color:#6772e5">${fmt(row.sHold)}</strong> of Stripe you already held was sold — realising <strong>${fmt(row.sGainTax)}</strong> of capital-gains tax, just <strong>${(row.sGainTax/row.sHold*100).toFixed(1)}%</strong> of the proceeds.
+      <p style="line-height:1.6">This year's vest and the portfolio (down to its ${fmt(P.liquidReserveFloor??D.liquidReserveFloor)} reserve floor) still left ${fmt(row.need-row.sSold)} uncovered, so <strong style="color:#6772e5">${fmt(row.sHold)}</strong> of Stripe you already held was sold — realising <strong>${fmt(row.sGainTax)}</strong> of capital-gains tax, just <strong>${(row.sGainTax/row.sHold*100).toFixed(1)}%</strong> of the proceeds.
       <br><br>That rate is low because the sale takes your <em>least appreciated</em> lots first: the newest shares carry almost no gain above their vest price, so they cost almost nothing in tax to sell. A sale at the vest-date FMV has no additional gain; this is the next cheapest thing.</p>
     </div>`;
   }
@@ -4021,7 +4021,7 @@ function renderHousingTab(R,P){
       at <strong>${q.mortgageRate}%</strong> with <strong>${q.downPctg}%</strong> down — about <strong>${fmtF(Math.round(atMax.all))}/mo</strong> all-in.<br>
       ${a.binding==='comfort'
         ? `Limited by <strong>carrying cost</strong>: above this, housing eats more than ${(_afShare*100).toFixed(0)}% of your after-tax income in ${py}. Your balance sheet could actually fund up to ${money(a.plan)}.`
-        : `Limited by your <strong>balance sheet</strong>: above this, funding the purchase would break your ${fmt(q.liquidReserveFloor??500000)} reserve floor. Cash flow alone could carry up to ${money(a.comfort)}.`}
+        : `Limited by your <strong>balance sheet</strong>: above this, funding the purchase would break your ${fmt(q.liquidReserveFloor??D.liquidReserveFloor)} reserve floor. Cash flow alone could carry up to ${money(a.comfort)}.`}
     </div>
     ${dirty?`<div style="margin-top:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
       <span style="font-size:9.5px;color:var(--a)">● Exploring — your plan still says ${P.mortgageRate}% / ${P.downPctg}% down, buying in ${P.homePurchaseYear}</span>
@@ -4038,7 +4038,7 @@ function renderHousingTab(R,P){
   </div>`;
   h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
     ${limitCard('Carrying-cost limit',a.comfort,`All-in housing stays under ${(_afShare*100).toFixed(0)}% of ${py} after-tax income (${fmt(buyRow.netTC)})`,a.binding==='comfort',false)}
-    ${limitCard('Balance-sheet limit',a.plan,`The most you can fund with the ${fmt(q.liquidReserveFloor??500000)} reserve floor still intact, selling Stripe as needed`,a.binding==='plan',false)}
+    ${limitCard('Balance-sheet limit',a.plan,`The most you can fund with the ${fmt(q.liquidReserveFloor??D.liquidReserveFloor)} reserve floor still intact, selling Stripe as needed`,a.binding==='plan',false)}
     ${limitCard('Your current plan',q.homePrice,over>0?`${money(over)} above what you can afford — ${fmtF(Math.round(cur.all))}/mo, ${(cur.all*12/buyRow.netTC*100).toFixed(0)}% of income`:`Within budget — ${fmtF(Math.round(cur.all))}/mo, ${(cur.all*12/buyRow.netTC*100).toFixed(0)}% of income`,false,over>0)}
   </div>`;
 
@@ -4159,7 +4159,7 @@ function renderHousingTab(R,P){
     const cc=cash.breakdown;
     const prev=R.find(r=>r.yr===py-1),buyRow=R.find(r=>r.yr===py);
     const quarter=_afQuarter||L.purchaseQuarter(q);
-    const floor=q.liquidReserveFloor??500000;
+    const floor=q.liquidReserveFloor??D.liquidReserveFloor;
     const held=prev?prev.sEnd:(q.startingStripeEquity||0);
     const vestQ=(buyRow?buyRow.sNew:0)/4;
     const pauseCost=_afPauseMonths>0&&buyRow?buyRow.totE/12*_afPauseMonths:0;
@@ -4342,7 +4342,7 @@ function renderSensitivityTab(R,P){
       const key=p.key==='normCash'?'cash':'stock';vBase=normComp(P,0)[key];hiP=structuredClone(P);loP=structuredClone(P);
       for(let y=P.planStartYear||2026;y<=(P.planEndYear||2058);y++){
         if(!StripeGrants.usesGrants(P,y)){const n=StripeGrants.manualComp(P,y);hiP.stripeGrants.manualComp[y]={...n,[key]:n[key]+delta};loP.stripeGrants.manualComp[y]={...n,[key]:Math.max(0,n[key]-delta)};}
-        else if(key==='cash'){const k='normCashY'+(y-(P.planStartYear||2026));hiP[k]=(P[k]??275000)+delta;loP[k]=Math.max(0,(P[k]??275000)-delta);}
+        else if(key==='cash'){const k='normCashY'+(y-(P.planStartYear||2026));hiP[k]=(P[k]??D[k])+delta;loP[k]=Math.max(0,(P[k]??D[k])-delta);}
       }
     } else if(p.key==='normCash'||p.key==='normStock'){
       const f=p.key==='normCash'?'normCashY':'normStockY';
@@ -4680,7 +4680,7 @@ function renderGoalsTab(R,P,tT){
     // in the headline (it grows with the home over time).
     const ptRate=P.propTaxRate??.012;
     const moPropTax0=ptRate*P.homePrice/12;          // year 1
-    const moMaint0=(P.maintBase||10000)/12;          // matches model: maintBase, grows 2%/yr
+    const moMaint0=(P.maintBase||D.maintBase)/12;          // matches model: maintBase, grows 2%/yr
     const moAllIn0=moPmt+moPropTax0+moMaint0;
     const homeVal30=P.homePrice*(1+P.homeAppreciation)**30;
     const moPropTax30=ptRate*homeVal30/12;           // year 30 (tax keeps rising)
@@ -4840,7 +4840,7 @@ function renderGoalsTab(R,P,tT){
     <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:4px">💧 Liquid Health Over Time</div>
     <div style="font-size:10px;color:var(--t2);margin-bottom:12px">${surpYrs} surplus yrs · ${defYrs} deficit yrs · floor ${fmt(R.reduce((a,b)=>b.liq<a.liq?b:a).liq)} in ${R.reduce((a,b)=>b.liq<a.liq?b:a).yr}</div>
     <div style="display:flex;gap:2px;align-items:flex-end;height:60px">
-      ${(()=>{const maxL=Math.max(...R.map(r=>r.liq),1);return R.map(r=>{const pct=r.liq/maxL*100;const draws=r.sold>0||r.sHold>0;const color=r.liq<(P.liquidReserveFloor??500000)?'var(--r)':draws?'var(--a)':'var(--g)';return`<div title="${r.yr}: ${fmt(r.liq)} liquid${draws?' \u2014 draws on savings':''}" style="flex:1;background:${color};height:${Math.max(2,pct)}%;border-radius:2px 2px 0 0;opacity:.75"></div>`}).join('')})()}
+      ${(()=>{const maxL=Math.max(...R.map(r=>r.liq),1);return R.map(r=>{const pct=r.liq/maxL*100;const draws=r.sold>0||r.sHold>0;const color=r.liq<(P.liquidReserveFloor??D.liquidReserveFloor)?'var(--r)':draws?'var(--a)':'var(--g)';return`<div title="${r.yr}: ${fmt(r.liq)} liquid${draws?' \u2014 draws on savings':''}" style="flex:1;background:${color};height:${Math.max(2,pct)}%;border-radius:2px 2px 0 0;opacity:.75"></div>`}).join('')})()}
     </div>
     <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${sy}</span><span>${P.planEndYear||2058}</span></div>
     <div style="margin-top:6px;display:flex;gap:10px;font-size:8.5px">
@@ -5151,9 +5151,18 @@ async function saveInputScenario(){
   toggleInputScenarioSave(false);await saveScenario(name);
 }
 
-function enterDemoMode(){
+// `shared` is the link a friend opens: the same fictional household, but with nothing to
+// exit TO. Offering "Exit demo" to someone who has no login would hand them a redirect to a
+// sign-in page and look like the demo had broken.
+let _sharedDemo=false;
+function enterDemoMode(opts){
   if(_demoMode)return;
   _demoMode=true;
+  _sharedDemo=!!(opts&&opts.shared);
+  if(_sharedDemo){
+    for(const sel of ['.logout-btn','#monarchSyncBtn','#monarchConnectBtn','#monarchFreshness','.sync-pill'])
+      document.querySelectorAll(sel).forEach(el=>el.remove());
+  }
   const year=new Date().getFullYear();
   // A coherent fictional household, deliberately rounded and materially different from the
   // saved plan. It exists only in memory; Exit reloads the untouched server-backed state.
@@ -5194,9 +5203,11 @@ function enterDemoMode(){
     counts:{expense:780,income:24,transfer:36,cardPayment:120,investment:24,refund:0},rolling:{m3:10100,m6:10100,m12:10100}};
   _syncStatus={transactions:1008,firstDate:demoMonths[0].month+'-01',lastDate:demoMonths.at(-1).month+'-28',lastSyncAt:now,pending:0,running:false};
   _inbox=null;
-  document.body.insertAdjacentHTML('afterbegin','<div class="demo-banner" id="demoBanner">◈ Demo Mode · fictional numbers only <button onclick="exitDemoMode()">Exit demo</button></div>');
+  document.body.insertAdjacentHTML('afterbegin',_sharedDemo
+    ?'<div class="demo-banner" id="demoBanner">◈ Demo · every figure here is invented. Nobody\'s real finances are in this page.</div>'
+    :'<div class="demo-banner" id="demoBanner">◈ Demo Mode · fictional numbers only <button onclick="exitDemoMode()">Exit demo</button></div>');
   buildControls();activeTab='cockpit';render();closeMoreMenu();
-  showToast('Demo Mode on — your saved plan and connected data are hidden.','green');
+  if(!_sharedDemo)showToast('Demo Mode on — your saved plan and connected data are hidden.','green');
 }
 function exitDemoMode(){location.reload()}
 document.getElementById('main').innerHTML=`
@@ -5673,7 +5684,7 @@ STRIPE EQUITY — a SEPARATE pool from the diversified portfolio. Never conflate
 • Starting Stripe equity: ${fmt(P.startingStripeEquity||0)}  [key: startingStripeEquity]
 • Starting diversified (non-Stripe) liquid: ${fmt(P.startingLiquid)}  [key: startingLiquid]
 • Retention policy: ${P.stripePolicy||'deficit'} — ${STRIPE_POLICY_HELP[P.stripePolicy||'deficit']}  [key: stripePolicy, one of: deficit | floor | pct | retain | sell]
-• Liquid reserve floor: ${fmt(P.liquidReserveFloor??500000)}  [key: liquidReserveFloor]. Funding order for any year the vest can't cover: sell this year's vest → draw the diversified portfolio down to this floor and NO further → sell Stripe shares he already holds (which DOES realise capital gains on appreciation above basis) → only if all three are exhausted does the portfolio go below the floor.
+• Liquid reserve floor: ${fmt(P.liquidReserveFloor??D.liquidReserveFloor)}  [key: liquidReserveFloor]. Funding order for any year the vest can't cover: sell this year's vest → draw the diversified portfolio down to this floor and NO further → sell Stripe shares he already holds (which DOES realise capital gains on appreciation above basis) → only if all three are exhausted does the portfolio go below the floor.
 ${P.stripePolicy==='pct'?`• Fixed sell share: ${((P.stripeSellPct??.3)*100).toFixed(0)}%  [key: stripeSellPct]`:''}
 • Stripe return path ${planSY}-${planSY+9}: ${Array.from({length:10},(_,i)=>((P['stripeRetY'+i]??.08)*100).toFixed(0)+'%').join(' · ')}  [keys: stripeRetY0 .. stripeRetY9]
 • Long-term Stripe return beyond ${planSY+10}: ${((P.stripeLongTermReturn??.08)*100).toFixed(0)}%  [key: stripeLongTermReturn]
@@ -5723,7 +5734,7 @@ CURRENT HOLDINGS (recent snapshot from his portfolio)
 • Coinbase ~$36K: SOL $15.5K, ETH $10.5K, LINK $10.3K (no BTC by choice)
 • Stripe RSUs (this snapshot predates the plan's own Stripe modeling — treat the STRIPE EQUITY section above as authoritative, since the plan tracks startingStripeEquity explicitly and it may still be sitting inside startingLiquid if he hasn't reclassified it)
 • Private investments ~$42K
-• 401k ~${fmt(P.k401Start||210000)} (starting balance)
+• 401k ~${fmt(P.k401Start||D.k401Start)} (starting balance)
 
 INVESTING PRINCIPLES NORM OPERATES BY
 • Core/satellite: ~65% FXAIX index, ~35% high-conviction names
@@ -6463,6 +6474,18 @@ function advPreviewProposals(){
 }
 
 // ═══ INIT ═══
+// The shared demo takes over before the first fetch is issued, not after. Every loader is
+// already guarded on _demoMode, but a guard checked after the request has left is not a
+// guard — and an unauthenticated visitor would get a 401 and a redirect to the login page.
+if(window.__SHARED_DEMO__){
+  // Rendering is gated on a loaded plan, so this has to be true — and it is the flag that
+  // otherwise permits a save. The server would refuse one anyway (a demo session is never
+  // marked authenticated), and savePlannerState checks _demoMode first, but a public page
+  // writing to the owner's plan is the worst failure available here and the belt is one line.
+  _planLoaded=true;
+  savePlannerState=()=>{};
+  enterDemoMode({shared:true});
+} else {
 loadAdvisorState();
 // Handle OAuth redirect results
 (()=>{
@@ -6471,6 +6494,7 @@ loadAdvisorState();
   if(p.has('monarch_error')){showToast('Monarch error: '+p.get('monarch_error'),'red');history.replaceState({},'','/');}
 })();
 loadSnapshots().then(()=>{loadFromServer()});
+}
 
 window.onerror=function(msg,src,line,col,err){
   showToast('JS Error: '+msg+' (line '+line+')','red');

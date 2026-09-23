@@ -13,6 +13,8 @@ const PgSession = require('connect-pg-simple')(session);
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const Anthropic = require('@anthropic-ai/sdk');
+const fs = require('fs');
+const vm = require('vm');
 const path = require('path');
 const db = require('./db');
 const Model = require('./public/model.js');
@@ -283,14 +285,95 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 app.get('/', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-app.get('/model.js', requireAuth, (req, res) => {
+
+// ── The shareable demo ───────────────────────────────────────────────────────
+// Demo Mode already existed as a button: it swaps a fictional household in and blocks every
+// network read, so nothing private can reach the screen. But it lived behind the login, so
+// nobody could be shown it.
+//
+// Serving index.html unauthenticated is NOT enough, and this is the whole reason this is
+// server-side rather than a link to a query string. The file carries the plan's fallback
+// defaults in its source — fifty-one money figures, among them a starting liquid balance, a
+// salary and a rent. What the UI chooses to draw is irrelevant when View Source has the rest.
+//
+// So the page served here is rebuilt with those defaults replaced. Deny by default: every
+// value over $3,000 is overridden, explicitly where the demo should look deliberate and by a
+// coarse rounding otherwise, so a money field added later is scrambled rather than leaked.
+const DEMO_OVERRIDES = {
+  startingLiquid: 725000, k401Start: 285000, liquidReserveFloor: 150000,
+  homePrice: 1850000, nycRent: 4800, propTaxBase: 16000, maintBase: 9000,
+  normCashY0: 240000, normCashY1: 252000, normCashY2: 265000, normCashY3: 275000,
+  normStockY0: 115000, normStockY1: 125000, normStockY2: 130000, normStockY3: 135000,
+  nancyW2Y0: 105000, nancyW2Y1: 112000, nancyW2Y2: 118000, nancyW2Y3: 124000,
+  nancyPracticeOverhead: 12000, nancyHomeOfficeDeduct: 6000,
+  pretax401k: 19000, pretaxBenefits: 9000, company401kMatch: 7000,
+  baseGroceries: 9600, baseDining: 10800, baseShopping: 15000, baseVacations: 12000,
+  baseMisc: 8400, baseCharity: 6000, baseMedical: 3600, baseTransit: 3600,
+  baseUtilsPhoneNet: 4800, baseEntertainment: 4200, baseAuto: 4800,
+  postKidVacations: 9000, suburbAutoBoost: 4200,
+};
+// Two significant figures of a shifted value: recognisably a household, recognisably not
+// this one, and not a constant multiple of anything — so no ratio survives to be inverted.
+function demoScrub(v) {
+  const n = Math.abs(v) * 0.63 + 1500;
+  const mag = Math.pow(10, Math.max(0, String(Math.round(n)).length - 2));
+  return Math.sign(v) * Math.round(n / mag) * mag;
+}
+const DEMO_FLAG = '<script>window.__SHARED_DEMO__=1;</script>';
+let demoPage = null, demoPageError = null;
+function buildDemoPage() {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+    const m = src.match(/const D=(\{[\s\S]*?\n\});/);
+    if (!m) throw new Error('the default plan block was not found');
+    const real = vm.runInNewContext('(' + m[1] + ')');
+    const demo = {};
+    for (const [k, v] of Object.entries(real)) {
+      demo[k] = Object.prototype.hasOwnProperty.call(DEMO_OVERRIDES, k) ? DEMO_OVERRIDES[k]
+        : (typeof v === 'number' && Math.abs(v) > 3000) ? demoScrub(v)
+        : v;
+    }
+    // Belt and braces: if any figure over $3,000 survived the swap, serve nothing at all.
+    for (const [k, v] of Object.entries(real))
+      if (typeof v === 'number' && Math.abs(v) > 3000 && demo[k] === v)
+        throw new Error(`${k} was not replaced`);
+    const page = src.replace(m[0], 'const D=' + JSON.stringify(demo) + ';')
+      .replace('</head>', DEMO_FLAG + '</head>');
+    if (page.includes(m[0]) || !page.includes(DEMO_FLAG)) throw new Error('the rewrite did not take');
+    demoPage = page; demoPageError = null;
+  } catch (err) {
+    // FAIL CLOSED. A demo page that could not be sanitised is the real page, and the real
+    // page is the one thing this route must never serve.
+    demoPage = null;
+    demoPageError = err.message;
+    console.error('Demo page unavailable:', err.message);
+  }
+}
+buildDemoPage();
+
+app.get('/demo', (req, res) => {
+  if (!demoPage) return res.status(503).type('text/plain')
+    .send(`The demo is unavailable (${demoPageError || 'not built'}).`);
+  // Marks the session as allowed to load the app's static assets — and nothing else. Every
+  // /api route still checks `authenticated`, which this deliberately does not set.
+  if (req.session) req.session.demo = true;
+  res.set('Cache-Control', 'no-store').type('html').send(demoPage);
+});
+
+// Assets are code, not data, and the demo needs them. Authenticated sessions and demo
+// visitors both pass; nothing else changes.
+function requireAuthOrDemo(req, res, next) {
+  if (req.session && (req.session.authenticated || req.session.demo)) return next();
+  return requireAuth(req, res, next);
+}
+app.get('/model.js', requireAuthOrDemo, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'model.js'));
 });
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
 for (const asset of ['stripe-grants.js', 'stripe-grants-ui.js', 'cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'year-end.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js']) {
-  app.get('/' + asset, requireAuth, (req, res) => {
+  app.get('/' + asset, requireAuthOrDemo, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
 }
