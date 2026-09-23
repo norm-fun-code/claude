@@ -203,6 +203,11 @@ button{width:100%;background:linear-gradient(135deg,#6e66ff,#5048d6);color:#fff;
 button:hover{transform:translateY(-1px);box-shadow:0 12px 26px -7px rgba(80,72,214,.7)}
 button:active{transform:translateY(0)}
 button:disabled{background:#adbdcc;cursor:not-allowed;box-shadow:none;transform:none}
+.demo-line{margin-top:20px;padding-top:18px;border-top:1px solid rgba(10,37,64,.09);display:flex;
+  align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.demo-line a{color:#5048d6;font-size:13px;font-weight:600;text-decoration:none}
+.demo-line a:hover{text-decoration:underline}
+.demo-line span{color:#8898aa;font-size:11px}
 .err{background:rgba(252,234,238,.85);border:1px solid rgba(205,61,100,.25);color:#cd3d64;padding:10px 12px;border-radius:8px;font-size:12px;margin-top:12px;display:none}
 </style>
 </head>
@@ -218,6 +223,10 @@ button:disabled{background:#adbdcc;cursor:not-allowed;box-shadow:none;transform:
   <input type="password" id="pw" placeholder="Enter password" autofocus>
   <button id="btn" onclick="login()">Sign in</button>
   <div class="err" id="err"></div>
+  <!-- The demo needs no password because it holds no data: /demo serves a page rebuilt with
+       a fictional household, and a demo session is never marked authenticated. A plain link
+       rather than a second sign-in path — there is nothing here to authenticate. -->
+  <div class="demo-line"><a href="/demo">Open the demo →</a><span>No sign-in. Invented numbers.</span></div>
 </div>
 <script>
 document.getElementById('pw').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });

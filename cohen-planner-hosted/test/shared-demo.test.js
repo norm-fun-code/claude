@@ -116,6 +116,18 @@ describe('no default is duplicated as a magic number', () => {
   });
 });
 
+// ── Finding it ──────────────────────────────────────────────────────────────
+describe('the way in', () => {
+  it('is a link on the login page, not a second sign-in path', () => {
+    // There is nothing here to authenticate: /demo holds no data, so a password field or a
+    // shared secret would be ceremony protecting nothing.
+    const login = server.slice(server.indexOf("app.get('/login'"), server.indexOf("app.post('/login'"));
+    expect(login).toContain('<a href="/demo">Open the demo →</a>');
+    expect(login).toContain('No sign-in. Invented numbers.');
+    expect(login).toContain('.demo-line{');
+  });
+});
+
 // ── What the link may reach ─────────────────────────────────────────────────
 describe('a demo visitor gets the app and nothing else', () => {
   it('is let through to static assets, which are code and not data', () => {
