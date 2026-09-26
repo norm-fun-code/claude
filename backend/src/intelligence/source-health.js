@@ -77,4 +77,48 @@ function getMonarchHealth(sources, now = Date.now()) {
   return { configured: true, healthy, rows, freshestHoursAgo: freshest.hoursAgo ?? null };
 }
 
-module.exports = { STALE_THRESHOLDS_H, DEFAULT_STALE_H, sourceStaleness, describeDataGaps, getMonarchHealth };
+/**
+ * The alert for a wealth-sync row whose last run FAILED — or null when there
+ * is nothing worth interrupting the morning for.
+ *
+ * An error on `monarch_mcp_sync` means the WHOLE wealth sync failed, never MCP
+ * alone. That connector CATCHES an MCP failure and falls back to the GraphQL
+ * path (connectors/monarch-mcp-sync.js), returning the fallback's result, so an
+ * MCP outage can never reach markSync. Whatever is recorded on the row came
+ * from the FALLBACK, or from the post-sync write in ingest/run.js.
+ *
+ * That is why the message this replaces was wrong in both halves at once. It
+ * named MCP, which by construction is not what failed, and it promised that
+ * "transactions/income keep flowing via the backup sync" — hardcoded text,
+ * never checked, and false exactly when it fired, because the backup is the
+ * thing that threw. Reported after months of it naming a service that had
+ * already been retired upstream while vouching for the one that actually broke.
+ *
+ * Wanting an MCP-only outage to be visible (GetBudget has no CSV fallback the
+ * way transactions/income do) is sound, but this row cannot carry that signal,
+ * and a daily alert about a service paused upstream has no action attached.
+ * Detecting it would mean probing MCP directly, which is worth building only if
+ * it comes back.
+ *
+ * Fires only when recent data is ALSO missing. markSync does not advance
+ * last_sync_at on failure, so last_sync_at is the last SUCCESSFUL run: still
+ * fresh means today's numbers already landed and the failed run was a blip the
+ * logs can keep. Stale means the sync has actually stopped delivering, which is
+ * the case worth surfacing.
+ */
+function wealthSyncAlert(row, now = Date.now()) {
+  if (!row || row.status !== 'error') return null;
+  const { isStale, hoursAgo } = sourceStaleness(row, now);
+  if (!isStale) return null;
+  return {
+    source: row.id,
+    severity: hoursAgo == null || hoursAgo > 96 ? 'high' : 'warn',
+    message:
+      `Wealth sync is failing: ${String(row.last_error || 'unknown error').slice(0, 200)}` +
+      (hoursAgo == null
+        ? ' — it has never completed a successful run.'
+        : ` — last successful sync ${Math.round(hoursAgo)}h ago.`),
+  };
+}
+
+module.exports = { STALE_THRESHOLDS_H, DEFAULT_STALE_H, sourceStaleness, describeDataGaps, getMonarchHealth, wealthSyncAlert };

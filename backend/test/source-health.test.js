@@ -71,3 +71,67 @@ test('getMonarchHealth: works with only monarch_mcp_sync registered (monarch_api
   assert.equal(h.healthy, true);
   assert.equal(h.rows.length, 1);
 });
+
+// --- wealthSyncAlert -----------------------------------------------------
+// Reported: the morning brief nagged for months that "Monarch MCP sync is
+// failing … transactions/income keep flowing via the backup sync" about an MCP
+// the user had already retired. Both halves were wrong — see wealthSyncAlert's
+// own comment. These pin the corrected behavior.
+const { wealthSyncAlert } = require('../src/intelligence/source-health');
+
+test('wealthSyncAlert: silent when the row is healthy', () => {
+  assert.equal(wealthSyncAlert({ id: 'monarch_mcp_sync', status: 'active', last_sync_at: hoursAgo(1) }), null);
+});
+
+test('wealthSyncAlert: silent on a failed run that still has fresh data', () => {
+  // THE nag. markSync does not advance last_sync_at on failure, so a fresh
+  // timestamp means a successful run already landed today's numbers and this
+  // failure changed nothing the user can act on before breakfast.
+  assert.equal(
+    wealthSyncAlert({ id: 'monarch_mcp_sync', status: 'error', last_error: 'Request failed with status code 502', last_sync_at: hoursAgo(3) }),
+    null
+  );
+});
+
+test('wealthSyncAlert: fires once the data actually goes stale', () => {
+  const a = wealthSyncAlert({ id: 'monarch_mcp_sync', status: 'error', last_error: 'Request failed with status code 502', last_sync_at: hoursAgo(30) });
+  assert.ok(a, 'a failing sync with no recent success is worth surfacing');
+  assert.equal(a.severity, 'warn');
+  assert.equal(a.source, 'monarch_mcp_sync');
+  assert.match(a.message, /Request failed with status code 502/, 'reports the real error');
+  assert.match(a.message, /last successful sync 30h ago/);
+});
+
+test('wealthSyncAlert: never blames MCP, never vouches for the backup', () => {
+  // The two specific defects. The connector catches MCP failures and falls back,
+  // so an error here came from the FALLBACK — naming MCP points at the one thing
+  // that cannot be the cause, and promising the backup is fine is false exactly
+  // when this fires, because the backup is what threw.
+  const a = wealthSyncAlert({ id: 'monarch_mcp_sync', status: 'error', last_error: 'Request failed with status code 502', last_sync_at: hoursAgo(30) });
+  assert.doesNotMatch(a.message, /MCP/i);
+  assert.doesNotMatch(a.message, /backup sync/i);
+  assert.doesNotMatch(a.message, /keep flowing/i);
+  assert.doesNotMatch(a.message, /budget-vs-spending/i);
+});
+
+test('wealthSyncAlert: escalates to high when it has been failing for days', () => {
+  const a = wealthSyncAlert({ id: 'monarch_mcp_sync', status: 'error', last_error: 'boom', last_sync_at: hoursAgo(120) });
+  assert.equal(a.severity, 'high');
+});
+
+test('wealthSyncAlert: a never-successful sync is high severity and says so', () => {
+  const a = wealthSyncAlert({ id: 'monarch_mcp_sync', status: 'error', last_error: 'boom', last_sync_at: null });
+  assert.equal(a.severity, 'high');
+  assert.match(a.message, /never completed a successful run/);
+});
+
+test('wealthSyncAlert: survives a missing error string rather than printing undefined', () => {
+  const a = wealthSyncAlert({ id: 'monarch_mcp_sync', status: 'error', last_error: null, last_sync_at: hoursAgo(30) });
+  assert.match(a.message, /unknown error/);
+  assert.doesNotMatch(a.message, /undefined|null/);
+});
+
+test('wealthSyncAlert: tolerates a missing row', () => {
+  assert.equal(wealthSyncAlert(null), null);
+  assert.equal(wealthSyncAlert(undefined), null);
+});

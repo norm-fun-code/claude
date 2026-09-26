@@ -2912,9 +2912,13 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
   // auto-sync (id 'monarch_mcp_sync') are independent connectors with
   // independent last_sync_at/status. Checking only 'monarch' meant that once
   // the daily Mac sync started working again, its fresh last_sync_at made
-  // this alert go permanently quiet — even while monarch_mcp_sync sat broken,
-  // silently losing budget-pacing data (GetBudget has no Mac/CSV fallback the
-  // way transactions/income do, so an MCP-only outage is otherwise invisible).
+  // this alert go permanently quiet — even while monarch_mcp_sync sat broken.
+  //
+  // The original reason given for the second check was that an MCP-only outage
+  // would otherwise be invisible (GetBudget has no Mac/CSV fallback the way
+  // transactions/income do). That turned out not to hold: the connector
+  // swallows MCP failures and falls back, so this row never sees one. See
+  // wealthSyncAlert for what it does signal, and why.
   const alerts = [];
   try {
     // monarchSrcForAlerts was already fetched once above (inside the wealth
@@ -2936,20 +2940,12 @@ async function buildFreshBriefing({ force = false, publish = true } = {}) {
         });
       }
     }
-    if (monarchMcpSrc?.status === 'error') {
-      alerts.push({
-        source: 'monarch_mcp_sync',
-        severity: 'warn',
-        // Surface the ACTUAL captured error (e.g. Monarch's own "MCP is
-        // temporarily paused" outage notice) when we have one, instead of a
-        // generic guess — this is a different failure mode from a stale/
-        // expired token and a different fix (nothing to reconnect; wait for
-        // Monarch), so don't tell the user to reconnect when that's not it.
-        message: monarchMcpSrc.last_error
-          ? `Monarch MCP sync is failing: ${String(monarchMcpSrc.last_error).slice(0, 200)} — budget-vs-spending comparisons are unavailable until this clears (transactions/income keep flowing via the backup sync).`
-          : 'Monarch MCP sync is failing — budget-vs-spending comparisons are unavailable until this clears (transactions/income keep flowing via the backup sync).',
-      });
-    }
+    // A failed run on this row means the whole wealth sync failed, not MCP
+    // alone — and it is only worth surfacing when recent data is missing too.
+    // Both judgments live in wealthSyncAlert (intelligence/source-health.js),
+    // which explains why the message this replaced was wrong in both halves.
+    const wealthAlert = require('../intelligence/source-health').wealthSyncAlert(monarchMcpSrc);
+    if (wealthAlert) alerts.push(wealthAlert);
   } catch (err) {
     console.error('[alerts] failed:', err.message);
   }
