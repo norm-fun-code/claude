@@ -8,6 +8,28 @@ const test = require('node:test');
 const { after } = test;
 const assert = require('node:assert/strict');
 const request = require('supertest');
+
+// Cap the build's own external-source and LLM timeouts before the app is built.
+// This test is about the LOCK, not the build, and it waits on a real build to
+// settle — so how long the build can stall is part of its contract.
+//
+// The defaults are 12s per external source and 90s per LLM call. This test used
+// to assume every source "fails fast" here because no credentials are set, and
+// for weather/calendar/Gemini/Anthropic that is true: they throw on the missing
+// key before making a request. Notion does not — the SDK client is constructed
+// happily and the HTTP call hangs until withTimeout fires at 12s, which is
+// LONGER than the window this test allowed for the lock to be released. So the
+// test failed on CI while passing locally, where that request is refused
+// quickly instead of hanging.
+//
+// Setting these makes the fail-fast premise TRUE rather than lucky, and covers
+// the LLM path too: if an API key ever reaches CI, a 90s generation would break
+// this test far more slowly for the same reason. Each integration file runs in
+// its own process, so this affects nothing else. Both are read per-build inside
+// buildFreshBriefing, so setting them here is picked up.
+process.env.BRIEFING_SOURCE_TIMEOUT_MS = '500';
+process.env.BRIEFING_LLM_TIMEOUT_MS = '500';
+
 const { buildTestApp, authHeader, closeDb } = require('./helpers');
 const db = require('../../src/db');
 
@@ -53,11 +75,17 @@ test('POST /briefing/rebuild starts (and the lock becomes free again once the bu
   assert.equal(res.body.state, 'building');
 
   // The route now calls buildFreshBriefing() directly (no more loopback HTTP)
-  // and releases the lock in a .finally() once that settles. In this test env
-  // every external source (Gemini/weather/calendar/Notion) fails fast but the
-  // build still runs its full best-effort sequence before returning, so poll
-  // for the lock instead of guessing a fixed delay.
-  const deadline = Date.now() + 10_000;
+  // and releases the lock in a .finally() once that settles. Every external
+  // source fails fast here (see the timeout caps at the top of this file), but
+  // the build still runs its full best-effort sequence against a real database
+  // before returning, so poll for the lock instead of guessing a fixed delay.
+  //
+  // The window is generous on purpose. A too-tight deadline does not fail when
+  // the lock leaks — it fails when a shared CI runner is slow, which is a flake
+  // that teaches you nothing. The real assertion is "released, not leaked", and
+  // waiting longer costs nothing on a passing run because the poll exits as
+  // soon as the lock is free.
+  const deadline = Date.now() + 60_000;
   let acquired = false;
   while (Date.now() < deadline) {
     const check = await db.pool.connect();
