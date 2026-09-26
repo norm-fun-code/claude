@@ -149,11 +149,47 @@ async function latest({ domain, metric, sources = null }) {
  *  timestamp before truncating; node-postgres then hydrates that back as a
  *  Date whose toISOString() reproduces the correct local YYYY-MM-DD, which is
  *  exactly what every caller's day-key extraction already expects. */
+
+// Watch-off exclusion, applied to every daily read below.
+//
+// A wrist-sensed metric does not go SILENT when the watch is off — it reads
+// near-ZERO, which is strictly worse: "barely moved" and "on the charger" are
+// indistinguishable in the spine, so an unworn day drags down step trends,
+// registers as an activity anomaly, and poisons any baseline computed over it.
+//
+// Gating HERE rather than in each consumer is deliberate. This is the one
+// funnel every daily read goes through (trends, anomalies, the evening
+// readiness load, the precedent engine's carried-in load, Ask), so a day marked
+// not-worn is excluded everywhere at once, and nothing downstream has to
+// remember to ask. The metric rows are never modified, so the toggle is
+// reversible and the raw HealthKit data stays auditable.
+//
+// Scoped three ways so it can only ever remove what it should: the metric must
+// be wrist-sensed, the source must be the watch itself, and the day must be
+// explicitly marked. A deliberately logged off-watch activity ('activity_est')
+// survives — that is the whole point of having it.
+const WRIST_METRICS_SQL = `(metric = ANY($WM::text[]) AND source = ANY($WS::text[])
+  AND (ts AT TIME ZONE $TZ)::date IN (SELECT local_day FROM watch_off_days))`;
+
+/** Builds the NOT(...) clause plus its params, or a no-op when this metric
+ *  can't be affected — so an ordinary read pays nothing for the feature. */
+function watchOffClause(metric, nextParamIndex, tzParamRef) {
+  const { WRIST_METRICS, WATCH_SOURCES } = require('./watchWear');
+  if (!WRIST_METRICS.includes(metric)) return { sql: '', params: [] };
+  const wm = `$${nextParamIndex}`;
+  const ws = `$${nextParamIndex + 1}`;
+  return {
+    sql: ` AND NOT ${WRIST_METRICS_SQL.replace('$WM', wm).replace('$WS', ws).replace('$TZ', tzParamRef)}`,
+    params: [WRIST_METRICS, WATCH_SOURCES],
+  };
+}
+
 async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSource = null, onlySource = null, tz = process.env.TZ || 'America/New_York' }) {
   const fn = ['avg', 'min', 'max', 'sum'].includes(agg) ? agg : 'avg';
   // excludeSource accepts a single source name (existing callers) or an array
   // (e.g. excluding both 'seed' and an additive-estimate source at once).
   const excludeArr = excludeSource == null ? null : Array.isArray(excludeSource) ? excludeSource : [excludeSource];
+  const off = watchOffClause(metric, 8, '$7');
   const { rows } = await query(
     `SELECT date_trunc('day', ts AT TIME ZONE $7) AS day, ${fn}(value) AS value
        FROM metrics
@@ -161,10 +197,10 @@ async function dailyAggregate({ domain, metric, from, to, agg = 'avg', excludeSo
         AND ($3::timestamptz IS NULL OR ts >= $3)
         AND ($4::timestamptz IS NULL OR ts <= $4)
         AND ($5::text[] IS NULL OR NOT (source = ANY($5)))
-        AND ($6::text IS NULL OR source = $6)
+        AND ($6::text IS NULL OR source = $6)${off.sql}
       GROUP BY day
       ORDER BY day ASC`,
-    [domain, metric, from ?? null, to ?? null, excludeArr, onlySource ?? null, tz]
+    [domain, metric, from ?? null, to ?? null, excludeArr, onlySource ?? null, tz, ...off.params]
   );
   return rows;
 }
@@ -192,6 +228,10 @@ async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg
   // Bucketed by LOCAL calendar day (AT TIME ZONE tz) — same reasoning as
   // dailyAggregate above: an evening reading must land on the day it
   // actually happened, not the UTC day.
+  // Same watch-off exclusion as dailyAggregate — this function is the other
+  // daily-read funnel (recovery, precedent, analyze), so leaving it ungated
+  // would let an unworn day back in through the side door.
+  const off = watchOffClause(metric, 7, '$6');
   const { rows } = await query(
     `WITH per_day_source AS (
        SELECT
@@ -208,7 +248,7 @@ async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg
       WHERE domain = $1 AND metric = $2
         AND ($3::timestamptz IS NULL OR ts >= $3)
         AND ($4::timestamptz IS NULL OR ts <= $4)
-        AND ($5::text[] IS NULL OR source = ANY($5))
+        AND ($5::text[] IS NULL OR source = ANY($5))${off.sql}
       GROUP BY day, source
      ),
      best_per_day AS (
@@ -220,7 +260,7 @@ async function dailyAggregatePreferSource({ domain, metric, from, to, agg = 'avg
      FROM per_day_source p
      JOIN best_per_day b ON p.day = b.day AND p.priority = b.best_priority
      ORDER BY p.day ASC`,
-    [domain, metric, from ?? null, to ?? null, sources ?? null, tz]
+    [domain, metric, from ?? null, to ?? null, sources ?? null, tz, ...off.params]
   );
   return rows;
 }

@@ -25,6 +25,7 @@ const { createSpineRouter } = require('./routes/spine');
 const { createDiagnosticsRouter } = require('./routes/diagnostics');
 const { createRecoveryRouter } = require('./routes/recovery');
 const { createPrecedentRouter } = require('./routes/precedent');
+const { createWatchWearRouter } = require('./routes/watch-wear');
 const { createDisagreementRouter } = require('./routes/disagreement');
 const { createBeliefsRouter } = require('./routes/beliefs');
 const { createMemoryRouter } = require('./routes/memory');
@@ -149,6 +150,9 @@ function createApp({ bootTime, port, quiet } = {}) {
   // Standalone (not folded into the briefing build) on purpose; see the
   // module header in src/routes/precedent.js.
   app.use('/api', createPrecedentRouter());
+  // "I didn't wear my Apple Watch today" — records exceptions to the default,
+  // which gate that day's wrist-sensed readings out of every daily read.
+  app.use('/api', createWatchWearRouter());
   // The one surface that tells you what you don't want to hear — a goal you
   // have set repeatedly and repeatedly marked missed, from your own weekly
   // reviews. See src/intelligence/disagreement.js.

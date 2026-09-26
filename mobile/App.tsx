@@ -51,6 +51,7 @@ import { NightContextCard } from './src/components/NightContextCard';
 import { SleepCheckInCard } from './src/components/SleepCheckInCard';
 import { HealthStateCard } from './src/components/HealthStateCard';
 import { HealthCard } from './src/components/HealthCard';
+import { WatchWearCard } from './src/components/WatchWearCard';
 import { TrainingSummaryCard } from './src/components/TrainingSummaryCard';
 import { WorthKnowingCard } from './src/components/WorthKnowingCard';
 import { TrainingScreen } from './src/components/TrainingScreen';
@@ -89,6 +90,7 @@ import { WORKOUT_OVERRIDE_URL, CHIEF_BRIEF_REBUILD_URL, INSIGHT_DISMISS_URL, WEE
 import { useDailyLogStatus } from './src/hooks/useDailyLogStatus';
 import { useCommitments } from './src/hooks/useCommitments';
 import { usePrecedent } from './src/hooks/usePrecedent';
+import { useWatchWear } from './src/hooks/useWatchWear';
 import { useDisagreement } from './src/hooks/useDisagreement';
 import { NextMove, NextMoveCard } from './src/components/NextMove';
 import { useFocusSession } from './src/hooks/useFocusSession';
@@ -301,6 +303,11 @@ export default function App() {
   // whenever the server's evidence gates aren't met, so there is no loading
   // or empty state to account for here.
   const precedent = usePrecedent();
+  // "Wore my Apple Watch today" — on by default. Marking it off gates that
+  // day's wrist-sensed readings out of every daily read server-side, so the
+  // Health tab is the right home for it: that is where you notice the numbers
+  // look wrong.
+  const watchWear = useWatchWear();
   // The disagreement surface — usually nothing. Fetched independently for the
   // same reason as precedent, and self-hiding for a stronger one: a card that
   // appeared daily to say it had no criticism today would be its own kind of
@@ -748,6 +755,7 @@ export default function App() {
                 the recovery hero so the actual vitals behind "Ready"/"Recover"
                 are visible without a second tap. */}
             <HealthCard health={health} canonicalVo2={vo2Fact} />
+            <WatchWearCard worn={watchWear.worn} onChange={watchWear.set} saving={watchWear.saving} />
             <TrainingSummaryCard
               effectiveWorkout={currentEffectiveWorkout}
               refreshKey={trainingRefreshGen}

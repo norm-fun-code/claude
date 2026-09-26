@@ -131,6 +131,11 @@ export const SOURCES_FRESHNESS_URL = `${API_BASE}/api/sources/freshness`;
 // metrics spine, and what actually happened after them. Standalone (not a
 // briefing field) on purpose; see backend/src/routes/precedent.js.
 export const PRECEDENT_URL = `${API_BASE}/api/precedent`;
+// "I didn't wear my Apple Watch today." Wearing it is the default, so this
+// records EXCEPTIONS; a marked day's wrist-sensed readings (steps, active
+// energy, exercise/mindful minutes) are gated out of every daily read
+// server-side. See backend/src/store/watchWear.js.
+export const WATCH_WEAR_URL = `${API_BASE}/api/watch-wear`;
 // The disagreement surface — a goal set repeatedly and repeatedly marked
 // missed, drawn from your own weekly reviews. Null (nothing to say) is the
 // normal answer. See backend/src/intelligence/disagreement.js.
