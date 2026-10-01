@@ -316,6 +316,47 @@ function livingCategoryOverride(p,category,yr,sy){
   return Number.isFinite(v)?Math.max(0,Math.round(v)):null;
 }
 
+// ── Budget rules ─────────────────────────────────────────────────────────────
+// A line can follow a RULE instead of the model's own working-out. A rule is a segment that
+// starts in a year and keeps applying until the next segment starts — which is how "set it
+// once and let it roll" works without a figure for every year.
+//   amount : a dollar figure for the year it starts, growing at expense inflation after that
+//   pct    : a share of that year's income, every year — it MOVES with income
+//   model  : go back to the model's figure from this year on
+// Precedence, most specific first: a pin for one named year (livingXxxY<i>), then the rule in
+// force that year, then the model. Income is known before spending is worked out, so a
+// percentage never has to guess at it — except charity, which also feeds the tax deduction;
+// that deduction stays on the baseline so the loop does not chase its own tail.
+const BUDGET_KINDS=['amount','pct','model'];
+function budgetSegment(p,category,yr){
+  const segs=p&&p.budgetRules&&p.budgetRules[category];
+  if(!Array.isArray(segs))return null;
+  let best=null;
+  for(const s of segs){
+    if(!s||!BUDGET_KINDS.includes(s.kind)||!Number.isFinite(Number(s.from))||Number(s.from)>yr)continue;
+    if(!best||Number(s.from)>=Number(best.from))best=s;
+  }
+  return best;
+}
+function budgetValue(p,category,yr,income){
+  const seg=budgetSegment(p,category,yr);
+  if(!seg||seg.kind==='model')return null;
+  const v=Number(seg.value);
+  if(!Number.isFinite(v)||v<0)return null;
+  if(seg.kind==='amount')return Math.round(v*(1+(Number(p.expenseInflation)||0))**(yr-Number(seg.from)));
+  const base=seg.basis==='gross'?income.gross:income.net;
+  return Math.max(0,Math.round(v*(Number(base)||0)));
+}
+// A recurring or one-time extra cost used only to ask "how much more could be spent?". It never
+// comes from a saved plan — the solver sets it on a copy — and without it nothing changes.
+function probeAdjFor(p,yr){
+  const v=Number(p&&p.headroomShift);
+  if(!Number.isFinite(v)||v===0)return 0;
+  const from=Number(p.headroomFrom),to=p.headroomTo==null?Infinity:Number(p.headroomTo);
+  if(yr<from||yr>to)return 0;
+  return Math.round(v*(1+(Number(p.expenseInflation)||0))**(yr-from));
+}
+
 // ── One-off spending, in the year it happens ─────────────────────────────────
 // Everything else on the expense side is a LEVEL or a RATE: a monthly rent, a grocery
 // baseline, an inflation assumption. All of them apply to every year, so there was no way to
@@ -602,9 +643,14 @@ function run(p,rets,compiledGrants){
     const cl=Math.round(sh*clShare);sh-=cl;
     const livRaw={groceries:gr,dining:di,shopping:sh,clothing:cl,vacations:va,auto:au,insurance:ins,
       misc:mi,entertainment:en,charity:ch,medical:md,transit:tr,utilities:ut};
+    // Where each line's figure came from, so a screen can say so instead of implying the
+    // model worked it out: a pin for this year, a budget rule, or the model itself.
+    const livSrc={};
     for(const category of LIV_KEYS){
       const exact=livingCategoryOverride(p,category,yr,sy);
-      if(exact!==null)livRaw[category]=exact;
+      if(exact!==null){livRaw[category]=exact;livSrc[category]='pin';continue}
+      const ruled=budgetValue(p,category,yr,{net:tax.net,gross:tax.gross});
+      if(ruled!==null){livRaw[category]=ruled;livSrc[category]='rule'}else livSrc[category]='model';
     }
     const roundParts=(o,f)=>{
       const out={};for(const k of LIV_KEYS)out[k]=Math.round(o[k]*f);
@@ -667,7 +713,7 @@ function run(p,rets,compiledGrants){
     // A one-off for this year alone — see expenseAdjFor. It is real spending, so it lands in
     // the total the cash waterfall and the net-flow figure are computed from, not in a note
     // beside it.
-    const eAdj=expenseAdjFor(p,yr,sy);
+    const eAdj=expenseAdjFor(p,yr,sy)+probeAdjFor(p,yr);
     const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu)+eAdj;
     // Same summing discipline: rounded components summed, never a rounded raw sum.
     const totEFull=Math.round(hFull)+Math.round(livFull)+Math.round(ccFull)+Math.round(tuFull)+eAdj;
@@ -792,7 +838,7 @@ function run(p,rets,compiledGrants){
     R.push({yr,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
-      liv:Math.round(liv),livParts,livFullParts,cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
+      liv:Math.round(liv),livParts,livFullParts,livSrc,cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
       // The WHOLE calendar year, stub or not. On a full year each equals its counterpart.
       // A table comparing a quarter of one year against all of the next answers nothing, so
       // these are what it shows; the projection still carries the remainder forward, and the
@@ -1090,7 +1136,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

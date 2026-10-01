@@ -29,6 +29,7 @@
 <script src="/demo-data.js"></script>
 <script src="/decisions.js"></script>
 <script src="/income-share.js"></script>
+<script src="/budget.js"></script>
 <script src="/rent-buy.js"></script>
 <script src="/decision-room.js"></script>
 <style>
@@ -2120,6 +2121,7 @@ function render(){
     if(_todayView==='watch')renderWatchTab(R,P);
     else if(_todayView==='holdings')renderPortfolioTab(R,P);
     else if(_todayView==='spending')renderSpendingTab(R,P);
+    else if(_todayView==='budget')renderBudgetTab(R,P);
     else if(_todayView==='overview')renderOverviewTab(R,P);
     else renderGoalsTab(R,P,tT);
     return;
@@ -3505,6 +3507,186 @@ function renderIncomeLens(R,actual){
     ${body}
     <p class="spend-caption">${foot}</p>
   </section>`;
+}
+
+// ── Budget ───────────────────────────────────────────────────────────────────
+// Every living line in one place, in the year being looked at: type a dollar figure or a
+// percentage, choose whether it is for this year or this year on, and see at once what the
+// plan can still afford. The figures live in the plan (budget rules, and the per-year pins the
+// Trajectory table writes), so scenarios, Compare and the advisor all see them.
+//
+// There is no savings target here, on purpose. This household saves hard early and draws down
+// later — tuition makes that the plan, not a failure — so the measure of a budget is HEADROOM:
+// how much more could be spent with liquid assets never below the reserve floor in any year.
+let _budgetYear=null,_budgetUnit='month',_budgetScope='onward',_budgetUndo=null,_budgetHead=null;
+const BD_COLOR={cash:'#7ae3c3',stock:'#8278ee',savings:'#ecc183',left:'#8bdded',save:'#7ae3c3',draw:'#ecc183'};
+function budgetYearSet(y){_budgetYear=Number(y);render()}
+function budgetYearStep(d,first,last){_budgetYear=Math.min(last,Math.max(first,(_budgetYear??PlannerTime.year())+d));render()}
+function budgetUnit(u){_budgetUnit=u;render()}
+function budgetScope(s){_budgetScope=s;render()}
+function budgetBasisKey(){return _planShareBasis==='gross'?'gross':'net'}
+function budgetApply(e,label){
+  _budgetUndo={label,before:e.before,notes:e.notes||[]};
+  P.budgetRules=e.budgetRules;
+  for(const [k,v] of Object.entries(e.pins)){if(v===null||v===undefined)delete P[k];else P[k]=v}
+  markDirty();buildControls();render();savePlannerState();
+}
+function budgetUndoLast(){
+  if(!_budgetUndo)return;
+  const b=_budgetUndo.before;
+  P.budgetRules=b.budgetRules;
+  for(const [k,v] of Object.entries(b.pins)){if(v===undefined)delete P[k];else P[k]=v}
+  _budgetUndo=null;markDirty();buildControls();render();savePlannerState();
+}
+function budgetCurrent(cat){
+  const yr=_budgetYear??PlannerTime.year();
+  const R=run(P).R,row=R.find(r=>r.yr===yr);
+  return{yr,row,R,annual:row?(row.livFullParts||{})[cat]||0:0,src:row&&row.livSrc?row.livSrc[cat]:'model'};
+}
+function budgetCommit(cat,text){
+  const cur=budgetCurrent(cat);
+  const input=PlannerBudget.parseInput(text,_budgetUnit);
+  if(input===null){showToast('Enter a dollar figure (1650 or 24k) or a percentage (8%).','red');render();return}
+  // Typing back the figure already shown is not an edit, and must not turn a model line into a rule.
+  if(input.kind==='amount'&&Math.abs(input.annual-cur.annual)<=(_budgetUnit==='month'?6:0.5)){render();return}
+  const e=PlannerBudget.edit(P,{category:cat,year:cur.yr,scope:_budgetScope,input,basis:budgetBasisKey(),income:{net:cur.row.netTC,gross:cur.row.gross}});
+  if(!e.ok){showToast(e.error,'red');render();return}
+  const word=input.kind==='clear'?'back to the model':input.kind==='pct'?`${(input.pct*100).toFixed(1).replace(/\.0$/,'')}% of ${budgetBasisKey()} income`:fmtF(_budgetUnit==='month'?Math.round(input.annual/12):input.annual)+(_budgetUnit==='month'?'/mo':'/yr');
+  budgetApply(e,`${LIV_LABEL[cat]||cat} → ${word}, ${_budgetScope==='year'?cur.yr+' only':'from '+cur.yr}`);
+}
+// Tie a line to income (it then moves with income every year), or fix it in dollars (it then
+// grows only with inflation). Either way from the year in view, at what it is now.
+function budgetTie(cat,tied){
+  const cur=budgetCurrent(cat),basis=budgetBasisKey(),base=basis==='gross'?cur.row.gross:cur.row.netTC;
+  const input=tied?{kind:'pct',pct:cur.annual/base,tied:true}:{kind:'amount',annual:cur.annual};
+  const e=PlannerBudget.edit(P,{category:cat,year:cur.yr,scope:'onward',input,basis,income:{net:cur.row.netTC,gross:cur.row.gross}});
+  if(e.ok)budgetApply(e,`${LIV_LABEL[cat]||cat} ${tied?'tied to '+basis+' income':'fixed in dollars'} from ${cur.yr}`);
+}
+function budgetReset(cat){
+  const cur=budgetCurrent(cat);
+  const e=PlannerBudget.edit(P,{category:cat,year:cur.yr,scope:cur.src==='pin'?'year':'onward',input:{kind:'clear'},basis:budgetBasisKey(),income:{net:cur.row.netTC,gross:cur.row.gross}});
+  if(e.ok)budgetApply(e,`${LIV_LABEL[cat]||cat} → back to the model${cur.src==='pin'?', '+cur.yr+' only':', from '+cur.yr}`);
+}
+function budgetGo(where){if(where==='housing'){_homeView='housing';setTab('home')}else setTab('inputs')}
+// The headroom solve runs the plan a few dozen times, so it is worth keeping until the plan or the year changes.
+function budgetHeadroom(yr){
+  const key=yr+'|'+JSON.stringify(P);
+  if(!_budgetHead||_budgetHead.key!==key)_budgetHead={key,val:PlannerBudget.headroom(P,run,yr)};
+  return _budgetHead.val;
+}
+function renderBudgetTab(R,P){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+  if(typeof PlannerBudget==='undefined'||typeof PlannerIncomeShare==='undefined'){ca.innerHTML='<p>The budget did not load. Refresh to try again.</p>';return}
+  const IS=PlannerIncomeShare,B=PlannerBudget,first=R[0].yr,last=R[R.length-1].yr;
+  const yr=Math.min(last,Math.max(first,_budgetYear??PlannerTime.year()));
+  const row=R.find(r=>r.yr===yr),mo=_budgetUnit==='month';
+  const unitWord=mo?'/mo':'/yr',per=v=>mo?Math.round(v/12):Math.round(v);
+  const amt=v=>fmtF(per(v)),amtShort=v=>fmt(per(v));
+  const basis=budgetBasisKey(),den=basis==='gross'?row.gross:row.netTC,pct=v=>den>0?_lensPct(v/den):'—';
+  const basisWord=basis==='gross'?'gross':'net';
+  const modelRow=run(B.modelPlan(P)).R.find(r=>r.yr===yr);
+  const f=B.funding(row),ph=B.phases(R),hd=budgetHeadroom(yr);
+  const tight=R.reduce((a,b)=>b.liq<a.liq?b:a);
+  const lbl='font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3)';
+  const chip=(on,click,text,dis)=>`<button type="button" class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}"${dis?' disabled':''} onclick="${click}">${text}</button>`;
+
+  // ── Header ──
+  const yrOptions=R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('');
+  let h=`<div class="bd">
+    <div class="bd-head"><div><div class="hero-eyebrow">Budget</div><h2>What each line gets, and whether the plan can afford it</h2></div>
+      <div class="ps-controls">
+        <div class="ps-year" role="group" aria-label="Budget year">
+          <button type="button" onclick="budgetYearStep(-1,${first},${last})" aria-label="Previous year"${yr<=first?' disabled':''}>‹</button>
+          <label><span class="ui-sr">Year</span><select onchange="budgetYearSet(this.value)">${yrOptions}</select></label>
+          <button type="button" onclick="budgetYearStep(1,${first},${last})" aria-label="Next year"${yr>=last?' disabled':''}>›</button></div>
+        <div class="spend-scope" role="group" aria-label="Show amounts per">${chip(mo,"budgetUnit('month')",'Monthly')}${chip(!mo,"budgetUnit('year')",'Annual')}</div>
+      </div></div>`;
+
+  // ── The shape of the plan ──
+  const years=R.length,tot=ph.reduce((t,p)=>t+p.years,0)||1;
+  h+=`<section class="cp-card bd-phases"><div class="ps-head"><div><h3>The shape of the plan</h3><p>Saving hard first and drawing down later is the plan, not a problem. Click a stretch to jump to it.</p></div></div>
+    <div class="bd-phasebar">${ph.map(p=>`<button type="button" class="bd-phase ${p.kind}${yr>=p.from&&yr<=p.to?' on':''}" style="flex:${p.years}" onclick="budgetYearSet(${p.from})" title="${p.kind==='save'?'Adding to savings':'Drawing on savings and Stripe'} ${p.from}–${p.to}: ${p.total>=0?'+':'−'}${fmt(Math.abs(p.total))}">
+        <span>${p.kind==='save'?'Saving':'Drawing down'}</span><b>${p.from===p.to?p.from:p.from+'–'+String(p.to).slice(2)}</b><small>${p.total>=0?'+':'−'}${fmt(Math.abs(p.total))}</small></button>`).join('')}
+      <i class="bd-here" style="left:${((yr-first+.5)/years*100).toFixed(2)}%" aria-hidden="true"></i></div></section>`;
+
+  // ── Headroom ──
+  const ho=hd.ongoing.value,once=hd.once.value,st=hd.stress.ongoing.value;
+  const signed=v=>(v>=0?'+':'−')+amtShort(Math.abs(v));
+  let hero;
+  if(ho===null){
+    hero=`<div class="bd-hero short"><div style="${lbl}">Headroom</div><div class="bd-big">Over budget</div>
+      <p>Even a much leaner budget would not keep liquid assets above your ${fmt(hd.floor)} floor${hd.breachYear?` — it first falls below in <strong>${hd.breachYear}</strong>`:''}. The levers are income, the purchase year and the floor itself.</p></div>`;
+  }else if(ho<0){
+    hero=`<div class="bd-hero short"><div style="${lbl}">Headroom</div><div class="bd-big">${signed(ho)}<small>${unitWord}</small></div>
+      <p>The plan runs out of room: liquid assets fall below your ${fmt(hd.floor)} floor${hd.breachYear?` in <strong>${hd.breachYear}</strong>`:''}. Spending about <strong>${amtShort(-ho)}${unitWord}</strong> less from ${yr} on mends it.</p></div>`;
+  }else{
+    hero=`<div class="bd-hero"><div style="${lbl}">Headroom from ${yr}</div><div class="bd-big">${signed(ho)}<small>${unitWord}</small></div>
+      <p>You could spend this much more, every year from ${yr} on and rising with inflation, and liquid assets would still never fall below your ${fmt(hd.floor)} floor. It moves as you edit the lines below.</p></div>`;
+  }
+  const stat=(k,v,sub)=>`<div class="bd-stat"><span>${k}</span><strong>${v}</strong>${sub?`<small>${sub}</small>`:''}</div>`;
+  h+=`<section class="cp-card bd-headroom">${hero}<div class="bd-stats">
+    ${once!==null?stat('Or, once',`${signed(once)}`,`extra in ${yr} alone`):''}
+    ${st!==null?stat('If Stripe grows 3 pts slower',`${signed(st)}${unitWord}`,'same test, weaker stock'):stat('If Stripe grows 3 pts slower','—','plan would not hold')}
+    ${stat('Tightest year',String(tight.yr),`liquid ${fmt(tight.liq)}`)}
+  </div></section>`;
+
+  // ── Where this year's money comes from ──
+  const seg=[['cash','Cash pay',f.fromCash],['stock','Stripe stock',f.fromStock],['savings','Savings',f.fromSavings],['left','Left over',f.leftover]].filter(s=>s[2]>0);
+  const ftot=seg.reduce((t,s)=>t+s[2],0)||1;
+  h+=`<section class="cp-card bd-fund"><div class="ps-head"><div><h3>Where ${yr}'s spending comes from</h3>
+    <p>${fmt(f.spend)} of spending against ${fmt(f.cash+f.stock)} of net income (${fmt(f.cash)} cash pay${f.stock?` + ${fmt(f.stock)} Stripe stock`:''}).</p></div></div>
+    <div class="ps-bar" role="img" aria-label="${yr} spending is paid ${seg.map(s=>s[1]+' '+fmt(s[2])).join(', ')}">${seg.map(s=>`<span style="width:${(s[2]/ftot*100).toFixed(2)}%;background:${BD_COLOR[s[0]]}" title="${s[1]} · ${fmt(s[2])}"></span>`).join('')}</div>
+    <div class="cl-legend">${seg.map(s=>`<span><i style="background:${BD_COLOR[s[0]]}"></i>${s[1]} <b>${fmt(s[2])}</b></span>`).join('')}</div>
+    ${f.stockShare>=0.05?`<p class="bd-warn">${_lensPct(f.stockShare)} of ${yr}'s spending depends on Stripe stock you sell. It is the plan — but it is the part that moves with the share price.</p>`:''}
+    ${f.fromSavings>0?`<p class="bd-warn">${yr} draws ${fmt(f.fromSavings)} from savings.</p>`:''}</section>`;
+
+  // ── The lines ──
+  const modelParts=(modelRow&&modelRow.livFullParts)||{};
+  const line=(k,label,value,src,opts)=>{
+    const o=opts||{};
+    const tag=src==='rule'?'<span class="bd-tag rule">Rule</span>':src==='pin'?'<span class="bd-tag pin">Pinned</span>':'';
+    const m=modelParts[k],differs=(src==='rule'||src==='pin')&&m!=null&&Math.abs(m-value)>=1;
+    const seg=src==='rule'?budgetSegment(P,k,yr):null;
+    // A line the model worked out says nothing: thirteen copies of the same sentence is noise, and
+    // only a line someone changed has anything to explain.
+    const why=src==='rule'?B.describe(P,k,yr,fmtF):src==='pin'?`Set for ${yr} only`:'';
+    const inputHtml=o.readonly
+      ?`<strong class="bd-fixed">${amt(value)}<small>${unitWord}</small></strong>`
+      :`<span class="bd-edit"><input class="bd-input" id="bd_${k}" type="text" inputmode="decimal" value="${amt(value)}" aria-label="${advEscape(label)}, ${yr}, ${mo?'per month':'per year'}" onfocus="this.select()" onchange="budgetCommit('${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${unitWord}</small></span>`;
+    const actions=o.readonly?`<button type="button" class="bd-link" onclick="budgetGo('${o.go}')">${o.goLabel} →</button>`
+      :`${seg&&seg.kind==='pct'?`<button type="button" class="bd-link" onclick="budgetTie('${k}',false)">Fix in dollars</button>`:`<button type="button" class="bd-link" onclick="budgetTie('${k}',true)">Tie to income</button>`}${src!=='model'?`<button type="button" class="bd-link" onclick="budgetReset('${k}')">Reset</button>`:''}`;
+    return `<div class="bd-row" style="--tier:${o.color}">
+      <div class="cl-top"><span class="cl-name">${advEscape(label)}${tag}</span>${inputHtml}</div>
+      <div class="cl-track"><i style="width:${Math.max(1.5,(o.max>0?value/o.max:0)*100).toFixed(1)}%"></i></div>
+      <div class="cl-sub"><span>${pct(value)} of ${basisWord} income</span>${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}<span class="bd-actions">${actions}</span></div></div>`;
+  };
+  const living=row.livFullParts||{};
+  const c=IS.compute(row,'net');
+  const maxLine=Math.max(...Object.values(living),row.hFull,row.ccFull,row.tuFull,1);
+  const fixedExtra=[
+    ['housing','Housing',row.hFull,{go:'housing',goLabel:'Housing'}],
+    ['childcare','Childcare',row.ccFull,{go:'inputs',goLabel:'Inputs'}],
+    ['tuition','Tuition',row.tuFull,{go:'inputs',goLabel:'Inputs'}],
+  ];
+  const groups=c.tiers.map(t=>{
+    const keys=Object.keys(living).filter(k=>IS.tierOfLiving(k)===t.key);
+    const ro=t.key==='fixed'?fixedExtra.filter(x=>x[2]>0||x[0]==='housing'):[];
+    const total=keys.reduce((s,k)=>s+living[k],0)+ro.reduce((s,x)=>s+x[2],0);
+    const rows=[...ro.map(x=>line(x[0],x[1],x[2],'model',{readonly:true,go:x[3].go,goLabel:x[3].goLabel,color:PS_COLOR[t.key],max:maxLine})),
+      ...keys.sort((a,b)=>living[b]-living[a]).map(k=>line(k,LIV_LABEL[k]||k,living[k],(row.livSrc||{})[k]||'model',{color:PS_COLOR[t.key],max:maxLine}))].join('');
+    return `<div class="cl-group" style="--tier:${PS_COLOR[t.key]}"><div class="cl-ghead"><span><i></i>${advEscape(t.label)}</span><span class="cl-gtot">${pct(total)} <small>${amtShort(total)}${unitWord}</small></span></div>
+      <p class="cl-gnote">${advEscape(t.note)}</p><div class="cl-list">${rows}</div></div>`;
+  }).join('');
+  const oneOff=row.eAdj?`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off</span><span class="cl-gtot">${pct(Math.abs(row.eAdj))} <small>${row.eAdj<0?'−':''}${amtShort(Math.abs(row.eAdj))}${unitWord}</small></span></div></div>`:'';
+  const undo=_budgetUndo?`<div class="bd-undo" role="status"><span>${advEscape(_budgetUndo.label)}${_budgetUndo.notes.map(n=>` · your ${n.years.join(', ')} ${n.kind==='later-rule'?'change':'pin'}${n.years.length>1?'s':''} still apply${n.years.length>1?'':'s'}`).join('')}</span><button type="button" onclick="budgetUndoLast()">Undo</button></div>`:'';
+  h+=`<section class="cp-card bd-lines"><div class="ps-head"><div><h3>${yr} · line by line</h3><p>Type a dollar figure or a percentage over any line. A percentage is worked out against ${yr}'s ${basisWord} income and then held as dollars — or tie it to income and it follows income every year.</p></div>
+      <div class="ps-controls"><div class="spend-scope" role="group" aria-label="Edits apply to">${chip(_budgetScope==='onward',"budgetScope('onward')",`From ${yr} on`)}${chip(_budgetScope==='year',"budgetScope('year')",`${yr} only`)}</div>
+        <div class="spend-scope" role="group" aria-label="Share of">${chip(basis==='net',"planShareBasis('net')",'Net')}${chip(basis==='gross',"planShareBasis('gross')",'Gross')}</div></div></div>
+    ${undo}${groups}${oneOff}
+    <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section></div>`;
+  ca.innerHTML=h;
+  document.getElementById('summaries').innerHTML='';
 }
 
 function renderSpendingTab(R,P){
@@ -5696,7 +5878,7 @@ const SUB_VIEWS={
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','chart','Net worth'],['income','circle','Income & tax'],['cashflow','arrow','Cash flow'],['table','doc','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
-    views:[['overview','circle','Accounts'],['spending','card','Spending'],['holdings','chart','Holdings'],['plan','target','Goals'],['watch','bell','Watchlist']]},
+    views:[['overview','circle','Accounts'],['spending','card','Spending'],['budget','doc','Budget'],['holdings','chart','Holdings'],['plan','target','Goals'],['watch','bell','Watchlist']]},
 };
 let _stressMode=false;
 // ── Monte Carlo confidence band overlay (NW chart) ──
