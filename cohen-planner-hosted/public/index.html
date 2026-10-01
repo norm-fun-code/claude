@@ -28,6 +28,7 @@
 <script src="/advisor-tools.js"></script>
 <script src="/demo-data.js"></script>
 <script src="/decisions.js"></script>
+<script src="/income-share.js"></script>
 <script src="/rent-buy.js"></script>
 <script src="/decision-room.js"></script>
 <style>
@@ -3386,6 +3387,89 @@ function monthLabel(ym,{short=false}={}){
   return PlannerTime.formatDate(`${m[1]}-${m[2]}-01`,{month:short?'short':'long',year:'numeric'});
 }
 
+// ── Where your money goes, looking ahead ─────────────────────────────────────
+// The records show what was spent. This shows what the PLAN says a chosen year will cost, as a
+// share of that year's income — so fixed commitments can be weighed against everything else
+// before they are signed up for, not after.
+let _planShareYear=null,_planShareBasis='gross',_planShareOpen=new Set();
+const PS_COLOR={tax:'#6b7a90',pretax:'#8ebfff',fixed:'#8278ee',essential:'#8bdded',choice:'#ecc183',oneoff:'#b6a8ff',left:'#7ae3c3',short:'#ff9caf'};
+function planShareSet(y){_planShareYear=Number(y);render()}
+function planShareStep(d,first,last){_planShareYear=Math.min(last,Math.max(first,(_planShareYear??first)+d));render()}
+function planShareBasis(b){_planShareBasis=b;render()}
+function planShareToggle(k){if(_planShareOpen.has(k))_planShareOpen.delete(k);else _planShareOpen.add(k);render()}
+function renderPlanShareCard(R){
+  if(typeof PlannerIncomeShare==='undefined'||!R||!R.length)return '';
+  const IS=PlannerIncomeShare,first=R[0].yr,last=R[R.length-1].yr;
+  const yr=Math.min(last,Math.max(first,_planShareYear??(PlannerTime.year()+1)));
+  const row=R.find(r=>r.yr===yr),c=IS.compute(row,_planShareBasis);
+  if(!c)return '';
+  const base=yr!==first?IS.compute(R[0],_planShareBasis):null;
+  const pct=x=>(x*100).toFixed(1)+'%';
+  const pp=d=>Math.abs(d)<.0005?'—':(d>0?'+':'−')+(Math.abs(d)*100).toFixed(1)+' pt';
+  const net=c.basis==='net';
+  const tier=k=>c.tiers.find(t=>t.key===k);
+  const fixed=tier('fixed'),essential=tier('essential'),choice=tier('choice');
+
+  // The bar is scaled to income, or to spending when spending is more — with a marker where
+  // income ends, so a deficit year reads as a bar that runs past the line rather than shares
+  // that quietly add to more than 100%.
+  const total=c.segments.reduce((t,s)=>t+s.value,0)||1;
+  const bar=c.segments.filter(s=>s.value>0).map(s=>`<span style="width:${(s.value/total*100).toFixed(3)}%;background:${PS_COLOR[s.key]}" title="${advEscape(s.label)} · ${pct(s.share)}"></span>`).join('');
+  const marker=c.overspent?`<i class="ps-income-mark" style="left:${(c.denom/total*100).toFixed(2)}%" title="Income ends here"></i>`:'';
+
+  const basisWord=net?'after-tax income':'gross income';
+  const headline=c.overspent
+    ?`In ${yr} the plan spends <strong>${fmt(-c.left)}</strong> more than it takes home — <strong>${pct(-c.left/c.denom)}</strong> of ${basisWord} comes from savings or Stripe.`
+    :`In ${yr}, <strong>${pct(fixed.share)}</strong> of ${basisWord} is fixed commitments, <strong>${pct(essential.share)}</strong> everyday essentials and <strong>${pct(choice.share)}</strong> discretionary${c.left>0?` — leaving <strong>${pct(c.left/c.denom)}</strong>.`:'.'}`;
+  const tile=(label,v,share,col,sub)=>`<div class="ps-tile"><span><i style="background:${col}"></i>${label}</span><strong>${pct(share)}</strong><small>${fmt(v)}${sub?' · '+sub:''}</small></div>`;
+  const tiles=[
+    ...(net?[]:[tile('Taxes',c.tax,c.tax/c.denom,PS_COLOR.tax),tile('401(k) & deductions',c.pretax,c.pretax/c.denom,PS_COLOR.pretax)]),
+    tile('Fixed',fixed.value,fixed.share,PS_COLOR.fixed),
+    tile('Essentials',essential.value,essential.share,PS_COLOR.essential),
+    tile('Discretionary',choice.value,choice.share,PS_COLOR.choice),
+    ...(c.oneOff?[tile('One-off',c.oneOff,c.oneOff/c.denom,PS_COLOR.oneoff)]:[]),
+    tile(c.overspent?'Beyond income':'Left over',Math.abs(c.left),Math.abs(c.left)/c.denom,c.overspent?PS_COLOR.short:PS_COLOR.left),
+  ].join('');
+
+  const cmp=(k,list)=>{
+    if(!base)return '<td></td>';
+    const b=list(base);return `<td class="ps-cmp">${pct(b)}</td>`;
+  };
+  const trs=c.tiers.map(t=>{
+    const open=_planShareOpen.has(t.key);
+    const bt=base&&base.tiers.find(x=>x.key===t.key);
+    let h=`<tr class="ps-tier" onclick="planShareToggle('${t.key}')" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();planShareToggle('${t.key}')}" aria-expanded="${open}">
+      <td><span class="ps-tn"><i style="background:${PS_COLOR[t.key]}"></i>${t.label} <small>${open?'▾':'▸'}</small></span></td><td>${fmt(t.value)}</td><td>${pct(t.share)}</td>${base?`<td class="ps-cmp">${pct(bt.share)}<small>${pp(t.share-bt.share)}</small></td>`:''}</tr>`;
+    if(open){
+      h+=`<tr class="ps-note"><td colspan="${base?4:3}">${advEscape(t.note)}</td></tr>`;
+      for(const l of t.lines.slice().sort((a,b)=>b.value-a.value)){
+        const bl=base&&base.tiers.find(x=>x.key===t.key).lines.find(x=>x.key===l.key);
+        h+=`<tr class="ps-line"><td>${advEscape(l.label)}</td><td>${fmt(l.value)}</td><td>${pct(l.share)}</td>${base?`<td class="ps-cmp">${bl?pct(bl.share):'—'}</td>`:''}</tr>`;
+      }
+    }
+    return h;
+  }).join('');
+  const yrOptions=R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('');
+  const chip=(b,l)=>`<button class="spend-scope-chip${_planShareBasis===b?' is-on':''}" aria-pressed="${_planShareBasis===b}" onclick="planShareBasis('${b}')">${l}</button>`;
+  return `<section class="cp-card ps-card">
+    <div class="ps-head"><div><h3>Where your money goes · looking ahead</h3>
+      <p>What the plan says ${yr} costs, as a share of that year's income. Projected, not imported.</p></div>
+      <div class="ps-controls">
+        <div class="ps-year" role="group" aria-label="Year to look at">
+          <button type="button" onclick="planShareStep(-1,${first},${last})" aria-label="Previous year"${yr<=first?' disabled':''}>‹</button>
+          <label><span class="ui-sr">Year</span><select onchange="planShareSet(this.value)">${yrOptions}</select></label>
+          <button type="button" onclick="planShareStep(1,${first},${last})" aria-label="Next year"${yr>=last?' disabled':''}>›</button>
+        </div>
+        <div class="spend-scope" role="group" aria-label="Share of">${chip('gross','Gross income')}${chip('net','After tax')}</div>
+      </div></div>
+    <p class="ps-headline">${headline}</p>
+    <div class="ps-bar" role="img" aria-label="${yr} income split: ${c.segments.map(s=>s.label+' '+pct(s.share)).join(', ')}">${bar}${marker}</div>
+    <div class="ps-tiles">${tiles}</div>
+    <div class="tw" style="max-height:none"><table class="ps-table"><thead><tr><th>${yr}</th><th>Amount</th><th>Share</th>${base?`<th>${first}</th>`:''}</tr></thead><tbody>${trs}</tbody></table></div>
+    <p class="spend-caption">Click a group to see what is in it. Income counts Stripe stock at its vest value; ${net?'after-tax is what is left once tax, 401(k) and benefits are taken out':'taxes and 401(k)/benefits come off first'}. Which lines count as fixed is a judgement — the groups are listed when opened.${c.overspent?' The marker on the bar is where income ends.':''}</p>
+  </section>`;
+}
+
 function renderSpendingTab(R,P){
   let spendingViz=null;
   const ca=document.getElementById('chartArea');
@@ -3399,6 +3483,7 @@ function renderSpendingTab(R,P){
   let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px" class="spending-workspace">`;
 
   h+=paceCard(d.pace);
+  h+=renderPlanShareCard(R);
 
   // ── Freshness and coverage, before any number that depends on them ──
   const nTx=st.transactions||0;
