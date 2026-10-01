@@ -1671,7 +1671,7 @@ function expDetailRow(r,span,stub){
       <small class="exp-pct" title="Share of ${basisWord}">${pc}</small>
       ${pinned?`<button type="button" class="exp-reset" title="Back to the model's figure" aria-label="Reset ${lbl} for ${r.yr}" onclick="expCatReset(${r.yr},'${k}')">↺</button>`:''}</div>`;
   };
-  const basisChip=(b,l)=>`<button type="button" class="spend-scope-chip${_planShareBasis===b?' is-on':''}" aria-pressed="${_planShareBasis===b}" onclick="planShareBasis('${b}')">${l}</button>`;
+  const basisChip=(b,l)=>{const on=b==='gross'?gross:!gross;return `<button type="button" class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}" onclick="planShareBasis('${b}')">${l}</button>`};
   return `<tr class="exp-detail"><td colspan="${span}"><div class="exp-detail-in">
     <div class="exp-basis"><span>Show each as a share of</span><div class="spend-scope" role="group" aria-label="Share of">${basisChip('net','Net income')}${basisChip('gross','Gross income')}</div></div>
     <div class="exp-parts">
@@ -3397,128 +3397,113 @@ function monthLabel(ym,{short=false}={}){
   return PlannerTime.formatDate(`${m[1]}-${m[2]}-01`,{month:short?'short':'long',year:'numeric'});
 }
 
-// ── Where your money goes, looking ahead ─────────────────────────────────────
-// The records show what was spent. This shows what the PLAN says a chosen year will cost, as a
-// share of that year's income — so fixed commitments can be weighed against everything else
-// before they are signed up for, not after.
-let _planShareYear=null,_planShareBasis='net',_planShareOpen=new Set();
+// ── Categories against your income — what was, and what the plan says will be ──
+// One card, one visual language, two sources. ACTUAL reads the imported records for the period
+// chosen above; PLAN reads any year of the projection and groups it the way the decision is made:
+// fixed commitments, everyday essentials, discretionary, one-offs, and what is left.
+//
+// Each line is a share of net income, gross income or spending — one sets the bars, the other two
+// sit beneath. Net is the default: tax is not spent, so a share of take-home is the one that
+// answers "can we afford this". The basis is shared with the Trajectory table's expense rows.
+//
+// The plan's lines are grouped and the ledger's are not, on purpose. Monarch's categories are the
+// bank's, not the plan's — "Auto & Transport" is a lease and a tank of petrol — and guessing at
+// which are fixed would put a confident label on a guess.
+let _planShareYear=null,_planShareBasis='net',_lensMode='actual';
 const PS_COLOR={tax:'#6b7a90',pretax:'#8ebfff',fixed:'#8278ee',essential:'#8bdded',choice:'#ecc183',oneoff:'#b6a8ff',left:'#7ae3c3',short:'#ff9caf'};
 function planShareSet(y){_planShareYear=Number(y);render()}
 function planShareStep(d,first,last){_planShareYear=Math.min(last,Math.max(first,(_planShareYear??first)+d));render()}
 function planShareBasis(b){_planShareBasis=b;render()}
-function planShareToggle(k){if(_planShareOpen.has(k))_planShareOpen.delete(k);else _planShareOpen.add(k);render()}
-function renderPlanShareCard(R){
+function lensMode(m){_lensMode=m;render()}
+const _lensWord={spend:'of spending',net:'of net income',gross:'of gross income'};
+const _lensPct=x=>x>=0.1?(x*100).toFixed(0)+'%':(x*100).toFixed(1)+'%';
+function _lensRow(name,value,sh,basis,max,color,extra){
+  const others=['spend','net','gross'].filter(b=>b!==basis&&sh[b]!=null);
+  return `<div class="cl-row${extra&&extra.muted?' cl-muted':''}"${color?` style="--tier:${color}"`:''}>
+    <div class="cl-top"><span class="cl-name">${advEscape(name)}</span><span class="cl-pct">${_lensPct(sh[basis])}<small>${_lensWord[basis]}</small></span></div>
+    <div class="cl-track"><i style="width:${Math.max(1.5,sh[basis]/max*100).toFixed(1)}%"></i></div>
+    <div class="cl-sub"><span>${fmt(value)}</span>${others.map(b=>`<span>${_lensPct(sh[b])} ${_lensWord[b]}</span>`).join('')}${extra&&extra.note?`<span class="cl-then">${extra.note}</span>`:''}</div>
+  </div>`;
+}
+function renderIncomeLens(R,actual){
   if(typeof PlannerIncomeShare==='undefined'||!R||!R.length)return '';
   const IS=PlannerIncomeShare,first=R[0].yr,last=R[R.length-1].yr;
-  const yr=Math.min(last,Math.max(first,_planShareYear??(PlannerTime.year()+1)));
-  const row=R.find(r=>r.yr===yr),c=IS.compute(row,_planShareBasis);
-  if(!c)return '';
-  const base=yr!==first?IS.compute(R[0],_planShareBasis):null;
-  const pct=x=>(x*100).toFixed(1)+'%';
-  const pp=d=>Math.abs(d)<.0005?'—':(d>0?'+':'−')+(Math.abs(d)*100).toFixed(1)+' pt';
-  const net=c.basis==='net';
-  const tier=k=>c.tiers.find(t=>t.key===k);
-  const fixed=tier('fixed'),essential=tier('essential'),choice=tier('choice');
+  const mode=actual?_lensMode:'plan';
+  const basisWanted=_planShareBasis;
+  let body='',headline='',foot='',haveIncome=true,ctl='';
 
-  // The bar is scaled to income, or to spending when spending is more — with a marker where
-  // income ends, so a deficit year reads as a bar that runs past the line rather than shares
-  // that quietly add to more than 100%.
-  const total=c.segments.reduce((t,s)=>t+s.value,0)||1;
-  const bar=c.segments.filter(s=>s.value>0).map(s=>`<span style="width:${(s.value/total*100).toFixed(3)}%;background:${PS_COLOR[s.key]}" title="${advEscape(s.label)} · ${pct(s.share)}"></span>`).join('');
-  const marker=c.overspent?`<i class="ps-income-mark" style="left:${(c.denom/total*100).toFixed(2)}%" title="Income ends here"></i>`:'';
-
-  const basisWord=net?'net income':'gross income';
-  const headline=c.overspent
-    ?`In ${yr} the plan spends <strong>${fmt(-c.left)}</strong> more than it takes home — <strong>${pct(-c.left/c.denom)}</strong> of ${basisWord} comes from savings or Stripe.`
-    :`In ${yr}, <strong>${pct(fixed.share)}</strong> of ${basisWord} is fixed commitments, <strong>${pct(essential.share)}</strong> everyday essentials and <strong>${pct(choice.share)}</strong> discretionary${c.left>0?` — leaving <strong>${pct(c.left/c.denom)}</strong>.`:'.'}`;
-  const tile=(label,v,share,col,sub)=>`<div class="ps-tile"><span><i style="background:${col}"></i>${label}</span><strong>${pct(share)}</strong><small>${fmt(v)}${sub?' · '+sub:''}</small></div>`;
-  const tiles=[
-    ...(net?[]:[tile('Taxes',c.tax,c.tax/c.denom,PS_COLOR.tax),tile('401(k) & deductions',c.pretax,c.pretax/c.denom,PS_COLOR.pretax)]),
-    tile('Fixed',fixed.value,fixed.share,PS_COLOR.fixed),
-    tile('Essentials',essential.value,essential.share,PS_COLOR.essential),
-    tile('Discretionary',choice.value,choice.share,PS_COLOR.choice),
-    ...(c.oneOff?[tile('One-off',c.oneOff,c.oneOff/c.denom,PS_COLOR.oneoff)]:[]),
-    tile(c.overspent?'Beyond income':'Left over',Math.abs(c.left),Math.abs(c.left)/c.denom,c.overspent?PS_COLOR.short:PS_COLOR.left),
-  ].join('');
-
-  const cmp=(k,list)=>{
-    if(!base)return '<td></td>';
-    const b=list(base);return `<td class="ps-cmp">${pct(b)}</td>`;
-  };
-  const trs=c.tiers.map(t=>{
-    const open=_planShareOpen.has(t.key);
-    const bt=base&&base.tiers.find(x=>x.key===t.key);
-    let h=`<tr class="ps-tier" onclick="planShareToggle('${t.key}')" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();planShareToggle('${t.key}')}" aria-expanded="${open}">
-      <td><span class="ps-tn"><i style="background:${PS_COLOR[t.key]}"></i>${t.label} <small>${open?'▾':'▸'}</small></span></td><td>${fmt(t.value)}</td><td>${pct(t.share)}</td>${base?`<td class="ps-cmp">${pct(bt.share)}<small>${pp(t.share-bt.share)}</small></td>`:''}</tr>`;
-    if(open){
-      h+=`<tr class="ps-note"><td colspan="${base?4:3}">${advEscape(t.note)}</td></tr>`;
-      for(const l of t.lines.slice().sort((a,b)=>b.value-a.value)){
-        const bl=base&&base.tiers.find(x=>x.key===t.key).lines.find(x=>x.key===l.key);
-        h+=`<tr class="ps-line"><td>${advEscape(l.label)}</td><td>${fmt(l.value)}</td><td>${pct(l.share)}</td>${base?`<td class="ps-cmp">${bl?pct(bl.share):'—'}</td>`:''}</tr>`;
-      }
-    }
-    return h;
-  }).join('');
-  const yrOptions=R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('');
-  const chip=(b,l)=>`<button class="spend-scope-chip${_planShareBasis===b?' is-on':''}" aria-pressed="${_planShareBasis===b}" onclick="planShareBasis('${b}')">${l}</button>`;
-  return `<section class="cp-card ps-card">
-    <div class="ps-head"><div><h3>Where your money goes · looking ahead</h3>
-      <p>What the plan says ${yr} costs, as a share of that year's income. Projected, not imported.</p></div>
-      <div class="ps-controls">
-        <div class="ps-year" role="group" aria-label="Year to look at">
-          <button type="button" onclick="planShareStep(-1,${first},${last})" aria-label="Previous year"${yr<=first?' disabled':''}>‹</button>
-          <label><span class="ui-sr">Year</span><select onchange="planShareSet(this.value)">${yrOptions}</select></label>
-          <button type="button" onclick="planShareStep(1,${first},${last})" aria-label="Next year"${yr>=last?' disabled':''}>›</button>
-        </div>
-        <div class="spend-scope" role="group" aria-label="Share of">${chip('net','Net income')}${chip('gross','Gross income')}</div>
-      </div></div>
-    <p class="ps-headline">${headline}</p>
-    <div class="ps-bar" role="img" aria-label="${yr} income split: ${c.segments.map(s=>s.label+' '+pct(s.share)).join(', ')}">${bar}${marker}</div>
-    <div class="ps-tiles">${tiles}</div>
-    <div class="tw" style="max-height:none"><table class="ps-table"><thead><tr><th>${yr}</th><th>Amount</th><th>Share</th>${base?`<th>${first}</th>`:''}</tr></thead><tbody>${trs}</tbody></table></div>
-    <p class="spend-caption">Click a group to see what is in it. Income counts Stripe stock at its vest value; ${net?'net income is what is left once tax, 401(k) and benefits are taken out':'taxes and 401(k)/benefits come off first'}. Which lines count as fixed is a judgement — the groups are listed when opened.${c.overspent?' The marker on the bar is where income ends.':''}</p>
-  </section>`;
-}
-
-// ── What each category is, against income ────────────────────────────────────
-// A category total says how much; it does not say how much that is. Each line here is read
-// three ways — of spending, of net income, of gross income — and one of them sets the bars.
-// Net is the default: tax is not something you spend, so a share of take-home is the one that
-// answers "can we afford this".
-let _catLensBasis='net';
-function catLensBasis(b){_catLensBasis=b;render()}
-function renderCategoryLens(rows,complete,cov,closedTotal,R){
-  if(typeof PlannerIncomeShare==='undefined'||!rows||!rows.length||!(closedTotal>0))return '';
-  const inc=PlannerIncomeShare.periodIncome(complete,R,{partial:cov.partial,fraction:cov.fractionElapsed});
-  const pct=x=>x>=0.1?(x*100).toFixed(0)+'%':(x*100).toFixed(1)+'%';
-  const have=inc.ok;
-  const basis=have?_catLensBasis:'spend';
-  const share=(net)=>({spend:net/closedTotal,net:have?net/inc.net:null,gross:have?net/inc.gross:null});
-  const shown=rows.filter(r=>r.net>0).slice(0,12);
-  const rest=rows.filter(r=>r.net>0).slice(12).reduce((t,r)=>t+r.net,0);
-  const list=[...shown.map(r=>({name:r.name,net:r.net})),...(rest>0?[{name:'Everything smaller',net:rest,muted:true}]:[])];
-  const prim=list.map(l=>share(l.net)[basis]);
-  const max=Math.max(...prim,1e-9);
-  const word={spend:'of spending',net:'of net income',gross:'of gross income'};
-  const chip=(b,l)=>`<button type="button" class="spend-scope-chip${basis===b?' is-on':''}" aria-pressed="${basis===b}"${have||b==='spend'?'':' disabled'} onclick="catLensBasis('${b}')">${l}</button>`;
-  const lines=list.map((l,i)=>{
-    const sh=share(l.net),others=['spend','net','gross'].filter(b=>b!==basis&&sh[b]!=null);
-    return `<div class="cl-row${l.muted?' cl-muted':''}">
-      <div class="cl-top"><span class="cl-name">${advEscape(l.name)}</span>
-        <span class="cl-pct">${pct(prim[i])}<small>${word[basis]}</small></span></div>
-      <div class="cl-track"><i style="width:${Math.max(1.5,prim[i]/max*100).toFixed(1)}%"></i></div>
-      <div class="cl-sub"><span>${fmt(l.net)}</span>${others.map(b=>`<span>${pct(sh[b])} ${word[b]}</span>`).join('')}</div>
-    </div>`;
-  }).join('');
-  const head=have
-    ?`Over this period you spent <strong>${fmt(closedTotal)}</strong> — <strong>${pct(closedTotal/inc.net)}</strong> of net income, <strong>${pct(closedTotal/inc.gross)}</strong> of gross.`
-    :`Over this period you spent <strong>${fmt(closedTotal)}</strong>. Income shares need the plan to cover these months.`;
+  if(mode==='actual'){
+    const {rows,complete,cov,closedTotal}=actual;
+    const inc=IS.periodIncome(complete,R,{partial:cov.partial,fraction:cov.fractionElapsed});
+    haveIncome=inc.ok;
+    const basis=haveIncome?basisWanted:'spend';
+    const share=net=>({spend:net/closedTotal,net:haveIncome?net/inc.net:null,gross:haveIncome?net/inc.gross:null});
+    const pos=rows.filter(r=>r.net>0);
+    const list=[...pos.slice(0,12).map(r=>({name:r.name,net:r.net})),...(pos.length>12?[{name:'Everything smaller',net:pos.slice(12).reduce((t,r)=>t+r.net,0),muted:true}]:[])];
+    const max=Math.max(...list.map(l=>share(l.net)[basis]),1e-9);
+    body=`<div class="cl-list">${list.map(l=>_lensRow(l.name,l.net,share(l.net),basis,max,null,{muted:l.muted})).join('')}</div>`;
+    headline=haveIncome
+      ?`Over this period you spent <strong>${fmt(closedTotal)}</strong> — <strong>${_lensPct(closedTotal/inc.net)}</strong> of net income, <strong>${_lensPct(closedTotal/inc.gross)}</strong> of gross.`
+      :`Over this period you spent <strong>${fmt(closedTotal)}</strong>. Income shares need the plan to cover these months.`;
+    foot=haveIncome
+      ?'Same period as the chart above, net of refunds. Income is the plan\'s figure for the same months, not your deposits — the ledger records what landed in accounts, not gross pay or Stripe vests. Net is after tax, 401(k) and benefits.'
+      :'The plan does not cover every month in this period, so income-based shares are hidden rather than guessed.';
+  }else{
+    const yr=Math.min(last,Math.max(first,_planShareYear??(PlannerTime.year()+1)));
+    const row=R.find(r=>r.yr===yr);
+    const basis=basisWanted;
+    const c=IS.compute(row,basis);
+    if(!c)return '';
+    const cNet=IS.compute(row,'net'),cGross=IS.compute(row,'gross');
+    const baseRow=yr!==first?R[0]:null,bc=baseRow&&IS.compute(baseRow,basis);
+    const sh=v=>({spend:c.spend>0?v/c.spend:null,net:cNet?v/cNet.denom:null,gross:cGross?v/cGross.denom:null});
+    const all=c.tiers.flatMap(t=>t.lines);
+    const max=Math.max(...all.map(l=>sh(l.value)[basis]),c.oneOff?Math.abs(sh(c.oneOff)[basis]):0,1e-9);
+    const then=(tierKey,key)=>{
+      if(!bc)return '';
+      const l=bc.tiers.find(t=>t.key===tierKey).lines.find(x=>x.key===key);
+      return l?`${_lensPct(l.share)} in ${first}`:'';
+    };
+    // The year's shape in one bar, then each group opened beneath it.
+    const total=c.segments.reduce((t,s)=>t+s.value,0)||1;
+    const segs=c.segments.filter(s=>s.value>0);
+    const bar=`<div class="ps-bar" role="img" aria-label="${yr} split: ${segs.map(s=>s.label+' '+_lensPct(s.share)).join(', ')}">${segs.map(s=>`<span style="width:${(s.value/total*100).toFixed(3)}%;background:${PS_COLOR[s.key]}" title="${advEscape(s.label)} · ${_lensPct(s.share)}"></span>`).join('')}${c.overspent?`<i class="ps-income-mark" style="left:${(c.denom/total*100).toFixed(2)}%" title="Income ends here"></i>`:''}</div>
+      <div class="cl-legend">${segs.map(s=>`<span><i style="background:${PS_COLOR[s.key]}"></i>${advEscape(s.label)} <b>${_lensPct(s.share)}</b></span>`).join('')}</div>`;
+    const groups=c.tiers.map(t=>{
+      const lines=t.lines.slice().sort((a,b)=>b.value-a.value);
+      if(!lines.length)return '';
+      const tsh=sh(t.value);
+      return `<div class="cl-group" style="--tier:${PS_COLOR[t.key]}">
+        <div class="cl-ghead"><span><i></i>${advEscape(t.label)}</span><span class="cl-gtot">${_lensPct(tsh[basis])} <small>${fmt(t.value)}</small></span></div>
+        <p class="cl-gnote">${advEscape(t.note)}</p>
+        <div class="cl-list">${lines.map(l=>_lensRow(l.label,l.value,sh(l.value),basis,max,PS_COLOR[t.key],{note:then(t.key,l.key)})).join('')}</div></div>`;
+    }).join('');
+    const one=c.oneOff?`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off</span><span class="cl-gtot">${_lensPct(Math.abs(sh(c.oneOff)[basis]))} <small>${c.oneOff<0?'−':''}${fmt(Math.abs(c.oneOff))}</small></span></div></div>`:'';
+    const leftover=basis==='spend'?'':`<div class="cl-left ${c.overspent?'is-short':''}"><span>${c.overspent?'Beyond income — from savings or Stripe':'Left over'}</span><strong>${_lensPct(Math.abs(c.left)/c.denom)} <small>${_lensWord[basis]} · ${fmt(Math.abs(c.left))}</small></strong></div>`;
+    body=bar+groups+one+leftover;
+    const fx=c.tiers.find(t=>t.key==='fixed'),es=c.tiers.find(t=>t.key==='essential'),ch=c.tiers.find(t=>t.key==='choice');
+    headline=basis==='spend'
+      ?`In ${yr} the plan spends <strong>${fmt(c.spend)}</strong>: <strong>${_lensPct(fx.share)}</strong> fixed, <strong>${_lensPct(es.share)}</strong> essentials, <strong>${_lensPct(ch.share)}</strong> discretionary.`
+      :c.overspent
+        ?`In ${yr} the plan spends <strong>${fmt(-c.left)}</strong> more than it takes in — <strong>${_lensPct(-c.left/c.denom)}</strong> ${_lensWord[basis]} comes from savings or Stripe.`
+        :`In ${yr}, <strong>${_lensPct(fx.share)}</strong> ${_lensWord[basis]} is fixed commitments, <strong>${_lensPct(es.share)}</strong> essentials and <strong>${_lensPct(ch.share)}</strong> discretionary${c.left>0?` — leaving <strong>${_lensPct(c.left/c.denom)}</strong>`:''}.`;
+    foot=`Projected, not imported. Income counts Stripe stock at its vest value; net is after tax, 401(k) and benefits.${bc?` The small figure on each line is its share in ${first}, the plan's first year.`:''} Which lines count as fixed is a judgement — each group lists what is in it.${c.overspent?' The marker on the bar is where income ends.':''}`;
+    const yrOptions=R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('');
+    ctl=`<div class="ps-year" role="group" aria-label="Year to look at">
+      <button type="button" onclick="planShareStep(-1,${first},${last})" aria-label="Previous year"${yr<=first?' disabled':''}>‹</button>
+      <label><span class="ui-sr">Year</span><select onchange="planShareSet(this.value)">${yrOptions}</select></label>
+      <button type="button" onclick="planShareStep(1,${first},${last})" aria-label="Next year"${yr>=last?' disabled':''}>›</button></div>`;
+  }
+  const eff=mode==='actual'&&!haveIncome?'spend':basisWanted;
+  const chip=(b,l)=>`<button type="button" class="spend-scope-chip${eff===b?' is-on':''}" aria-pressed="${eff===b}"${mode==='actual'&&!haveIncome&&b!=='spend'?' disabled':''} onclick="planShareBasis('${b}')">${l}</button>`;
+  const modeChip=(m,l)=>`<button type="button" class="spend-scope-chip${mode===m?' is-on':''}" aria-pressed="${mode===m}"${m==='actual'&&!actual?' disabled title="Import transactions to see actuals"':''} onclick="lensMode('${m}')">${l}</button>`;
   return `<section class="cp-card cl-card">
-    <div class="ps-head"><div><h3>Categories against your income</h3><p>Same period as the chart above · net of refunds</p></div>
-      <div class="spend-scope" role="group" aria-label="Measure each category as a share of">${chip('net','Net income')}${chip('gross','Gross income')}${chip('spend','Spending')}</div></div>
-    <p class="ps-headline">${head}</p>
-    <div class="cl-list">${lines}</div>
-    <p class="spend-caption">${have?'Income is the plan\'s figure for the same months, not your deposits — the ledger records what landed in accounts, not gross pay or Stripe vests. Net is after tax, 401(k) and benefits.':'The plan does not cover every month in this period, so income-based shares are hidden rather than guessed.'}</p>
+    <div class="ps-head"><div><h3>Categories against your income</h3><p>${mode==='actual'?'What your records show, over the period above':'What the plan says a year will cost'}</p></div>
+      <div class="ps-controls"><div class="spend-scope" role="group" aria-label="Actual or plan">${modeChip('actual','Actual')}${modeChip('plan','Plan')}</div>${ctl}</div></div>
+    <div class="cl-measure"><span>Measured against</span><div class="spend-scope" role="group" aria-label="Measure each line as a share of">${chip('net','Net income')}${chip('gross','Gross income')}${chip('spend','Spending')}</div></div>
+    <p class="ps-headline">${headline}</p>
+    ${body}
+    <p class="spend-caption">${foot}</p>
   </section>`;
 }
 
@@ -3563,7 +3548,7 @@ function renderSpendingTab(R,P){
       <div style="font-size:10.5px;color:var(--t2);margin-bottom:10px">${advEscape(d.error)}</div>
       <button onclick="openMonarchDiagnostics()" style="font-size:10px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">🩺 Diagnose connection</button>
     </div></div>`;
-    h+=renderPlanShareCard(R);
+    h+=renderIncomeLens(R,null);
     ca.innerHTML=h;document.getElementById('summaries').innerHTML='';return;
   }
   if(!nTx){
@@ -3571,7 +3556,7 @@ function renderSpendingTab(R,P){
       <div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:6px">Import your history to begin</div>
       <div style="font-size:11px;color:var(--t2);line-height:1.6;max-width:520px;margin:0 auto">Transactions are read through the same Monarch connection your balances use. Nothing is written back — the import is read-only, and your own categorisations are never overwritten by a later sync.</div>
     </div></div>`;
-    h+=renderPlanShareCard(R);
+    h+=renderIncomeLens(R,null);
     ca.innerHTML=h;document.getElementById('summaries').innerHTML='';return;
   }
 
@@ -3706,8 +3691,7 @@ function renderSpendingTab(R,P){
     <section class="cp-card"><h3>Income & spending</h3><p>Every imported month · current and unverified months are labeled${_spendScope.kind!=='all'?' · not narrowed by the period above':''}</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Month by month, as recorded. Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section>
     </div></div>`;
 
-    h+=renderCategoryLens(rows,complete,cov,closedTotal,R);
-    h+=renderPlanShareCard(R);
+    h+=renderIncomeLens(R,{rows,complete,cov,closedTotal});
 
     h+=`<div class="glass-card" style="padding:16px 18px">
       <details class="spend-details"><summary>Category details · exact amounts & refunds</summary>

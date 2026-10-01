@@ -35,9 +35,9 @@
   // basis 'net'  : what reaches the household after them — the denominator spending is judged by.
   function compute(r, basis) {
     if (!r) return null;
-    const net = basis === 'net';
+    const spendBasis = basis === 'spend', net = basis === 'net';
     const gross = Number(r.gross) || 0, netTC = Number(r.netTC) || 0;
-    const denom = net ? netTC : gross;
+    const denom = spendBasis ? Math.round(Number(r.totEFull != null ? r.totEFull : r.totE) || 0) : net ? netTC : gross;
     if (!(denom > 0)) return null;
 
     const living = r.livFullParts || r.livParts || {};
@@ -63,19 +63,19 @@
     });
 
     const segments = [
-      ...(net ? [] : [
+      ...(net || spendBasis ? [] : [
         { key: 'tax', label: 'Taxes', value: tax },
         { key: 'pretax', label: '401(k), benefits & practice costs', value: pretax },
       ]),
       ...tiers.map(t => ({ key: t.key, label: t.label, value: t.value })),
       ...(oneOff ? [{ key: 'oneoff', label: 'One-off', value: oneOff }] : []),
-      { key: left >= 0 ? 'left' : 'short', label: left >= 0 ? 'Left over' : 'Beyond income', value: Math.abs(left) },
+      ...(spendBasis ? [] : [{ key: left >= 0 ? 'left' : 'short', label: left >= 0 ? 'Left over' : 'Beyond income', value: Math.abs(left) }]),
     ].map(s => ({ ...s, share: s.value / denom }));
 
-    return { yr: r.yr, basis: net ? 'net' : 'gross', denom, gross, netTC, tax, pretax, spend, oneOff, left,
+    return { yr: r.yr, basis: spendBasis ? 'spend' : net ? 'net' : 'gross', denom, gross, netTC, tax, pretax, spend, oneOff, left,
       overspent: left < 0, tiers, segments,
       // Everything that is not "left over" or "beyond income" — checked to add to the denominator.
-      accounted: (net ? 0 : tax + pretax) + spend + left };
+      accounted: spendBasis ? spend : (net ? 0 : tax + pretax) + spend + left };
   }
 
   // The plan's income for the months a ledger period covers. The ledger records what landed in

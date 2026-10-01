@@ -63,12 +63,13 @@ describe('where a year\'s income goes',()=>{
   expect(S.compute({...at(2035),gross:0,netTC:0},'gross')).toBe(null);
   expect(S.compute(null,'gross')).toBe(null);
  });
- it('is on the Spending tab, served, and reads the plan rather than the ledger',()=>{
+ it('is on the Spending tab, served, and its plan side reads the projection rather than the ledger',()=>{
   expect(html).toContain('<script src="/income-share.js"></script>');
   expect(server).toContain("'income-share.js'");
-  expect(html).toContain('h+=renderPlanShareCard(R);');
-  const fn=html.slice(html.indexOf('function renderPlanShareCard('),html.indexOf('function renderSpendingTab('));
-  expect(fn).not.toMatch(/_spend\b|loadSpending/);
+  expect(html).toContain('h+=renderIncomeLens(R,{rows,complete,cov,closedTotal});');
+  const fn=html.slice(html.indexOf('function renderIncomeLens('),html.indexOf('function renderSpendingTab('));
+  const planSide=fn.slice(fn.indexOf("}else{\n    const yr="));
+  expect(planSide).not.toMatch(/_spend\b|loadSpending|complete\b/);
   expect(fn).toContain('Year to look at');
  });
 });
@@ -102,17 +103,26 @@ describe('categories against income',()=>{
   expect(S.periodIncome([{month:'2024-05'}],R,{}).ok).toBe(false);
   expect(S.periodIncome([],R,{}).ok).toBe(false);
  });
- it('sits between the charts and the look-ahead card, defaults to net, and hides what it cannot compute',()=>{
+ it('is one card under the charts, defaults to net, and hides what it cannot compute',()=>{
   const spend=html.slice(html.indexOf('function renderSpendingTab('));
-  expect(html).toContain("let _catLensBasis='net';");
-  expect(spend.indexOf('h+=renderCategoryLens(')).toBeGreaterThan(spend.indexOf('class="spend-visuals"'));
-  // Also rendered in the two early-return branches (no history, or an error), so the plan view
-  // is there without imports; the one that matters for order is the last.
-  expect(spend.match(/h\+=renderPlanShareCard\(R\);/g).length).toBe(3);
-  const last=spend.lastIndexOf('h+=renderPlanShareCard(R);');
-  expect(last).toBeGreaterThan(spend.indexOf('h+=renderCategoryLens('));
-  expect(last).toBeLessThan(spend.indexOf('Category details'));
-  const lens=html.slice(html.indexOf('function renderCategoryLens('),html.indexOf('function renderSpendingTab('));
-  expect(lens).toContain("const basis=have?_catLensBasis:'spend';");
+  expect(html).toContain("_planShareBasis='net',_lensMode='actual'");
+  // Once in the main flow, and in the two early returns so the plan side shows without imports.
+  expect(spend.match(/h\+=renderIncomeLens\(/g).length).toBe(3);
+  expect(spend.lastIndexOf('h+=renderIncomeLens(')).toBeGreaterThan(spend.indexOf('class="spend-visuals"'));
+  expect(spend.lastIndexOf('h+=renderIncomeLens(')).toBeLessThan(spend.indexOf('Category details'));
+  const lens=html.slice(html.indexOf('function renderIncomeLens('),html.indexOf('function renderSpendingTab('));
+  expect(lens).toContain("const basis=haveIncome?basisWanted:'spend';");
+  expect(lens).toContain("const mode=actual?_lensMode:'plan';");
+  expect(html).not.toMatch(/renderPlanShareCard|renderCategoryLens/);
+ });
+ it('measures a plan year against spending too: tiers only, adding to the year\'s expenses',()=>{
+  for(const r of R){
+   const c=S.compute(r,'spend');
+   if(!c)continue;
+   expect(c.denom).toBe(r.totEFull);
+   expect(c.segments.map(s=>s.key)).not.toEqual(expect.arrayContaining(['tax']));
+   expect(c.segments.reduce((t,s)=>t+s.value,0)).toBe(r.totEFull);
+   expect(c.accounted).toBe(c.denom);
+  }
  });
 });
