@@ -160,8 +160,13 @@ describe('both charts answer to the same inflation toggle', () => {
 describe('every single-figure net worth surface shows the total', () => {
   const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
 
-  it('keeps Accounts focused on observed balances without a second future net-worth headline', () => {
-    expect(html).toContain('money(ovNw)');
+  it('keeps Accounts to the accounts: no headline of its own, and no second future net-worth figure', () => {
+    // The headline figures live on the Cockpit. Accounts used to repeat them, with a second copy of
+    // the retirement switch, and the two had to be kept in step by tests. Now there is one.
+    const ov = html.slice(html.indexOf('function renderOverviewTab('), html.indexOf('\n}\n', html.indexOf('function renderOverviewTab(')));
+    expect(ov).not.toContain('money(ovNw)');
+    expect(ov).not.toContain("tile('");
+    expect(ov).toContain("setTab('cockpit')");
     expect(html).not.toContain('money(ovLast)');
     expect(html).not.toContain('UI.money(series[series.length-1])');
     expect(html).not.toContain('const series=R.map(r=>r.nw+r.k401);');
@@ -201,19 +206,15 @@ describe('nothing claims incomplete without naming an account', () => {
   });
 });
 
-// The same four figures appear on the cockpit and the Overview. If the two screens order
-// them differently, the one the reader saw second looks like it changed.
-describe('the position tiles keep one order across screens', () => {
-  it('puts Stripe before retirement on both', () => {
-    const ov = html.indexOf("tile('Stripe equity'");
-    const ret = html.indexOf("tile('Retirement'", ov - 400);
-    expect(ov, 'overview Stripe tile').toBeGreaterThan(-1);
-    expect(ov).toBeLessThan(ret);
-
+// The four position figures are stated once, on the cockpit, in one order.
+describe('the position figures keep one order', () => {
+  it('puts Stripe before retirement on the cockpit, and states them nowhere else', () => {
     const cpStripe = cockpit.indexOf("metric('Vested Stripe'");
     const cpRet = cockpit.indexOf("metric('Retirement'");
     expect(cpStripe, 'cockpit Stripe metric').toBeGreaterThan(-1);
     expect(cpStripe).toBeLessThan(cpRet);
+    expect(html).not.toContain("tile('Stripe equity'");
+    expect(html).not.toContain("tile('Retirement'");
   });
 });
 
@@ -242,23 +243,19 @@ describe('the Trajectory chart shows three series', () => {
   });
 });
 
-// One basis for the whole app: the Overview cannot hold a second opinion about retirement.
-describe('the Overview follows the same retirement basis', () => {
-  it('reads the cockpit flag rather than always showing the total', () => {
-    expect(html).toContain('const ovNw=cockpitExRet?sum.netWorth-ovRet:sum.netWorth;');
-    expect(html).toContain('money(ovNw)');
+// One basis for the whole app: the Overview cannot hold a second opinion about retirement, because
+// it no longer states a net worth at all.
+describe('the Overview holds no second opinion about retirement', () => {
+  it('has no retirement switch and no net-worth tile of its own', () => {
+    const ov = html.slice(html.indexOf('function renderOverviewTab('), html.indexOf('\n}\n', html.indexOf('function renderOverviewTab(')));
+    expect(ov).not.toContain('Include retirement');
+    expect(ov).not.toContain('cockpitSetExRet');
+    expect(ov).not.toContain('const ovNw=');
   });
 
-  it('carries the same checkbox, so it can be changed from here', () => {
-    const ov = html.slice(html.indexOf('const ovRet='), html.indexOf('Accessible today'));
-    expect(ov).toContain('Include retirement');
-    expect(ov).toContain('cockpitSetExRet(!this.checked)');
-  });
-
-  it('renames the tile when it is narrowed, rather than quietly showing less', () => {
-    expect(html).toContain("cockpitExRet?'Net worth ex-retirement':'Net worth'");
-    expect(html).toContain('retirement excluded');
-    expect(html).toContain('not in net worth above');
+  it('leaves the one switch, and the narrowed label, on the cockpit', () => {
+    expect(cockpit).toContain('Include retirement');
+    expect(cockpit).toContain('function cockpitSetExRet(');
   });
 });
 

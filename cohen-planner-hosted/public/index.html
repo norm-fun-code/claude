@@ -2990,23 +2990,11 @@ function renderOverviewTab(R,P){
       <div style="font-size:10.5px;color:var(--t2);margin-bottom:10px">${advEscape(d.error)}</div>
       <button onclick="openMonarchDiagnostics()" style="font-size:10px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">🩺 Diagnose connection</button></div>`;
   } else {
-    // The SAME basis the cockpit is on. Two screens showing net worth on different bases is
-    // the defect this app keeps rediscovering, so this reads the one flag rather than
-    // keeping a second opinion — and carries the same checkbox, so it can be changed here.
-    const ovRet=Number((cls.retirement||{}).total)||0;
-    const ovNw=cockpitExRet?sum.netWorth-ovRet:sum.netWorth;
-    h+=`<label class="cp-basis" style="max-width:420px"><input type="checkbox"${cockpitExRet?'':' checked'}
-      onchange="cockpitSetExRet(!this.checked)">
-      <span>Include retirement</span>
-      <em>${cockpitExRet?'Off — showing what you can reach before 59½':'On — showing everything you own'}</em>
-    </label>
-    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(158px,1fr))">
-      ${tile(cockpitExRet?'Net worth ex-retirement':'Net worth',money(ovNw),provChip('observed',d.asOf,true),
-        cockpitExRet?`${money(sum.assets-ovRet)} assets − ${money(sum.debt)} debt · retirement excluded`:`${money(sum.assets)} assets − ${money(sum.debt)} debt`)}
-      ${tile('Accessible today',money(sum.accessible),provChip('observed',d.asOf,true),'cash + taxable — spendable without penalty','var(--g)')}
-      ${tile('Stripe equity',money(sum.stripeVested),provChip('observed',d.asOf,true),'vested only — grants are future pay','#6772e5')}
-      ${tile('Retirement',money(ovRet),provChip('observed',d.asOf,true),cockpitExRet?'locked until 59½ · not in net worth above':'locked until retirement age')}
-    </div>`;
+    // The headline figures — net worth, what is accessible, Stripe, retirement — belong to the Cockpit,
+    // which is the one place they are stated, on the one basis. Repeating them here, with their own copy
+    // of the retirement switch, was a second opinion waiting to disagree. This screen is the accounts
+    // behind them.
+    h+=`<p class="spend-caption" style="margin:0">Net worth, what you can reach today, Stripe and retirement are on the <a href="#" onclick="event.preventDefault();setTab('cockpit')">Cockpit</a>. These are the accounts behind them${d.asOf?`, read ${PlannerTime.formatDate(d.asOf,{month:'short',day:'numeric'})}`:''}.</p>`;
 
     // ── Anything unknown, said out loud ──
     if((sum.unknownBalance||[]).length){
