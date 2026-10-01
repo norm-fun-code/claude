@@ -1085,3 +1085,20 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .bd-load i{display:block;width:100%;background:#ecc183;border-radius:2px 2px 0 0;opacity:.85}
 .bd-load .two i{background:#ff9caf}
 .mc-mode-btn{cursor:pointer}
+
+/* Inputs is a gear in the header, not a tab */
+.gear-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0!important;border-radius:9px}
+.gear-btn.active{background:var(--s3)!important;color:var(--tx)!important;border-color:var(--bd2)!important}
+.inputs-moved{display:flex;flex-direction:column;gap:6px;margin:12px 0 4px;padding:12px;border:1px dashed var(--bd2);border-radius:10px;font-size:11px;color:var(--t2)}
+.inputs-moved button{text-align:left;border:0;background:transparent;color:var(--accent);font:inherit;font-size:12px;font-weight:600;cursor:pointer;padding:4px 0}
+.inputs-moved button small{display:block;font-weight:400;font-size:10.5px;color:var(--t3)}
+/* Controls embedded on Budget and Stripe */
+.bd-panel{grid-column:1/-1;margin:2px 0 8px;padding:14px 16px;border:1px solid var(--bd2);border-radius:12px;background:var(--s2);border-left:3px solid var(--tier,var(--accent))}
+.bd-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:13px;color:var(--tx)}
+.bd-panel .sr,.bd-oneoff .sr,.sg-assume .sr{margin-bottom:12px}
+.bd-panel .sl,.bd-oneoff .sl,.sg-assume .sl{font-size:12px;color:var(--t2)}.bd-panel .sv,.sg-assume .sv{font-size:12px;font-weight:700;color:var(--tx)}
+.bd-panel input[type=range],.bd-oneoff input[type=range],.sg-assume input[type=range],.polish-fold .sr input[type=range]{width:100%}
+.bd-panel .sr .sh,.sg-assume .sr .sh,.polish-fold .sr .sh{display:flex;justify-content:space-between}
+.bd-oneoff{margin-top:10px;max-width:520px}
+.sg-assume{max-width:620px}
+.bd-actions.show{opacity:1}

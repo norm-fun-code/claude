@@ -41,7 +41,7 @@ describe('simplified Stripe',()=>{
 });
 function workspace(){
  const elements={chartArea:{innerHTML:''}},messages=[],p=PM.migrateP(plan());
- const ctx={P:p,StripeGrants:G,normComp:M.normComp,structuredClone,scenarios:[{name:'Conservative',params:{...p,stripeRetY0:.1}}],scenarioPlan:p=>p,fmt:n=>'$'+Math.round(n),document:{getElementById:id=>elements[id]},markDirty(){},buildControls(){},savePlannerState(){},showToast:m=>messages.push(m)};
+ const ctx={P:p,StripeGrants:G,normComp:M.normComp,structuredClone,scenarios:[{name:'Conservative',params:{...p,stripeRetY0:.1}}],scenarioPlan:p=>p,fmt:n=>'$'+Math.round(n),document:{getElementById:id=>elements[id]},markDirty(){},buildControls(){},embedControls:()=>'',savePlannerState(){},showToast:m=>messages.push(m)};
  ctx.render=()=>vm.runInContext('renderStripeWorkspace([])',ctx);vm.createContext(ctx);vm.runInContext(fs.readFileSync(new URL('../public/stripe-grants-ui.js',import.meta.url),'utf8'),ctx);
  return {ctx,elements,messages,call:s=>vm.runInContext(s,ctx)};
 }

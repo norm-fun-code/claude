@@ -19,8 +19,10 @@ describe('advisor category proposals',()=>{
 });
 
 describe('inputs and safe presentation mode',()=>{
-  it('makes Inputs a top-level tab immediately after Advisor',()=>{
-    expect(html).toMatch(/data-tab="advisor"[\s\S]*?data-tab="inputs"/);
+  it('reaches Inputs from a gear in the header, not a tab in the rail',()=>{
+    expect(html).toContain('id="inputsGear"');
+    expect(html).toContain("onclick=\"setTab('inputs')\" aria-label=\"Plan inputs\"");
+    expect(html).not.toContain('data-tab="inputs"');
   });
 
   it('keeps demo data in memory and blocks private write/read paths',()=>{

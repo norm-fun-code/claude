@@ -2,8 +2,8 @@
 let stripeWorkspace='overview';
 // Fields the reader enters in billions and the model stores in dollars.
 const STRIPE_BILLIONS=['referenceValuation','valuationCeiling'];
-function stripeWorkspaceSet(view){stripeWorkspace=['overview','prices','income'].includes(view)?view:'overview';render();}
-function stripeWorkspaceNav(){return `<nav class="sg-nav" aria-label="Stripe workspace">${[['overview','Position'],['income','Compensation'],['prices','Valuation path']].map(([v,l])=>`<button class="${stripeWorkspace===v?'active':''}" aria-current="${stripeWorkspace===v?'page':'false'}" onclick="stripeWorkspaceSet('${v}')">${l}</button>`).join('')}</nav>`;}
+function stripeWorkspaceSet(view){stripeWorkspace=['overview','prices','income','assumptions'].includes(view)?view:'overview';render();}
+function stripeWorkspaceNav(){return `<nav class="sg-nav" aria-label="Stripe workspace">${[['overview','Position'],['income','Compensation'],['prices','Valuation path'],['assumptions','Assumptions']].map(([v,l])=>`<button class="${stripeWorkspace===v?'active':''}" aria-current="${stripeWorkspace===v?'page':'false'}" onclick="stripeWorkspaceSet('${v}')">${l}</button>`).join('')}</nav>`;}
 function stripeGrantIntro(){return '';}
 function stripeManualSet(year,key,value){
   if(value.trim()===''||!Number.isFinite(Number(value))||Number(value)<0){showToast('Enter a non-negative annual amount.','red');return;}
@@ -63,9 +63,14 @@ function stripeKeepFocus(fn){
 function renderStripeWorkspace(R){
   const sy=P.planStartYear||2026,ey=P.planEndYear||2058,c={...StripeGrants.setup(P),...P.stripeGrants};
   const esc=s=>String(s).replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
-  let h=stripeWorkspaceNav()+`<header class="ui-head"><div><span class="ui-eyebrow">STRIPE EQUITY</span><h2>${stripeWorkspace==='income'?'Your compensation. Your assumptions.':'The valuation behind the plan.'}</h2></div></header>`;
-  if(stripeWorkspace==='income'){
+  let h=stripeWorkspaceNav()+`<header class="ui-head"><div><span class="ui-eyebrow">STRIPE EQUITY</span><h2>${stripeWorkspace==='income'?'Your compensation. Your assumptions.':stripeWorkspace==='assumptions'?'How Stripe equity is held and sold.':'The valuation behind the plan.'}</h2></div></header>`;
+  if(stripeWorkspace==='assumptions'){
+    // The controls that used to sit in the Inputs panel: starting balance, when it was observed,
+    // vest withholding, the return path, and how much of each vest is sold. One definition, here.
+    h+=`<section class="sc sg-assume">${embedControls('stripe')}</section>`;
+  }else if(stripeWorkspace==='income'){
     h+=`<section class="sc"><p>Cash includes salary, bonus and cash awards. Stock is gross compensation at vesting, including the upside you expect. These inputs feed every projection.</p><div class="sg-table-wrap"><table><thead><tr><th>Year</th><th>Cash compensation</th><th>Stock compensation at vesting</th><th>Total</th></tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>{const n=normComp(P,i);return `<tr><th>${sy+i}</th>${['cash','stock'].map(k=>`<td><input id="sg-comp-${k}-${sy+i}" type="number" min="0" step="any" aria-label="${sy+i} ${k} compensation" value="${Math.round(n[k])}" onchange="stripeManualSet(${sy+i},'${k}',this.value)"></td>`).join('')}<td id="sg-total-${sy+i}">${fmt(n.cash+n.stock)}</td></tr>`;}).join('')}</tbody></table></div><p class="sg-note">Years after ${sy+10} follow the growth assumptions unless you enter an annual amount. Previously calculated amounts have been preserved as manual inputs.</p></section>`;
+    h+=`<section class="sc sg-assume"><h3>Growth, 401(k) and benefits</h3>${embedControls('norm')}</section>`;
   }else{
     // Billions in, billions out. The field used to be labelled in dollars, so "160" — the
     // only way anyone writes $160B — was read as one hundred and sixty dollars and every

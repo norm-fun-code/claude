@@ -439,6 +439,7 @@ body{background:transparent}
   </div>
   <div class="hdr-right">
       <div id="caseControl" class="case-ctl"></div>
+      <button type="button" id="inputsGear" class="ui-btn ui-btn-quiet gear-btn" onclick="setTab('inputs')" aria-label="Plan inputs" title="Plan inputs"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
       <button class="cmdk-trigger ui-btn" onclick="openPalette()" title="Command palette">Jump to… <kbd id="cmdkKbdHint">⌘K</kbd></button>
       <div class="hdr-status">
         <span id="monarchFreshness" aria-live="polite"></span>
@@ -1303,6 +1304,7 @@ if(!localStorage.getItem('plannerFocusV1')){_collapsedSections.add('acct-list');
 // persisted collapse set can drive sections outside it instead of growing a second one.
 function toggleSection(key,full){_collapsedSections.has(key)?_collapsedSections.delete(key):_collapsedSections.add(key);localStorage.setItem('plannerCollapsed',JSON.stringify([..._collapsedSections]));full?render():buildControls()}
 
+let _controlBodies=null;
 function buildControls(){
   const s=(l,k,mn,mx,st,fn)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span><span class="sv" id="v_${k}">${fn?fn(P[k]):P[k]}</span></div><input type="range" id="s_${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}" oninput="U('${k}',this.value)"></div>`;
   // Free-typed dollar amount (vs. a slider) — for fields where the exact number matters
@@ -1346,28 +1348,30 @@ function buildControls(){
   };
   const ST=(label,key,body)=>{const c=_collapsedSections.has(key);return`<div class="st" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none" onclick="toggleSection('${key}')"><span>${label}</span><span style="font-size:9px;color:var(--t3);opacity:.6">${c?'▶':'▼'}</span></div>${c?'':body}`};
   const sy=P.planStartYear||2026;
+  // Each section's body is kept by name. Inputs now assembles only the sections that belong to it;
+  // Budget and Stripe pull theirs from here, so a control has one definition wherever it is shown.
+  const bodies={};
   let h=`<div style="font-size:10px;font-weight:700;margin-bottom:8px">⚙️ Parameters</div>`;
   // Kids
   let kidsBody=s('# of kids','numKids',1,4,1)+s('Kid 1 born','kid1Birth',2026,2030,1);
   if(P.numKids>=2)kidsBody+=s('Kid 2 born','kid2Birth',2028,2035,1);
   if(P.numKids>=3)kidsBody+=s('Kid 3 born','kid3Birth',2031,2040,1);
   if(P.numKids>=4)kidsBody+=s('Kid 4 born','kid4Birth',2034,2044,1);
-  h+=ST('👶 Kids','kids',kidsBody);
+  bodies.kids=kidsBody;
 
   // Childcare
   const ccStart=Number(P.childcareStartMonths)||0;
   const childcareBody=s('Childcare $/mo','childcareMonthly',1000,6000,100,v=>'$'+v.toLocaleString())
     +s('Starts at age','childcareStartMonths',0,24,1,v=>v?v+' mo old':'birth')
     +`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin:-2px 0 5px">${ccStart?`Leave covers the first ${ccStart} month${ccStart===1?'':'s'}, so a child's first year is charged ${Math.max(0,12-ccStart)} month${Math.max(0,12-ccStart)===1?'':'s'} of care${ccStart>12?` and their second ${Math.max(0,24-ccStart)}`:''}.`:'Charged from birth. Set this if leave covers the first months.'}</div>`
-    +s('Kid 1 yeshiva start','kid1YeshivaStartAge',2,5,1,v=>v+' yrs old')+s('Kids 2+ yeshiva start','yeshivaStartAge',2,5,1,v=>v+' yrs old');
-  h+=ST('🍼 Childcare','childcare',childcareBody);
+    ;
+  bodies.childcare=childcareBody;
 
   // Tuition
-  h+=ST('🎓 Tuition','tuition',s('Tuition inflation','tuitionInflation',.02,.06,.005,v=>(v*100).toFixed(1)+'%'));
+  bodies.tuition=s('Kid 1 starts school at','kid1YeshivaStartAge',2,5,1,v=>v+' yrs old')+s('Kids 2+ start school at','yeshivaStartAge',2,5,1,v=>v+' yrs old')+s('Tuition inflation','tuitionInflation',.02,.06,.005,v=>(v*100).toFixed(1)+'%');
 
   // Plan start
   const planBody=s('Start year','planStartYear',2026,2035,1)+`<div style="font-size:7.5px;color:var(--t3);margin-bottom:6px">Advance each Jan to roll inputs forward. Update Starting Liquid to reflect actual wealth.</div>`;
-  h+=ST('📅 Plan Start Year','plan-start',planBody);
 
   // Norm income — a compact Cash / Stripe Stock / Total grid rather than 22 stacked
   // sliders. Total is derived, never typed, so cash+stock is always the W2 figure.
@@ -1379,24 +1383,13 @@ function buildControls(){
     </div>`;
   }
   if(StripeGrants.active(P))normBody+=`<p class="sg-note">${Number.isFinite(StripeGrants.throughYear(P))?'Calculated through '+StripeGrants.throughYear(P)+' · Manual from '+(StripeGrants.throughYear(P)+1):'All years calculated from Stripe awards'}. Grant-year cash inputs are the pre-QCA baseline. Manual-year inputs include all cash and stock compensation.</p>`;
-  normBody+=`<div class="comp-grid comp-head"><span>Year</span><span>Cash</span><span>Stripe stock</span><span>Total</span></div>`;
-  for(let i=0;i<11;i++){
-    if(StripeGrants.active(P)&&!StripeGrants.usesGrants(P,sy+i)){const c=normComp(P,i);normBody+=`<div class="comp-grid"><span class="comp-yr" title="Manual compensation">${sy+i} · M</span>${['cash','stock'].map(k=>`<input class="comp-in${k==='stock'?' comp-stock':''}" aria-label="${sy+i} manual ${k}" type="number" min="0" step="any" style="min-width:0;width:100%;box-sizing:border-box" value="${Math.round(c[k])}" onchange="stripeManualSet(${sy+i},'${k}',this.value)">`).join('')}<span class="comp-tot" id="ct_${i}">${fmtF(c.cash+c.stock)}</span></div>`;continue;}
-    if(StripeGrants.active(P)){const c=normComp(P,i);normBody+=`<div class="comp-grid"><span class="comp-yr">${sy+i}</span>${compCell('normCashY'+i)}<span class="comp-tot" id="sg_compstock_${i}" title="Calculated from Stripe grants">${fmtF(c.stock)}</span><span class="comp-tot" id="ct_${i}">${fmtF(c.cash+c.stock)}</span></div>`;continue;}
-    const yr=sy+i,tot=(P['normCashY'+i]||0)+(P['normStockY'+i]||0);
-    normBody+=`<div class="comp-grid">
-      <span class="comp-yr">${yr}</span>
-      ${compCell('normCashY'+i)}
-      ${compCell('normStockY'+i,true)}
-      <span class="comp-tot" id="ct_${i}">${fmtF(tot)}</span>
-    </div>`;
-  }
+  normBody+=`<p class="sg-note" style="margin:0 0 8px">Year-by-year cash and stock compensation is on the <strong>Compensation</strong> tab, above. These are the assumptions around it.</p>`;
   normBody+=`<div style="height:1px;background:var(--bd);margin:7px 0 5px"></div>`;
   normBody+=s('Cash growth ('+(sy+11)+'+)','normGrowth',0,.10,.005,v=>(v*100).toFixed(1)+'%');
   if(!StripeGrants.active(P)||Number.isFinite(StripeGrants.throughYear(P)))normBody+=s('Stock growth ('+(sy+11)+'+)','normStockGrowth',0,.20,.005,v=>(v*100).toFixed(1)+'%');
   normBody+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
   normBody+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
-  h+=ST('💼 Norm — Compensation','norm-income',normBody);
+  bodies.norm=normBody;
 
   // Stripe equity — existing holdings, the return path, and the retention strategy.
   let stripeBody=`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:6px">Stripe is modeled separately from the diversified portfolio: its own return path, its own retention policy, and its own line in net worth.</div>`;
@@ -1442,7 +1435,7 @@ function buildControls(){
   // entirely before touching held shares.
   stripeBody+=s('Liquid reserve floor','liquidReserveFloor',0,2000000,50000,v=>v>0?fmtF(v):'None');
   stripeBody+=`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin-bottom:5px">If a year's vest can't close the gap, the portfolio is drawn down to here — and no further. Below the floor, Stripe shares you already hold are sold instead (which does realise capital gains on their appreciation).</div>`;
-  h+=ST('◆ Stripe Equity','stripe',stripeBody);
+  bodies.stripe=stripeBody;
 
   // Nancy income
   let nancyBody='';
@@ -1456,10 +1449,10 @@ function buildControls(){
   nancyBody+=s('Solo practice','nancySoloPractice',0,1,1,v=>v?'YES ✓':'No (W2)');
   if(P.nancySoloPractice){nancyBody+=`<div class="solo-box"><div style="font-size:7.5px;font-weight:600;color:var(--g);margin-bottom:3px">🏠 Solo Practice Deductions</div>`;nancyBody+=s('Overhead/yr','nancyPracticeOverhead',5000,40000,1000,fmtF)+s('Home office','nancyHomeOfficeDeduct',0,15000,1000,fmtF)+s('QBI rate','nancyQBIRate',0,.20,.01,v=>(v*100).toFixed(0)+'%');nancyBody+=`</div>`}
   nancyBody+=`<div id="nancy_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
-  h+=ST('👩‍⚕️ Nancy — Gross Income','nancy-income',nancyBody);
 
   // Expenses
-  let expBody=s('Groceries','baseGroceries',4000,15000,500,fmtF)+s('Dining','baseDining',5000,25000,500,fmtF)+s('Shopping (incl. clothing)','baseShopping',10000,40000,1000,fmtF)+s('Clothing, share of shopping','clothingShare',0,.6,.05,v=>(v*100).toFixed(0)+'%')+s('Vacations (no kids)','baseVacations',5000,30000,1000,fmtF)+s('Vacations (w/ kids)','postKidVacations',5000,25000,1000,fmtF)+s('Misc','baseMisc',5000,20000,1000,fmtF)+s('Charity','baseCharity',0,20000,500,fmtF)+s('Medical','baseMedical',2000,10000,500,fmtF)+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%');
+  let expBody=s('Groceries','baseGroceries',4000,15000,500,fmtF)+s('Dining','baseDining',5000,25000,500,fmtF)+s('Shopping (incl. clothing)','baseShopping',10000,40000,1000,fmtF)+s('Clothing, share of shopping','clothingShare',0,.6,.05,v=>(v*100).toFixed(0)+'%')+s('Vacations (no kids)','baseVacations',5000,30000,1000,fmtF)+s('Vacations (w/ kids)','postKidVacations',5000,25000,1000,fmtF)+s('Misc','baseMisc',5000,20000,1000,fmtF)+s('Charity','baseCharity',0,20000,500,fmtF)+s('Medical','baseMedical',2000,10000,500,fmtF);
+  bodies.baselines=expBody;
   {
     const sy0=P.planStartYear||2026;
     const set=Array.from({length:11},(_,i)=>[sy0+i,Number(P['expenseAdjY'+i])||0]).filter(([,v])=>v);
@@ -1477,19 +1470,24 @@ function buildControls(){
         <button class="ui-btn" style="padding:2px 7px" onclick="expAdjAdd()">Add</button></div>`:''}
       </div>`;
   }
-  h+=ST('📦 Expenses (couple, 2026)','expenses',expBody);
+  bodies.oneOff=expBody.slice(bodies.baselines.length);
 
   // Home
   const homeBody=housingModeControl()+s('Monthly rent','nycRent',0,20000,100,v=>'$'+v.toLocaleString()+'/mo')+(P.housingMode==='rent'?s('Annual rent inflation','rentInflation',0,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Monthly rent cap','rentCap',0,50000,500,v=>v?'$'+v.toLocaleString()+'/mo':'No cap')+`<p>Rent grows from ${P.planStartYear}. The cap is a maximum monthly rent; no purchase or suburban move is modeled.</p>`:s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%'));
-  h+=ST('🏠 Home','home',homeBody);
+  bodies.home=homeBody+(P.housingMode==='rent'?'':s('Home upkeep','maintBase',0,80000,1000,v=>fmtF(v)+'/yr'));
 
   // Returns (cap gains hardcoded for NYC)
-  const retBody=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+sLinked('startingLiquid')+sLinked('k401Start')+sLinked('otherDebt')+`<div style="font-size:7.5px;color:var(--t3);margin-top:4px">Cap gains: 34.5% · cost basis: 55% (NYC, hardcoded)</div>`;
-  h+=ST('📈 Returns','returns',retBody);
+  const retBody=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+sLinked('startingLiquid')+sLinked('k401Start')+sLinked('otherDebt')+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%')+`<div style="font-size:7.5px;color:var(--t3);margin-top:4px">Cap gains: 34.5% · cost basis: 55% (NYC, hardcoded)</div>`;
+  bodies.returns=retBody;
 
+  h+=ST('👶 Kids','kids',bodies.kids)+ST('📅 Plan Start Year','plan-start',planBody)+ST('👩‍⚕️ Nancy — Gross Income','nancy-income',nancyBody)+ST('📈 Returns & inflation','returns',bodies.returns);
+  h+=`<div class="inputs-moved"><strong>Looking for something?</strong>
+    <button type="button" onclick="_todayView='budget';setTab('today')">Expenses, housing, childcare, tuition →<small>Financial life → Budget</small></button>
+    <button type="button" onclick="setTab('stripe')">Compensation, Stripe equity and returns →<small>Stripe</small></button></div>`;
   h+=`<div style="height:1px;background:var(--bd);margin:6px 0"></div>`;
   h+=`<button class="btn" onclick="resetAll()">↺ Reset All</button>`;
   h+=`<div style="display:flex;gap:4px;margin-top:4px"><button class="btn" onclick="exportJSON()" style="flex:1;font-size:8px">📤 Export</button><button class="btn" onclick="importJSON()" style="flex:1;font-size:8px">📥 Import</button></div>`;
+  _controlBodies=bodies;
   document.getElementById('controls').innerHTML=h;
 }
 
@@ -1553,11 +1551,29 @@ async function confirmRollForward(overlay,curYear,nextYear){
   showToast(`✓ Rolled forward to ${nextYear}`,'green');
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),childcareStartMonths:v=>v?v+' mo old':'birth',yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,liquidReserveFloor:v=>v>0?fmtF(v):'None',stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,clothingShare:v=>(v*100).toFixed(0)+'%',baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',rentCap:v=>v?'$'+v.toLocaleString()+'/mo':'No cap'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),childcareStartMonths:v=>v?v+' mo old':'birth',yeshivaStartAge:v=>v+' yrs old',kid1YeshivaStartAge:v=>v+' yrs old',tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,liquidReserveFloor:v=>v>0?fmtF(v):'None',stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,maintBase:v=>fmtF(v)+'/yr',propTaxRate:v=>(v*100).toFixed(2)+'%',clothingShare:v=>(v*100).toFixed(0)+'%',baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',rentCap:v=>v?'$'+v.toLocaleString()+'/mo':'No cap'};
 for(let i=0;i<11;i++){SF['normCashY'+i]=fmtF;SF['normStockY'+i]=fmtF}
 for(let i=0;i<10;i++)SF['stripeRetY'+i]=v=>(v*100).toFixed(0)+'%';
 
-function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=key==='rentInflation'?v=>(v*100).toFixed(1)+'%':SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];markDirty();if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear'||key==='childcareStartMonths')buildControls();render();savePlannerState()}
+// A slider's label can appear in more than one place now (the Inputs panel, and the same control
+// embedded on Budget or Stripe), so it is found by key rather than by a single id.
+function sliderLabel(key){
+  const fn=key==='rentInflation'?v=>(v*100).toFixed(1)+'%':SF[key];
+  document.querySelectorAll('#v_'+key+',[data-v="'+key+'"]').forEach(el=>{el.textContent=fn?fn(P[key]):P[key]});
+}
+// While a slider is being dragged only its label moves. The screen it sits on is redrawn when it
+// is let go (onchange → U), because redrawing mid-drag replaces the very control being dragged.
+function Upeek(key,val){P[key]=parseFloat(val);sliderLabel(key)}
+// The same control definitions Inputs uses, shown on the screen that owns them. Built fresh from
+// the plan each time, with ids made unique and the drag-safe handlers swapped in.
+function embedControls(key){
+  buildControls();
+  return((_controlBodies&&_controlBodies[key])||'')
+    .replace(/id="v_([A-Za-z0-9_]+)"/g,'data-v="$1"')
+    .replace(/id="s_([A-Za-z0-9_]+)"/g,'data-s="$1"')
+    .replace(/oninput="U\('([A-Za-z0-9_]+)',this\.value\)"/g,`oninput="Upeek('$1',this.value)" onchange="U('$1',this.value)"`);
+}
+function U(key,val){P[key]=parseFloat(val);sliderLabel(key);markDirty();if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear'||key==='childcareStartMonths')buildControls();render();savePlannerState()}
 function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);P[key]=num;if(el)el.value=fmtF(num);markDirty();render();savePlannerState()}
 // ── One-off costs, by year ───────────────────────────────────────────────────
 // Every other expense control is a level or a rate that applies to every year. Setting one
@@ -2055,6 +2071,7 @@ function render(){
   document.body.classList.toggle('home-view',activeTab==='home');
   document.body.classList.toggle('cockpit-view',activeTab==='cockpit');
   document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===activeTab;b.classList.toggle('active',on);b.setAttribute('aria-selected',String(on));});
+  document.getElementById('inputsGear')?.classList.toggle('active',activeTab==='inputs');
   // The rail reflects whatever is currently known. It is drawn on every render so a
   // finished sync or a new watchlist result reaches it without its own refresh path.
   try{renderNavLive()}catch(e){}
@@ -3500,7 +3517,8 @@ function renderIncomeLens(R,actual){
 // There is no savings target here, on purpose. This household saves hard early and draws down
 // later — tuition makes that the plan, not a failure — so the measure of a budget is HEADROOM:
 // how much more could be spent with liquid assets never below the reserve floor in any year.
-let _budgetYear=null,_budgetUnit='month',_budgetScope='onward',_budgetUndo=null,_budgetHead=null;
+let _budgetYear=null,_budgetUnit='month',_budgetScope='onward',_budgetUndo=null,_budgetHead=null,_budgetEdit=null;
+function budgetEdit(k){_budgetEdit=_budgetEdit===k?null:k;render()}
 const BD_COLOR={cash:'#7ae3c3',stock:'#8278ee',savings:'#ecc183',left:'#8bdded',save:'#7ae3c3',draw:'#ecc183'};
 function budgetYearSet(y){_budgetYear=Number(y);render()}
 function budgetYearStep(d,first,last){_budgetYear=Math.min(last,Math.max(first,(_budgetYear??PlannerTime.year())+d));render()}
@@ -3590,7 +3608,7 @@ function budgetReset(cat){
   const e=PlannerBudget.edit(P,{category:cat,year:cur.yr,scope:cur.src==='pin'?'year':'onward',input:{kind:'clear'},basis:budgetBasisKey(),income:{net:cur.row.netTC,gross:cur.row.gross}});
   if(e.ok)budgetApply(e,`${LIV_LABEL[cat]||cat} → back to the model${cur.src==='pin'?', '+cur.yr+' only':', from '+cur.yr}`);
 }
-function budgetGo(where){if(where==='housing'){_homeView='housing';setTab('home')}else setTab('inputs')}
+function budgetGo(where){if(where==='housing'){_homeView='housing';setTab('home')}}
 // The headroom solve runs the plan a few dozen times, so it is worth keeping until the plan or the year changes.
 function budgetHeadroom(yr){
   const key=yr+'|'+JSON.stringify(P);
@@ -3799,36 +3817,43 @@ function renderBudgetTab(R,P){
     const inputHtml=o.readonly
       ?`<strong class="bd-fixed">${amt(value)}<small>${unitWord}</small></strong>`
       :`<span class="bd-edit"><input class="bd-input" id="bd_${k}" type="text" inputmode="decimal" value="${amt(value)}" aria-label="${advEscape(label)}, ${yr}, ${mo?'per month':'per year'}" onfocus="this.select()" onchange="budgetCommit('${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${unitWord}</small></span>`;
-    const actions=o.readonly?`<button type="button" class="bd-link" onclick="budgetGo('${o.go}')">${o.goLabel} →</button>`
+    const open=o.readonly&&_budgetEdit===k;
+    const actions=o.readonly?`<button type="button" class="bd-link" onclick="budgetEdit('${k}')" aria-expanded="${open}">${open?'Close':'Edit'}</button>${k==='housing'?`<button type="button" class="bd-link" onclick="budgetGo('housing')">Rent or buy →</button>`:''}`
       :`${seg&&seg.kind==='pct'?`<button type="button" class="bd-link" onclick="budgetTie('${k}',false)">Fix in dollars</button>`:`<button type="button" class="bd-link" onclick="budgetTie('${k}',true)">Tie to income</button>`}${src!=='model'?`<button type="button" class="bd-link" onclick="budgetReset('${k}')">Reset</button>`:''}`;
     return `<div class="bd-row" style="--tier:${o.color}">
       <div class="cl-top"><span class="cl-name">${advEscape(label)}${tag}</span>${inputHtml}</div>
       <div class="cl-track"><i style="width:${Math.max(1.5,(o.max>0?value/o.max:0)*100).toFixed(1)}%"></i></div>
-      <div class="cl-sub"><span>${pct(value)} of ${basisWord} income</span>${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}${chk?`<span class="bd-why">${advEscape(chk.text)}</span>`:''}<span class="bd-actions">${actions}</span></div></div>`;
+      <div class="cl-sub"><span>${pct(value)} of ${basisWord} income</span>${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}${chk?`<span class="bd-why">${advEscape(chk.text)}</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div></div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${embedControls(k==='housing'?'home':k)}</div>`:''}`;
   };
   const living=row.livFullParts||{};
   const c=IS.compute(row,'net');
   const maxLine=Math.max(...Object.values(living),row.hFull,row.ccFull,row.tuFull,1);
   const fixedExtra=[
-    ['housing','Housing',row.hFull,{go:'housing',goLabel:'Housing'}],
-    ['childcare','Childcare',row.ccFull,{go:'inputs',goLabel:'Inputs'}],
-    ['tuition','Tuition',row.tuFull,{go:'inputs',goLabel:'Inputs'}],
+    ['housing','Housing',row.hFull,{}],
+    ['childcare','Childcare',row.ccFull,{}],
+    ['tuition','Tuition',row.tuFull,{}],
   ];
   const groups=c.tiers.map(t=>{
     const keys=Object.keys(living).filter(k=>IS.tierOfLiving(k)===t.key);
     const ro=t.key==='fixed'?fixedExtra.filter(x=>x[2]>0||x[0]==='housing'):[];
     const total=keys.reduce((s,k)=>s+living[k],0)+ro.reduce((s,x)=>s+x[2],0);
-    const rows=[...ro.map(x=>line(x[0],x[1],x[2],'model',{readonly:true,shareKey:x[0],go:x[3].go,goLabel:x[3].goLabel,color:PS_COLOR[t.key],max:maxLine})),
+    const rows=[...ro.map(x=>line(x[0],x[1],x[2],'model',{readonly:true,shareKey:x[0],color:PS_COLOR[t.key],max:maxLine})),
       ...keys.sort((a,b)=>living[b]-living[a]).map(k=>line(k,LIV_LABEL[k]||k,living[k],(row.livSrc||{})[k]||'model',{color:PS_COLOR[t.key],max:maxLine}))].join('');
     return `<div class="cl-group" style="--tier:${PS_COLOR[t.key]}"><div class="cl-ghead"><span><i></i>${advEscape(t.label)}</span><span class="cl-gtot">${pct(total)} <small>${amtShort(total)}${unitWord}</small></span></div>
       <p class="cl-gnote">${advEscape(t.note)}</p><div class="cl-list">${rows}</div></div>`;
   }).join('');
-  const oneOff=row.eAdj?`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off</span><span class="cl-gtot">${pct(Math.abs(row.eAdj))} <small>${row.eAdj<0?'−':''}${amtShort(Math.abs(row.eAdj))}${unitWord}</small></span></div></div>`:'';
+  // One-off costs have a home here whether or not this year has one: a single year's cost, not
+  // repeated and not inflated, set for any year of the first eleven.
+  const oneOff=`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off costs</span><span class="cl-gtot">${row.eAdj?`${pct(Math.abs(row.eAdj))} <small>${row.eAdj<0?'−':''}${amtShort(Math.abs(row.eAdj))}${unitWord}</small>`:'<small>none in '+yr+'</small>'}</span></div>
+    <div class="bd-oneoff">${embedControls('oneOff')}</div></div>`;
+  const baselines=`<details class="polish-fold refine-fold"><summary>Baselines the model starts from</summary><div>
+    <p class="spend-caption" style="margin:0 0 10px">The yearly figure each line starts from in the plan's first year, before children, inflation and any rule or pin above. Changing one moves the model's own figure and keeps its growth; a rule above replaces a line outright.</p>
+    ${embedControls('baselines')}</div></details>`;
   const undo=_budgetUndo?`<div class="bd-undo" role="status"><span>${advEscape(_budgetUndo.label)}${_budgetUndo.notes.map(n=>` · your ${n.years.join(', ')} ${n.kind==='later-rule'?'change':'pin'}${n.years.length>1?'s':''} still apply${n.years.length>1?'':'s'}`).join('')}</span><button type="button" onclick="budgetUndoLast()">Undo</button></div>`:'';
   h+=`<section class="cp-card bd-lines"><div class="ps-head"><div><h3>${yr} · line by line</h3><p>Type a dollar figure or a percentage over any line. A percentage is worked out against ${yr}'s ${basisWord} income and then held as dollars — or tie it to income and it follows income every year.</p></div>
       <div class="ps-controls"><div class="spend-scope" role="group" aria-label="Edits apply to">${chip(_budgetScope==='onward',"budgetScope('onward')",`From ${yr} on`)}${chip(_budgetScope==='year',"budgetScope('year')",`${yr} only`)}</div>
         <div class="spend-scope" role="group" aria-label="Share of">${chip(basis==='net',"planShareBasis('net')",'Net')}${chip(basis==='gross',"planShareBasis('gross')",'Gross')}</div></div></div>
-    ${undo}${groups}${oneOff}
+    ${undo}${groups}${oneOff}${baselines}
     ${(P.planItems||[]).length?`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>Plan items you've added</span></div>
       ${(P.planItems||[]).map((it,i)=>`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
         <label class="bd-sug-amt"><span class="ui-sr">Amount</span><input type="text" inputmode="decimal" value="${fmtF(it.amount)}" aria-label="${advEscape(it.label)} amount" onfocus="this.select()" onchange="budgetItemAmount(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${it.from===it.to?'once':'/yr'}</small></label>
@@ -5574,7 +5599,6 @@ document.getElementById('main').innerHTML=`
     <button role="tab" aria-selected="false" data-tab="stripe" onclick="setTab('stripe')">◆ Stripe</button>
     <button role="tab" aria-selected="false" data-tab="today" onclick="setTab('today')">≡ Financial life<span class="nav-badge" id="navAlertBadge" hidden></span></button>
     <button role="tab" aria-selected="false" data-tab="advisor" onclick="setTab('advisor')">✦ Advisor</button>
-    <button role="tab" aria-selected="false" data-tab="inputs" onclick="setTab('inputs')">⚙ Inputs</button>
     <button id="moreBtn" aria-label="More actions" aria-haspopup="true" aria-expanded="false" onclick="toggleMoreMenu(event)" style="margin-left:auto;font-size:11px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;font-family:inherit;line-height:1">⋯</button>
     <!-- The rail carried six items and then 70% empty column. A cockpit's side rail
          should be alive: what needs you, how fresh the data is, and the shape of the
