@@ -1081,7 +1081,9 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .bd-amort>div{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%;min-width:0}
 .bd-amort span{display:block;width:100%;opacity:.85}
 .bd-load{display:flex;gap:2px;align-items:flex-end;height:64px;margin-top:12px}
-.bd-load>div{flex:1;height:100%;display:flex;align-items:flex-end;min-width:0}
+.bd-load>button{flex:1;height:100%;display:flex;align-items:flex-end;min-width:0;padding:0;border:0;background:transparent;cursor:pointer;border-radius:3px}
+.bd-load>button:hover,.bd-load>button.on{background:var(--s3)}
+.bd-load>button.on i{box-shadow:0 0 0 1px var(--tx) inset;opacity:1}
 .bd-load i{display:block;width:100%;background:#ecc183;border-radius:2px 2px 0 0;opacity:.85}
 .bd-load .two i{background:#ff9caf}
 .mc-mode-btn{cursor:pointer}
@@ -1126,3 +1128,10 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .exp-mo{flex:none;min-width:70px;text-align:right;font-size:11px;color:var(--t2);font-variant-numeric:tabular-nums;white-space:nowrap}
 .exp-part .exp-mo{text-align:left;min-width:0;display:block}
 .exp-liv-grid>div:not(.exp-edit-row) .exp-mo{margin-left:auto}
+
+/* Suggestions and checks, at the bottom */
+.bd-assume{margin-top:4px}
+.bd-assume>summary{cursor:pointer;font-weight:600;color:var(--t2)}
+.bd-checks{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+.bd-check{display:flex;flex-direction:column;gap:2px;padding:9px 12px;border-left:2px solid var(--a);background:rgba(236,193,131,.07);border-radius:0 8px 8px 0;font-size:12.5px;color:var(--t2)}
+.bd-check strong{color:var(--tx);font-size:13px}

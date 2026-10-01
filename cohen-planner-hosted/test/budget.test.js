@@ -192,9 +192,9 @@ describe('the Budget screen',()=>{
  it('typing back the figure already shown does not turn a model line into a rule',()=>{
   expect(ui).toMatch(/Math\.abs\(input\.annual-cur\.annual\)<=/);
  });
- it('offers no savings target, and says why the measure is headroom',()=>{
+ it('offers no savings target, and no headroom tile: a plan that draws down by design needs neither',()=>{
   expect(ui).not.toMatch(/savings target|savingsTarget/);
-  expect(ui).toContain('Headroom');
+  expect(ui).not.toContain('bd-headroom');expect(ui).not.toContain('budgetHeadroom');expect(ui).not.toContain('Headroom from');
  });
  it('shows what the model would have said beside a changed line',()=>{
   expect(ui).toContain('model says');
@@ -202,15 +202,20 @@ describe('the Budget screen',()=>{
  });
 });
 
-describe("Ramit's four buckets",()=>{
+describe('the groups a year falls into',()=>{
  const P=plan(),R=M.run(P).R;
- it('sort every line into exactly one bucket, and an unknown one lands in guilt-free',()=>{
+ it('sort every line into exactly one group, and an unknown one lands in discretionary',()=>{
   const all=B.BUCKETS.flatMap(b=>b.lines);
   expect(new Set(all).size).toBe(all.length);
   for(const k of M.LIV_KEYS)expect(B.BUCKETS.some(b=>b.lines.includes(k))).toBe(true);
-  expect(B.bucketOf('groceries')).toBe('fixed');expect(B.bucketOf('vacations')).toBe('saving');
-  expect(B.bucketOf('dining')).toBe('guilt');expect(B.bucketOf('pets')).toBe('guilt');
-  expect(B.BUCKETS.find(b=>b.key==='investing').lines).toEqual([]);
+  expect(B.bucketOf('insurance')).toBe('fixed');expect(B.bucketOf('groceries')).toBe('essential');
+  expect(B.bucketOf('vacations')).toBe('discretionary');expect(B.bucketOf('charity')).toBe('discretionary');
+  expect(B.bucketOf('pets')).toBe('discretionary');
+  expect(B.BUCKETS.find(b=>b.key==='investing').lines).toEqual([]);expect(B.BUCKETS.find(b=>b.key==='saving').lines).toEqual([]);
+ });
+ it('runs fixed, essentials, discretionary, then savings, then investing',()=>{
+  expect(B.BUCKETS.map(b=>b.key)).toEqual(['fixed','essential','discretionary','saving','investing']);
+  expect(B.BUCKETS.filter(b=>b.computed).map(b=>b.key)).toEqual(['saving','investing']);
  });
  it('split a surplus into Stripe kept, portfolio and reserve, adding to the excess exactly',()=>{
   for(const r of R){
@@ -243,18 +248,34 @@ describe("Ramit's four buckets",()=>{
  });
 });
 
-describe("Ramit's buckets on the Budget screen",()=>{
+describe('the groups on the Budget screen',()=>{
  const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
- it('groups the lines under the four buckets, not fixed / essential / discretionary',()=>{
+ it('groups lines as fixed, essentials and discretionary, then savings and investing',()=>{
   expect(ui).toContain('B.BUCKETS.map(b=>{');
-  expect(ui).not.toContain('IS.tierOfLiving(k)===t.key');
-  expect(ui).toContain('Your four buckets');
+  expect(ui).toContain("Where ${yr}'s money goes");
+  expect(ui).not.toContain('Ramit');
+  expect(ui).not.toContain('bd-ruler');
  });
- it('shows Ramit\'s range as a ruler only against take-home, and says where the excess goes',()=>{
-  expect(ui).toContain("basis==='net'?`<div class=\"bd-ruler\"");
-  expect(ui).toContain('B.allocation(P,R,yr)');
-  expect(ui).toContain('B.allocationSeries(P,R)');
+ it('makes savings the emergency fund and investing the Fidelity brokerage and Stripe',()=>{
+  expect(ui).toContain("computedRow('saving','Emergency fund'");
+  expect(ui).toContain("computedRow('investing','Fidelity brokerage'");
+  expect(ui).toContain("computedRow('investing','Stripe shares kept'");
+  expect(ui).toContain('All the cash left over after the emergency fund');
   expect(ui).toContain('Drawing down');
+ });
+ it('moves suggestions and baselines to the bottom, collapsed, with the long check text off the rows',()=>{
+  const render=ui.slice(ui.indexOf('function renderBudgetTab('));
+  expect(render).toContain('${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;');
+  // The NYC household assumptions are not part of the scenarios card any more.
+  expect(html.slice(html.indexOf('function sharedCard('),html.indexOf('function renderBudgetTab('))).not.toContain('budgetNYCNotes()');
+  expect(render).toContain('Suggestions for a family like yours');
+  expect(render.indexOf('class="cp-card bd-sugs"')).toBe(-1);
+  expect(render).not.toContain("${chk?`<span class=\"bd-why\">");
+ });
+ it('lets a tuition year be clicked to budget that year',()=>{
+  const tu=html.slice(html.indexOf('function budgetTuitionHtml('),html.indexOf('function renderBudgetTab('));
+  expect(tu).toContain('onclick="budgetYearSet(${r.yr})"');
+  expect(tu).toContain('aria-pressed="${here}"');
  });
  it('leaves the Spending Plan mode on its own grouping',()=>{
   const lens=html.slice(html.indexOf('function renderIncomeLens('),html.indexOf('let _budgetYear='));

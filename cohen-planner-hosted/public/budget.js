@@ -197,33 +197,31 @@
     };
   }
 
-  // ── Ramit's Conscious Spending Plan ─────────────────────────────────────────
-  // Four buckets for take-home pay: fixed costs, investing, saving goals and guilt-free spending.
-  // The two that are SPENDING (fixed, guilt-free) and the one that is spending-on-goals (saving
-  // goals: vacations and giving, as the household's own ledger groups them) are lines you set.
-  // Investing is not a line — it is what the plan does with what is left — so it is computed.
-  //
-  // The reference ranges are Ramit's published guidance, of take-home pay. They are a ruler held up
-  // beside the plan, not a target: this household saves hard early and draws down later by design.
+  // ── The groups a year's money falls into ───────────────────────────────────
+  // Three of spending, then two of what is not spent. Spending: fixed commitments, everyday
+  // essentials and discretionary — lines you set. Savings is the emergency fund; investing is the
+  // Fidelity brokerage (every dollar of cash left over once the emergency fund is full) and the Stripe
+  // shares kept. Those two are not lines: they are what the plan does with what is left.
   const BUCKETS = [
-    { key: 'fixed', label: 'Fixed costs', range: [0.50, 0.60],
-      note: 'Housing, childcare, tuition, insurance, utilities, transit, auto, groceries, medical',
-      lines: ['housing', 'childcare', 'tuition', 'insurance', 'utilities', 'transit', 'auto', 'groceries', 'medical'] },
-    { key: 'investing', label: 'Investing', range: [0.10, 0.10], computed: true,
-      note: 'Stripe shares kept and money added to the portfolio, from what is left over; 401(k) comes off pay first',
-      lines: [] },
-    { key: 'saving', label: 'Saving goals', range: [0.05, 0.10],
-      note: 'Vacations and giving, and topping up the cash reserve when it is below its floor',
-      lines: ['vacations', 'charity'] },
-    { key: 'guilt', label: 'Guilt-free spending', range: [0.20, 0.35],
-      note: 'Dining, shopping, clothing, entertainment and anything else, with no guilt',
-      lines: ['dining', 'shopping', 'clothing', 'entertainment', 'misc'] },
+    { key: 'fixed', label: 'Fixed commitments',
+      note: 'Arrives whether or not you change how you live: housing, childcare, tuition, insurance, utilities & phone, transit, auto',
+      lines: ['housing', 'childcare', 'tuition', 'insurance', 'utilities', 'transit', 'auto'] },
+    { key: 'essential', label: 'Everyday essentials',
+      note: 'Flexes a little, cannot be skipped: groceries and medical',
+      lines: ['groceries', 'medical'] },
+    { key: 'discretionary', label: 'Discretionary',
+      note: 'Choices: dining, shopping, clothing, vacations, entertainment, charity, misc',
+      lines: ['dining', 'shopping', 'clothing', 'vacations', 'entertainment', 'charity', 'misc'] },
+    { key: 'saving', label: 'Savings', computed: true,
+      note: 'The emergency fund: cash held against the unexpected, filled before anything is invested', lines: [] },
+    { key: 'investing', label: 'Investing', computed: true,
+      note: 'Fidelity brokerage, which takes all the cash left once the emergency fund is full, and Stripe shares kept', lines: [] },
   ];
-  // A line the engine adds later lands in guilt-free rather than vanishing, so the buckets always
+  // A line the engine adds later lands in discretionary rather than vanishing, so the groups always
   // add up to the year's spending.
   const bucketOf = line => {
     const b = BUCKETS.find(x => x.lines.includes(line));
-    return b ? b.key : 'guilt';
+    return b ? b.key : 'discretionary';
   };
 
   // What a year's money does, in the order the plan actually does it. `excess` is the year's net
@@ -250,7 +248,7 @@
     // Fixed costs, per month, for the reserve in months.
     const liv = r.livFullParts || {};
     const fixed = (r.hFull || 0) + (r.ccFull || 0) + (r.tuFull || 0)
-      + BUCKETS[0].lines.filter(k => liv[k] != null).reduce((t, k) => t + liv[k], 0);
+      + BUCKETS[0].lines.concat(BUCKETS[1].lines).filter(k => liv[k] != null).reduce((t, k) => t + liv[k], 0);
     return {
       year, flow, excess, deficit,
       investing: { stripe: Math.round(stripe), portfolio: Math.round(invested), total: Math.round(stripe + invested), k401 },

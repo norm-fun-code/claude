@@ -25,7 +25,7 @@ describe('the Goals tab is gone and each part has a home',()=>{
   expect(html).toContain('h+=budgetTuitionHtml(R,P);');
   const render=html.slice(html.indexOf('function renderBudgetTab('));
   expect(render.indexOf('h+=budgetTuitionHtml(R,P);')).toBeGreaterThan(render.indexOf('The shape of the plan'));
-  expect(render.indexOf('h+=budgetTuitionHtml(R,P);')).toBeLessThan(render.indexOf('// ── Headroom ──'));
+  expect(render.indexOf('h+=budgetTuitionHtml(R,P);')).toBeLessThan(render.indexOf('h+=sharedCard();'));
  });
  it('puts risk and confidence under the net-worth chart, once',()=>{
   expect(html).toContain('function riskFoldHtml()');
