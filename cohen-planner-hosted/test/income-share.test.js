@@ -106,8 +106,12 @@ describe('categories against income',()=>{
   const spend=html.slice(html.indexOf('function renderSpendingTab('));
   expect(html).toContain("let _catLensBasis='net';");
   expect(spend.indexOf('h+=renderCategoryLens(')).toBeGreaterThan(spend.indexOf('class="spend-visuals"'));
-  expect(spend.indexOf('h+=renderPlanShareCard(R);')).toBeGreaterThan(spend.indexOf('h+=renderCategoryLens('));
-  expect(spend.indexOf('h+=renderPlanShareCard(R);')).toBeLessThan(spend.indexOf('Category details'));
+  // Also rendered in the two early-return branches (no history, or an error), so the plan view
+  // is there without imports; the one that matters for order is the last.
+  expect(spend.match(/h\+=renderPlanShareCard\(R\);/g).length).toBe(3);
+  const last=spend.lastIndexOf('h+=renderPlanShareCard(R);');
+  expect(last).toBeGreaterThan(spend.indexOf('h+=renderCategoryLens('));
+  expect(last).toBeLessThan(spend.indexOf('Category details'));
   const lens=html.slice(html.indexOf('function renderCategoryLens('),html.indexOf('function renderSpendingTab('));
   expect(lens).toContain("const basis=have?_catLensBasis:'spend';");
  });
