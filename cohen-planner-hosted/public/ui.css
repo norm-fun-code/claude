@@ -1213,3 +1213,21 @@ body:has(.demo-banner) .bd-bar{top:46px}
   .bd-snack{bottom:96px}
 }
 @media(prefers-reduced-motion:reduce){.bd-snack{transition:none}}
+
+/* Actual so far, against the budget */
+.bd-actual{grid-column:1/-1;display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;margin:2px 0 0;font-size:12px;color:var(--t2)}
+.bd-actual strong{color:var(--tx);font-variant-numeric:tabular-nums}
+.bd-actual.none{color:var(--t3)}
+.bd-pill{font-weight:600;font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+.bd-pill.over,.bd-pill.unplanned{color:#ffb4c4;background:rgba(255,156,175,.12);border-color:rgba(255,156,175,.3)}
+.bd-pill.under{color:#8ce8c7;background:rgba(122,227,195,.12);border-color:rgba(122,227,195,.3)}
+.bd-pill.on{color:var(--t2);background:var(--s3);border-color:var(--bd2)}
+.bd-actual-sum{margin:12px 0 0;font-size:13px;line-height:1.7;color:var(--t2)}
+.bd-actual-sum strong{color:var(--tx)}
+.bd-map{display:flex;flex-direction:column}
+.bd-map-row{display:grid;grid-template-columns:minmax(120px,1.2fr) minmax(80px,.7fr) minmax(130px,1fr) minmax(90px,.8fr);gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--bd);font-size:13px;color:var(--tx)}
+.bd-map-row small{color:var(--t3);font-variant-numeric:tabular-nums}
+.bd-map-row select{padding:6px 8px;border-radius:7px;border:1px solid var(--bd2);background:var(--s3);color:var(--tx);font:inherit;font-size:12px}
+.bd-map-row em{font-style:normal;font-size:12px;color:var(--t3)}
+.bd-map-row.unmatched span{color:var(--a)}
+@media(max-width:760px){.bd-map-row{grid-template-columns:1fr 1fr}.bd-map-row em{grid-column:1/-1}}

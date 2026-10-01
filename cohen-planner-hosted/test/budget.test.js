@@ -441,7 +441,7 @@ describe('Budget layout: the lines come first',()=>{
  it('opens with one summary card, then the line by line, and everything else folds below',()=>{
   const at=s=>render.indexOf(s);
   expect(at('<section class="cp-card bd-buckets">')).toBeLessThan(at('<section class="cp-card bd-lines">'));
-  expect(at('<section class="cp-card bd-lines">')).toBeLessThan(at('${overTimeHtml}${scenarioFold}${assumeHtml}'));
+  expect(at('<section class="cp-card bd-lines">')).toBeLessThan(at('${overTimeHtml}${mapFold}${scenarioFold}${assumeHtml}'));
   for(const piece of ['const phasesHtml=','const tuitionHtml=','const fundHtml=','const sharedHtml='])expect(render).toContain(piece);
   // None of the over-time material is emitted before the lines any more.
   const before=render.slice(0,at('<section class="cp-card bd-lines">'));
@@ -491,5 +491,77 @@ describe('what an edit does, and feedback where you are working',()=>{
  it('dismisses itself, and undo hides it',()=>{
   expect(ui).toContain('setTimeout(budgetSnackHide,12000)');
   expect(html.slice(html.indexOf('function budgetUndoLast('),html.indexOf('\n}\n',html.indexOf('function budgetUndoLast('))+3)).toContain('budgetSnackHide()');
+ });
+});
+
+describe('actual against budget',()=>{
+ const spend=(extra)=>({endDate:'2026-10-14',months:[
+  {month:'2026-01',categories:[{name:'Groceries',net:1000},{name:'Rent',net:5500},{name:'Zorp',net:300}]},
+  {month:'2026-02',categories:[{name:'Groceries',net:1200},{name:'Rent',net:5500},{name:'Zorp',net:100},{name:'Transfers',net:9000}]},
+  {month:'2026-10',categories:[{name:'Groceries',net:200}]},                       // the month in progress
+  {month:'2025-12',categories:[{name:'Groceries',net:9999}]},                        // another year
+ ],...extra});
+ it('maps the bank\'s category names to budget lines, and lets your correction win',()=>{
+  const cases={Groceries:'groceries','Gas & Electric':'utilities',Gas:'auto','Restaurants & Bars':'dining','Coffee Shops':'dining','Travel & Vacation':'vacations','Health Insurance':'medical',Insurance:'insurance','Parking & Tolls':'transit',Gifts:'misc','Home Improvement':'shopping',Childcare:'childcare',Rent:'housing'};
+  for(const [n,l] of Object.entries(cases))expect(B.lineOfCategory(n),n).toBe(l);
+  expect(B.lineOfCategory('Zorp')).toBe(null);
+  expect(B.lineOfCategory('Zorp',{zorp:'dining'})).toBe('dining');
+  expect(B.lineOfCategory('Rent',{rent:'ignore'})).toBe('ignore');
+  expect(B.lineOfCategory('Zorp',{zorp:'not-a-line'})).toBe(null);
+ });
+ it('averages the closed months of the year per month, leaving out the month in progress and other years',()=>{
+  const a=B.actuals(spend(),2026,{});
+  expect(a.months).toBe(2);expect(a.through).toBe('2026-02');
+  expect(a.lines.groceries).toEqual({total:2200,perMonth:1100});
+  expect(a.lines.housing.perMonth).toBe(5500);
+ });
+ it('reports what it could not map instead of guessing, and keeps ignored categories out of the total',()=>{
+  const a=B.actuals(spend(),2026,{transfers:'ignore'});
+  expect(a.unmapped).toEqual([{name:'Zorp',total:400,perMonth:200}]);
+  expect(a.unmappedTotal).toBe(400);
+  expect(a.total).toBe(2200+11000+400);                       // transfers ignored, zorp counted
+  expect(a.perMonth).toBe((2200+11000+400)/2);
+  const mapped=B.actuals(spend(),2026,{transfers:'ignore',zorp:'misc'});
+  expect(mapped.unmapped).toEqual([]);expect(mapped.lines.misc.total).toBe(400);
+ });
+ it('says nothing when there are no records for the year, or the records failed',()=>{
+  expect(B.actuals(spend(),2031,{})).toBe(null);
+  expect(B.actuals(null,2026,{})).toBe(null);expect(B.actuals({error:'x'},2026,{})).toBe(null);
+  expect(B.actuals({months:[]},2026,{})).toBe(null);
+ });
+ it('calls a pace on, over, under or unplanned, in both-per-month terms',()=>{
+  expect(B.variance(1000,1050).status).toBe('on');
+  expect(B.variance(1000,1300)).toMatchObject({status:'over',diff:300,pct:.3});
+  expect(B.variance(1000,600)).toMatchObject({status:'under',diff:-400});
+  expect(B.variance(0,400)).toMatchObject({status:'unplanned'});
+  expect(B.variance(0,20).status).toBe('on');                 // a few dollars is not "unplanned"
+  expect(B.variance(100,140).status).toBe('on');              // 40% of a small line, but under $50
+ });
+});
+
+describe('actual against budget on the Budget screen',()=>{
+ const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
+ it('compares only the year we are in, and loads the imported records itself',()=>{
+  expect(ui).toContain('const act=yr===PlannerTime.year()?B.actuals(_spend,yr,P.monarchLineMap):null;');
+  expect(ui).toContain('if(_spend===null&&!_spendLoading&&!_demoMode)loadSpending();');
+  expect(html.slice(html.indexOf('async function loadSpending('),html.indexOf('\n}\n',html.indexOf('async function loadSpending('))+3)).toContain("_todayView==='budget'");
+ });
+ it('shows each line\'s actual pace and a verdict, offers to adopt it, and says when nothing matched',()=>{
+  for(const piece of ['const actualStrip=','Actual so far <strong>','No ${yr} spending matched this line yet','budgetSetActual(','B.variance(value/12,ln.perMonth)'])expect(ui).toContain(piece);
+  expect(ui).toContain("readonly||v.status==='on'?'':");           // no adopt button on a read-only line, or one already on pace
+ });
+ it('puts the total pace against the total budget in the summary, and mentions what did not match',()=>{
+  expect(ui).toContain('Actual spending so far in ${yr}');
+  expect(ui).toContain('not matched to a line');
+ });
+ it('lets you correct a mapping, stores it with the plan, and keeps "leave out" as a choice',()=>{
+  expect(html).toContain('function budgetMapSet(name,line)');
+  expect(ui).toContain('Leave out');
+  expect(ui).toContain("bdFold('map')");
+  expect(ui).toContain('${overTimeHtml}${mapFold}${scenarioFold}');
+ });
+ it('adopting a pace is an ordinary edit, with the same scope, snackbar and undo',()=>{
+  const fn=html.slice(html.indexOf('function budgetSetActual('),html.indexOf('\n}\n',html.indexOf('function budgetSetActual('))+3);
+  expect(fn).toContain('PlannerBudget.edit(P,');expect(fn).toContain('budgetApply(e,');expect(fn).toContain('scope:_budgetScope');
  });
 });

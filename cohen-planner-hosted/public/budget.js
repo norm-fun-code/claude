@@ -289,7 +289,76 @@
     return { total, months: a && a.fixedPerMonth > 0 ? Math.round(total / a.fixedPerMonth * 10) / 10 : null };
   }
 
-  const api = { BUCKETS, EMERGENCY, emergencyKey, bucketOf, allocation, allocationSeries, emergencySaved, modelPlan, parseInput, edit, describe, funding, phases, headroom, feasible };
+  // ── Actual against budget ──────────────────────────────────────────────────
+  // The imported records speak in the bank's categories; the budget speaks in lines. The bridge is a
+  // list of plain rules, first match wins, and a map of your own corrections that always beats them.
+  // Anything that matches nothing is reported as unmapped rather than guessed at, so the totals never
+  // quietly omit or invent spending.
+  const CATEGORY_RULES = [
+    ['housing', /\b(rent|mortgage|hoa|property tax|co-?op|condo fee)\b/],
+    ['childcare', /child ?care|day ?care|nanny|babysit|preschool|after.?school/],
+    ['tuition', /tuition|school|education|yeshiva/],
+    ['groceries', /grocer|supermarket/],
+    ['dining', /restaurant|dining|coffee|\bbars?\b|food delivery|takeout|fast food/],
+    ['clothing', /cloth|apparel|shoe/],
+    ['vacations', /travel|vacation|hotel|airfare|flight/],
+    ['entertainment', /entertain|recreation|movie|music|streaming|subscription|hobby|sport|fitness|gym/],
+    ['charity', /charit|donation|tithe|giving/],
+    ['medical', /medical|health|dental|doctor|pharmac|vision/],
+    ['insurance', /insurance/],
+    ['utilities', /phone|internet|cable|gas (&|and) electric|electric|utilit|water|wireless/],
+    ['transit', /transit|taxi|ride ?share|uber|lyft|parking|toll|public transport|\bbus\b|\btrain\b/],
+    ['auto', /\bauto\b|\bcar\b|vehicle|fuel|^gas$|gas station|car wash/],
+    ['misc', /\bgifts?\b|misc|uncategor|\bfees?\b|bank/],
+    ['shopping', /shopping|personal|home|household|electronic|furnish|garden|pet|baby|kids/],
+  ];
+  const LINES = BUCKETS.flatMap(b => b.lines);
+  const normCat = n => String(n == null ? '' : n).trim().toLowerCase();
+  // 'ignore' keeps a category out of the comparison on purpose.
+  function lineOfCategory(name, overrides) {
+    const key = normCat(name), o = overrides && overrides[key];
+    if (o && (LINES.includes(o) || o === 'ignore')) return o;
+    for (const [line, re] of CATEGORY_RULES) if (re.test(key)) return line;
+    return null;
+  }
+
+  // Closed months of `year` that the records cover, from the spending summary the page already holds.
+  // The month in progress is left out: a half-finished month reads as a saving that has not happened.
+  function actuals(spend, year, overrides) {
+    if (!spend || spend.error || !Array.isArray(spend.months)) return null;
+    const asOf = String(spend.endDate || '').slice(0, 7);
+    const months = spend.months.filter(m => String(m.month).slice(0, 4) === String(year) && (!asOf || String(m.month) < asOf));
+    if (!months.length) return null;
+    const perLine = {}, unmapped = {}, ignored = {};
+    let total = 0;
+    for (const m of months) for (const c of (m.categories || [])) {
+      const net = Number(c.net) || 0, line = lineOfCategory(c.name, overrides);
+      if (line === 'ignore') { ignored[c.name] = (ignored[c.name] || 0) + net; continue; }
+      total += net;
+      if (line) perLine[line] = (perLine[line] || 0) + net;
+      else unmapped[c.name] = (unmapped[c.name] || 0) + net;
+    }
+    const n = months.length;
+    const per = v => v / n;
+    return {
+      year, months: n, through: months[months.length - 1].month,
+      total, perMonth: per(total),
+      lines: Object.fromEntries(Object.entries(perLine).map(([k, v]) => [k, { total: v, perMonth: per(v) }])),
+      unmapped: Object.entries(unmapped).map(([name, v]) => ({ name, total: v, perMonth: per(v) })).sort((a, b) => b.total - a.total),
+      unmappedTotal: Object.values(unmapped).reduce((t, v) => t + v, 0),
+    };
+  }
+
+  // Pace against budget for one line: both per month, so a part-year of records compares like for like.
+  // Within 10% (and $50 a month) is on pace; the labels never call a miss a failure.
+  function variance(budgetPerMonth, actualPerMonth) {
+    const b = Number(budgetPerMonth) || 0, a = Number(actualPerMonth) || 0, diff = a - b;
+    if (Math.abs(diff) < 50 || (b > 0 && Math.abs(diff) / b < 0.10)) return { status: 'on', diff, pct: b > 0 ? diff / b : null };
+    if (b <= 0) return { status: 'unplanned', diff, pct: null };
+    return { status: diff > 0 ? 'over' : 'under', diff, pct: diff / b };
+  }
+
+  const api = { CATEGORY_RULES, lineOfCategory, actuals, variance, BUCKETS, EMERGENCY, emergencyKey, bucketOf, allocation, allocationSeries, emergencySaved, modelPlan, parseInput, edit, describe, funding, phases, headroom, feasible };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PlannerBudget = api;
 })(typeof window !== 'undefined' ? window : this);

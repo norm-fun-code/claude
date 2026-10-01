@@ -3246,7 +3246,7 @@ async function loadSpending(){
     _spend=a;_syncStatus=b;
   }catch(e){_spend={error:e.message};}
   _spendLoading=false;
-  if(activeTab==='today'&&_todayView==='spending')render();
+  if(activeTab==='today'&&(_todayView==='spending'||_todayView==='budget'))render();
 }
 
 async function startBackfill(months){
@@ -3264,7 +3264,7 @@ function pollSync(){
     try{
       const r=await fetch('/api/monarch/sync/status');
       _syncStatus=await r.json();
-      if(activeTab==='today'&&_todayView==='spending')render();
+      if(activeTab==='today'&&(_todayView==='spending'||_todayView==='budget'))render();
       if(!_syncStatus.running){clearInterval(_syncPoll);_syncPoll=null;loadSpending();}
     }catch(e){clearInterval(_syncPoll);_syncPoll=null;}
   },2500);
@@ -3601,6 +3601,20 @@ function budgetJump(key){
   const stuck=bar?(parseFloat(getComputedStyle(bar).top)||0)+bar.offsetHeight:0;
   window.scrollTo({top:el.getBoundingClientRect().top+window.scrollY-stuck-12,behavior:calm?'auto':'smooth'});
 }
+// Set a line to the pace the imported records show, over the years the scope says.
+function budgetSetActual(cat){
+  const cur=budgetCurrent(cat),a=PlannerBudget.actuals(_spend,cur.yr,P.monarchLineMap);
+  const ln=a&&a.lines[cat];if(!ln)return;
+  const annual=Math.round(ln.perMonth*12);
+  const e=PlannerBudget.edit(P,{category:cat,year:cur.yr,scope:_budgetScope,input:{kind:'amount',annual},basis:budgetBasisKey(),income:{net:cur.row.netTC,gross:cur.row.gross}});
+  if(e.ok)budgetApply(e,`${LIV_LABEL[cat]||cat} → ${fmtF(Math.round(ln.perMonth))}/mo, your actual pace, ${_budgetScope==='year'?cur.yr+' only':'from '+cur.yr}`);
+}
+// Your correction of how an imported category maps to a budget line ('' goes back to automatic).
+function budgetMapSet(name,line){
+  const key=String(name).trim().toLowerCase(),m={...(P.monarchLineMap||{})};
+  if(line)m[key]=line;else delete m[key];
+  P.monarchLineMap=m;markDirty();render();savePlannerState();
+}
 function budgetEdit(k){_budgetEdit=_budgetEdit===k?null:k;render()}
 const RM_COLOR={income:'#b8e986',fixed:'#8278ee',essential:'#8bdded',discretionary:'#ecc183',saving:'#6fa8ff',investing:'#7ae3c3',oneoff:'#b6a8ff',tax:'#6b7a90',pretax:'#8ebfff',short:'#ff9caf'};
 const BD_COLOR={cash:'#a3b8cc',stock:'#d4a5ff',savings:'#ff9f7a',left:'#d9e1ea',save:'#7ae3c3',draw:'#ecc183'};
@@ -3864,6 +3878,10 @@ function renderBudgetTab(R,P){
   const basisWord=basis==='gross'?'gross':'net';
   const modelRow=run(B.modelPlan(P)).R.find(r=>r.yr===yr);
   const f=B.funding(row),ph=B.phases(R);
+  // Actual pace, for the year we are in and only then: a past or future year has no records to hold up
+  // against its budget. Loads the imported records if they are not here yet.
+  if(_spend===null&&!_spendLoading&&!_demoMode)loadSpending();
+  const act=yr===PlannerTime.year()?B.actuals(_spend,yr,P.monarchLineMap):null;
     const lbl='font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3)';
   const chip=(on,click,text,dis)=>`<button type="button" class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}"${dis?' disabled':''} onclick="${click}">${text}</button>`;
 
@@ -3923,9 +3941,11 @@ function renderBudgetTab(R,P){
   const exHead=alloc0.excess>0
     ?`${yr} leaves <strong>${amtShort(alloc0.excess)}${unitWord}</strong> over: <strong>${amtShort(alloc0.investing.total)}</strong> goes to investments${alloc0.saving.total?` after <strong>${amtShort(alloc0.saving.total)}</strong> to the emergency fund`:', none to the emergency fund'}.`
     :alloc0.deficit>0?`${yr} spends <strong>${amtShort(alloc0.deficit)}${unitWord}</strong> more than it takes in, so nothing is added to savings or investments — the gap is drawn from them.`:`${yr} comes out level: nothing left over, nothing drawn.`;
+  const actLine=act?(()=>{const v=B.variance(row.totEFull/12,act.perMonth);const word=v.status==='on'?'on pace with the budget':`${Math.abs(v.pct*100).toFixed(0)}% ${v.status==='over'?'above':'below'} the budget`;
+    return `<p class="bd-actual-sum ${v.status}">Actual spending so far in ${yr}: <strong>${fmtF(Math.round(act.perMonth))}/mo</strong> across ${act.months} closed month${act.months===1?'':'s'}, against a budget of <strong>${fmtF(Math.round(row.totEFull/12))}/mo</strong> — <b class="bd-pill ${v.status}">${word}</b>.${act.unmappedTotal>0?` ${fmtF(Math.round(act.unmappedTotal/act.months))}/mo is in categories not matched to a line (see below).`:''}</p>`})():(yr===PlannerTime.year()&&_spendLoading?`<p class="spend-caption" style="margin:10px 0 0">Reading your imported spending…</p>`:'');
   const stockLine=f.stockShare>=0.05?`<p class="spend-caption" style="margin:10px 0 0">${_lensPct(f.stockShare)} of ${yr}'s spending is paid by selling Stripe stock, the part that moves with the share price.${f.fromSavings>0?` ${fmt(f.fromSavings)} comes from savings.`:''}</p>`:'';
   h+=`<section class="cp-card bd-buckets"><div class="ps-head"><div><h3>Where ${yr}'s money goes</h3><p>${exHead}</p></div></div>
-    ${bucketBar}${stockLine}</section>`;
+    ${bucketBar}${actLine}${stockLine}</section>`;
 
   // ── Where this year's money comes from ──
   const seg=[['cash','Cash pay',f.fromCash],['stock','Stripe stock',f.fromStock],['savings','Savings',f.fromSavings],['left','Left over',f.leftover]].filter(s=>s[2]>0);
@@ -3964,11 +3984,24 @@ function renderBudgetTab(R,P){
     <div class="bd-over-in">${phasesHtml}
       <section class="cp-card"><div class="ps-head"><div><h3>Left over, year by year</h3><p>${reserveNote}</p></div></div>${strip}</section>
       ${tuitionHtml}${fundHtml}</div></details>`;
+  const catNames=(()=>{const seen=new Map();for(const m of ((_spend&&_spend.months)||[]))if(String(m.month).slice(0,4)===String(yr))for(const c of (m.categories||[]))seen.set(c.name,(seen.get(c.name)||0)+(Number(c.net)||0));return [...seen.entries()].sort((a,b)=>b[1]-a[1])})();
+  const mapOptions=(cur)=>`<option value=""${!cur?' selected':''}>Automatic</option>`+B.BUCKETS.flatMap(b=>b.lines).map(l=>`<option value="${l}"${cur===l?' selected':''}>${advEscape(LIV_LABEL[l]||l)}</option>`).join('')+`<option value="ignore"${cur==='ignore'?' selected':''}>Leave out</option>`;
+  const mapFold=catNames.length?`<details class="cp-card spend-details bd-over" ${bdFold('map')}><summary>Match your imported categories to budget lines${act&&act.unmapped.length?` · ${act.unmapped.length} unmatched`:''}</summary><div class="bd-over-in">
+    <p class="spend-caption" style="margin:0">Your records use the bank's categories; the budget uses its own lines. These are matched by name, and anything you change here wins. A category set to “Leave out” is kept out of the comparison.</p>
+    <div class="bd-map">${catNames.map(([n,t])=>{const key=n.trim().toLowerCase(),over=(P.monarchLineMap||{})[key],auto=B.lineOfCategory(n,{}),eff=B.lineOfCategory(n,P.monarchLineMap);return `<div class="bd-map-row${eff?'':' unmatched'}"><span>${advEscape(n)}</span><small>${fmt(t)} this year</small><select aria-label="Budget line for ${advEscape(n)}" onchange="budgetMapSet('${advEscape(n).replace(/'/g,'&#39;')}',this.value)">${mapOptions(over||'')}</select><em>${over?'':(auto?'→ '+advEscape(LIV_LABEL[auto]||auto):'no match')}</em></div>`}).join('')}</div></div></details>`:'';
   const scenarioFold=`<details class="cp-card spend-details bd-over" ${bdFold('scenarios')}><summary>Scenarios · what stays the same across your cases</summary><div class="bd-over-in">${sharedHtml}</div></details>`;
 
   // ── The lines ──
   const modelParts=(modelRow&&modelRow.livFullParts)||{};
   const checkByLine=Object.fromEntries(PlannerSuggest.checks(P,R,yr).map(c=>[c.line,c]));
+  const actualStrip=(k,value,readonly)=>{
+    if(!act||k==='emergency'||!(value>0||(act.lines[k]&&act.lines[k].perMonth>0)))return '';
+    const ln=act.lines[k];
+    if(!ln)return `<p class="bd-actual none"><span>No ${yr} spending matched this line yet</span></p>`;
+    const v=B.variance(value/12,ln.perMonth);
+    const word=v.status==='on'?'on pace':v.status==='unplanned'?'not budgeted':`${Math.abs(v.pct*100).toFixed(0)}% ${v.status==='over'?'over':'under'} budget`;
+    return `<p class="bd-actual ${v.status}"><span>Actual so far <strong>${fmtF(Math.round(ln.perMonth))}/mo</strong></span><b class="bd-pill ${v.status}">${word}</b>${readonly||v.status==='on'?'':`<button type="button" class="bd-link" onclick="budgetSetActual('${k}')">Set budget to this pace</button>`}</p>`;
+  };
   const line=(k,label,value,src,opts)=>{
     const o=opts||{};
     const chk=checkByLine[k];
@@ -3991,7 +4024,7 @@ function renderBudgetTab(R,P){
     return `<div class="bd-row" style="--tier:${o.color}">
       <div class="cl-top"><span class="cl-name">${advEscape(label)}${tag}</span>${inputHtml}</div>
       <div class="cl-track"><i style="width:${Math.max(1.5,(o.max>0?value/o.max:0)*100).toFixed(1)}%"></i></div>
-      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord} income</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord} income"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord} income" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord} income</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${chk?`<p class="bd-callout ${chk.status}"><b>${chk.status==='low'?'Looks light':'Looks high'}.</b> ${advEscape(chk.text)}</p>`:''}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${embedControls(k==='housing'?'home':k)}</div>`:''}`;
+      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord} income</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord} income"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord} income" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord} income</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${actualStrip(k,value,o.readonly)}${chk?`<p class="bd-callout ${chk.status}"><b>${chk.status==='low'?'Looks light':'Looks high'}.</b> ${advEscape(chk.text)}</p>`:''}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${embedControls(k==='housing'?'home':k)}</div>`:''}`;
   };
   const living=row.livFullParts||{};
   const c=IS.compute(row,'net');
@@ -4071,7 +4104,7 @@ function renderBudgetTab(R,P){
       ${(P.planItems||[]).map((it,i)=>`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
         <label class="bd-sug-amt"><span class="ui-sr">Amount</span><input type="text" inputmode="decimal" value="${fmtF(it.amount)}" aria-label="${advEscape(it.label)} amount" onfocus="this.select()" onchange="budgetItemAmount(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${it.from===it.to?'once':'/yr'}</small></label>
         <button type="button" class="bd-btn" onclick="budgetRemoveItem(${i})" aria-label="Remove ${advEscape(it.label)}">Remove</button></div>`).join('')}</div>`:''}
-    <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${overTimeHtml}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
+    <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${overTimeHtml}${mapFold}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
 }

@@ -67,7 +67,8 @@ describe('where a year\'s income goes',()=>{
   expect(html).toContain('<script src="/income-share.js"></script>');
   expect(server).toContain("'income-share.js'");
   expect(html).toContain('h+=renderIncomeLens(R,{rows,complete,cov,closedTotal,scopeControl,scopeNote,detailsHtml});');
-  const fn=html.slice(html.indexOf('function renderIncomeLens('),html.indexOf('function renderSpendingTab('));
+  const fn=html.slice(html.indexOf('function renderIncomeLens('),html.indexOf('let _budgetYear='));
+  expect(fn.length).toBeGreaterThan(1000);
   const planSide=fn.slice(fn.indexOf("}else{\n    const yr="));
   expect(planSide).not.toMatch(/_spend\b|loadSpending|complete\b/);
   expect(fn).toContain('Year to look at');
