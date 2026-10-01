@@ -312,7 +312,7 @@ describe('living opens out into its twelve lines', () => {
     // A key present in the engine but missing from the label map must render as itself, not
     // vanish — a line silently dropped from a breakdown is how a total stops adding up.
     expect(html).toContain("const keys=typeof LIV_KEYS!=='undefined'?LIV_KEYS:Object.keys(r.livParts||{});");
-    expect(html).toContain('${advEscape(LIV_LABEL[k]||k)}');
+    expect(html).toContain('const lbl=advEscape(LIV_LABEL[k]||k)');
     for (const k of M.LIV_KEYS) expect(html).toMatch(new RegExp(`${k}:'`));
   });
 
@@ -320,5 +320,66 @@ describe('living opens out into its twelve lines', () => {
     // A year with no tuition read as a breakdown that was missing one, which is the opposite
     // of what opening it is for.
     expect(html).toContain('<strong${v?\'\':\' class="exp-zero"\'}>${v?fmt(v):\'—\'}</strong>');
+  });
+});
+
+describe('editing a year\'s living lines in place', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const fn = html.slice(html.indexOf('function expCatApply('), html.indexOf('function expCatSet('));
+  // The page's own function, run against the real model.
+  const make = (P0, carry) => {
+    const P = plan({ planEndYear: 2040, ...P0 });
+    const api = new Function('P', 'run', 'livingCategoryKey', 'LIV_OVERRIDE_MAX', '_expCarry',
+      fn + '; return {expCatApply};')(P, M.run, M.livingCategoryKey, M.LIV_OVERRIDE_MAX, carry);
+    const row = y => M.run(P).R.find(r => r.yr === y).livFullParts;
+    return { P, row, ...api };
+  };
+  it('pins one year when carry is off, and leaves the rest of the model alone', () => {
+    const { P, row, expCatApply } = make({}, false);
+    const before = make({}, false).row(2030).misc;
+    expCatApply(2027, 'misc', 13125);
+    expect(row(2027).misc).toBe(13125);
+    expect(row(2030).misc).toBe(before);
+    expect(P.livingMiscY2).toBeUndefined();
+  });
+  it('carries the CHANGE forward at inflation, keeping each later year\'s own shape', () => {
+    const base = make({}, true);
+    const was = [2027, 2028, 2035].map(y => base.row(y).misc);
+    base.expCatApply(2027, 'misc', was[0] + 1000);
+    const infl = 1 + base.P.expenseInflation;
+    expect(base.row(2027).misc).toBe(was[0] + 1000);
+    expect(base.row(2028).misc).toBe(Math.round(was[1] + 1000 * infl));
+    expect(base.row(2035).misc).toBe(Math.round(was[2] + 1000 * infl ** 8));
+    expect(base.row(2026).misc).toBe(make({}, true).row(2026).misc);
+  });
+  it('does not flatten a line the model grows on its own', () => {
+    // Kids age, so Misc is not flat. Carrying an edit must not erase that.
+    const { row, expCatApply } = make({}, true);
+    const a = row(2027).misc, b = row(2035).misc;
+    expCatApply(2027, 'misc', a + 500);
+    expect(row(2035).misc - row(2027).misc).not.toBe(0);
+    expect(row(2035).misc).toBeGreaterThan(b);
+  });
+  it('a decrease cannot take a later year below zero', () => {
+    const { row, expCatApply } = make({}, true);
+    expCatApply(2027, 'misc', 0);
+    for (const y of [2027, 2030, 2040]) expect(row(y).misc).toBeGreaterThanOrEqual(0);
+  });
+  it('resetting removes the same span', () => {
+    const { P, expCatApply } = make({}, true);
+    expCatApply(2027, 'misc', 20000);
+    expCatApply(2027, 'misc', null);
+    expect(Object.keys(P).filter(k => k.startsWith('livingMisc'))).toEqual([]);
+  });
+  it('the model honours an override past the old eleven-year limit', () => {
+    const { R } = M.run({ ...plan(), planStartYear: 2026, livingMiscY20: 50000 });
+    expect(R.find(r => r.yr === 2046).livFullParts.misc).toBe(50000);
+    expect(R.find(r => r.yr === 2045).livFullParts.misc).not.toBe(50000);
+  });
+  it('is wired into the row: inputs, a carry toggle, and a save through the usual path', () => {
+    expect(html).toContain('onchange="expCatSet(${r.yr},\'${k}\',this.value)"');
+    expect(html).toContain('onchange="expCarrySet(this.checked)"');
+    const set = html.slice(html.indexOf('function expCatSet('), html.indexOf('function expCatReset('));
+    expect(set).toMatch(/markDirty\(\);buildControls\(\);render\(\);savePlannerState\(\)/);
   });
 });

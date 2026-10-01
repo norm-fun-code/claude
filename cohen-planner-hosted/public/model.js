@@ -301,10 +301,14 @@ const LIV_KEYS=['groceries','dining','shopping','vacations','auto','insurance',
 // uncategorised renovation or wedding can still live in the one-off column. The key shape is
 // kept flat so it survives the same scenario/persistence path as every other plan input.
 const livingCategoryKey=(category,yearIndex)=>`living${category[0].toUpperCase()+category.slice(1)}Y${yearIndex}`;
+// Reaches the whole plan, not just the first eleven years: the table lets any year's line be
+// edited, and carrying an edit forward means writing every later year it covers. One-off
+// adjustments keep their own, shorter limit.
+const LIV_OVERRIDE_MAX=40;
 function livingCategoryOverride(p,category,yr,sy){
   if(!LIV_KEYS.includes(category))return null;
   const i=yr-(sy||p.planStartYear||2026);
-  if(i<0||i>EXPENSE_ADJ_MAX)return null;
+  if(i<0||i>LIV_OVERRIDE_MAX)return null;
   const key=livingCategoryKey(category,i);
   if(!p||p[key]===undefined||p[key]===null||p[key]==='')return null;
   const v=Number(p[key]);
@@ -1074,7 +1078,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

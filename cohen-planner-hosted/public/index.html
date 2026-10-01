@@ -1589,6 +1589,52 @@ function expActualBlock(r){
     <p class="exp-actual-note">Actual is your imported transactions, net of refunds, with transfers and card payments excluded. It counts ${a.elapsed.toFixed(1)} of 12 months, and the plan is scaled to the same stretch. The plan's four categories and your Monarch categories are different taxonomies, so this compares totals, not lines.</p>
   </div>`;
 }
+// ── Editing a year's living lines in place ──────────────────────────────────
+// Each line is a figure the model works out from the baselines, the children and inflation. Typing
+// over it pins that line for that year (livingXxxY<i>). The toggle decides whether the change
+// stops there or becomes the new level for every later year, grown at the plan's expense
+// inflation — which writes those years explicitly, so each stays visible and editable on its own.
+let _expCarry=true;
+function expCarrySet(on){_expCarry=!!on;render()}
+function expCatKeyFor(yr,cat){return livingCategoryKey(cat,yr-(P.planStartYear||2026))}
+function expCatApply(yr,cat,n){
+  // n === null removes the override, so the line goes back to what the model works out.
+  //
+  // A carried change is a DIFFERENCE, not a new level. Misc in 2042 is not 2027's Misc grown
+  // at inflation — the children have aged and the model has said so — so pinning it to the
+  // edited figure would quietly delete that. Each later year keeps its own figure and takes
+  // the edit on top, grown at the plan's expense inflation.
+  const sy=P.planStartYear||2026,end=P.planEndYear||2058,infl=Number(P.expenseInflation)||0;
+  const last=_expCarry?end:yr;
+  const rows=n===null?null:run(P).R;
+  const shown=y=>{const r=rows.find(x=>x.yr===y);return r?((r.livFullParts||r.livParts||{})[cat]||0):0};
+  const delta=n===null?0:n-shown(yr);
+  const next={};
+  for(let y=yr;y<=last;y++){
+    const i=y-sy;
+    if(i<0||i>LIV_OVERRIDE_MAX)break;
+    next[livingCategoryKey(cat,i)]=n===null?null:y===yr?n:Math.max(0,Math.round(shown(y)+delta*(1+infl)**(y-yr)));
+  }
+  // Applied after every figure is read, so no later year is measured against an earlier edit.
+  for(const [key,v] of Object.entries(next)){if(v===null)delete P[key];else P[key]=v}
+  const touched=Object.keys(next).length;
+  return{touched,last:yr+touched-1,infl,delta};
+}
+function expCatSet(yr,cat,val){
+  const raw=String(val).replace(/[^0-9.-]/g,'');
+  if(raw===''){expCatReset(yr,cat);return}
+  const n=Math.max(0,Math.round(parseFloat(raw)));
+  if(!Number.isFinite(n))return;
+  const out=expCatApply(yr,cat,n);
+  markDirty();buildControls();render();savePlannerState();
+  const label=LIV_LABEL[cat]||cat;
+  showToast(`${label} set to ${fmtF(n)} for ${yr}`+(out.last>yr?`, and the change carried through ${out.last} at ${(out.infl*100).toFixed(1).replace(/\.0$/,'')}% a year`:''),'green');
+}
+function expCatReset(yr,cat){
+  const out=expCatApply(yr,cat,null);
+  markDirty();buildControls();render();savePlannerState();
+  showToast(`${LIV_LABEL[cat]||cat} back to the model's figure`+(out.last>yr?` for ${yr}–${out.last}`:` for ${yr}`),'green');
+}
 function expDetailRow(r,span,stub){
   // A zero component shows as a dash rather than disappearing: a year with no tuition read
   // as a year whose breakdown was missing a line, which is the opposite of the point.
@@ -1602,7 +1648,20 @@ function expDetailRow(r,span,stub){
   // Summed from the parts rather than taken from r.liv, so the heading and the twelve lines
   // under it cannot disagree about which period they describe.
   const livTotal=keys.reduce((t,k)=>t+(lp[k]||0),0);
-  const livRows=keys.filter(k=>lp[k]).sort((a,b)=>lp[b]-lp[a]);
+  // Fixed order, every line shown: the figures are editable, and a list that re-sorted itself
+  // under the cursor after each edit — or hid a line at zero — would be a form that fights you.
+  const sy0=P.planStartYear||2026,end0=P.planEndYear||2058,yi=r.yr-sy0;
+  const editable=yi>=0&&yi<=LIV_OVERRIDE_MAX;
+  const infl=((Number(P.expenseInflation)||0)*100).toFixed(1).replace(/\.0$/,'');
+  const livCell=k=>{
+    const pinned=editable&&P[expCatKeyFor(r.yr,k)]!==undefined&&P[expCatKeyFor(r.yr,k)]!==null&&P[expCatKeyFor(r.yr,k)]!=='';
+    const lbl=advEscape(LIV_LABEL[k]||k);
+    if(!editable)return `<div><span>${lbl}</span><strong>${fmt(lp[k]||0)}</strong></div>`;
+    return `<div class="exp-edit-row${pinned?' pinned':''}"><label for="exp_${r.yr}_${k}">${lbl}${pinned?`<i title="Set by you for ${r.yr}" aria-label="Set by you"></i>`:''}</label>
+      <input id="exp_${r.yr}_${k}" class="exp-edit" type="text" inputmode="numeric" value="${fmtF(lp[k]||0)}" aria-label="${lbl}, ${r.yr}"
+        onfocus="this.select()" onchange="expCatSet(${r.yr},'${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+      ${pinned?`<button type="button" class="exp-reset" title="Back to the model's figure" aria-label="Reset ${lbl} for ${r.yr}" onclick="expCatReset(${r.yr},'${k}')">↺</button>`:''}</div>`;
+  };
   return `<tr class="exp-detail"><td colspan="${span}"><div class="exp-detail-in">
     <div class="exp-parts">
       ${part('Housing',r.hFull,'Rent, or mortgage + property tax + insurance + maintenance once the home is bought')}
@@ -1612,9 +1671,11 @@ function expDetailRow(r,span,stub){
       ${r.eAdj?`<div class="exp-part"><span title="A one-off for this year alone — not inflated, not repeated">One-off</span><strong style="color:var(--a)">${signed(r.eAdj)}</strong></div>`:''}
       ${part('Total',r.totEFull,'','exp-part-total')}
     </div>
-    ${livRows.length?`<div class="exp-liv">
-      <div class="exp-liv-head">Inside living · ${fmt(livTotal)}, largest first</div>
-      <div class="exp-liv-grid">${livRows.map(k=>`<div><span>${advEscape(LIV_LABEL[k]||k)}</span><strong>${fmt(lp[k])}</strong></div>`).join('')}</div>
+    ${keys.length?`<div class="exp-liv">
+      <div class="exp-liv-head">Inside living · ${fmt(livTotal)}${editable?' · type over any figure to change it':''}</div>
+      <div class="exp-liv-grid${editable?' exp-liv-edit':''}">${keys.map(livCell).join('')}</div>
+      ${editable?`<label class="exp-carry"><input type="checkbox" ${_expCarry?'checked':''} onchange="expCarrySet(this.checked)">
+        <span><strong>Carry changes into later years</strong>${r.yr<end0?` — ${r.yr+1}–${end0}. Your change is added to each year's figure and grows ${infl}% a year.`:' — this is the last year of the plan.'}${_expCarry?'':` Off: only ${r.yr} changes.`}</span></label>`:''}
     </div>`:''}
     ${expActualBlock(r)}
     <p>Every figure here is summed from the ones beneath it, so the parts add to the total exactly.${r.ptax?` Property tax within housing: ${fmt(r.ptax)}.`:''}${stub?` The plan opened partway through ${r.yr}, so its closing balances grow from only the months after that date — these costs are for the whole year.`:''}</p>

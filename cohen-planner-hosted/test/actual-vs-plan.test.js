@@ -123,6 +123,6 @@ describe('the breakdown answers in the same period as the figure it opened from'
     expect(html).toContain("${part('Total',r.totEFull,");
     // The living heading is summed from the same twelve lines printed beneath it.
     expect(html).toContain('const livTotal=keys.reduce((t,k)=>t+(lp[k]||0),0);');
-    expect(html).toContain('Inside living · ${fmt(livTotal)}, largest first');
+    expect(html).toContain('Inside living · ${fmt(livTotal)}');
   });
 });
