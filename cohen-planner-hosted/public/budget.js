@@ -398,7 +398,45 @@
     return `${fmt(seg.value)} a year in ${seg.from}, then rising with inflation${sized}`;
   }
 
-  const api = { overrides, overrideText, CATEGORY_RULES, lineOfCategory, actuals, variance, BUCKETS, EMERGENCY, emergencyKey, bucketOf, allocation, allocationSeries, emergencySaved, modelPlan, parseInput, edit, describe, funding, phases, headroom, feasible };
+  // ── Call-outs for a whole group, and for the bottom line ─────────────────
+  // The same idea as the per-line call-outs (is this out of bounds, high or low?) one level up. The
+  // ranges are the usual guidance for a household's take-home pay: fixed costs 50-60%, discretionary
+  // 20-35%, and 10% or more kept. They are a ruler, not a verdict, and a plan that saves early and
+  // draws down later will rightly sit outside them in some years; where it does, the text says so.
+  const usd = v => '$' + Math.round(v).toLocaleString('en-US');
+  const pc = v => (v * 100).toFixed(0) + '%';
+  function groupChecks(P, R, year) {
+    const i = R.findIndex(r => r.yr === year);
+    if (i < 0) return {};
+    const r = R[i], net = Number(r.netTC) || 0, gross = Number(r.gross) || 0;
+    if (!(net > 0)) return {};
+    const out = {};
+    const liv = r.livFullParts || {};
+    const spend = lines => lines.reduce((t, k) => t + (k === 'housing' ? r.hFull : k === 'childcare' ? r.ccFull : k === 'tuition' ? r.tuFull : (liv[k] || 0)), 0);
+    const group = key => BUCKETS.find(b => b.key === key).lines;
+    const extra = Object.keys(liv).filter(k => bucketOf(k) === 'discretionary' && !group('discretionary').includes(k));
+    const fixed = spend(group('fixed')) / net, disc = (spend(group('discretionary')) + spend(extra)) / net;
+    if (fixed > 0.60) out.fixed = { status: 'high', text: `Fixed costs are ${pc(fixed)} of net income, above the usual 50–60%. Less room to adjust when something changes.` };
+    else if (fixed < 0.35) out.fixed = { status: 'low', text: `Fixed costs are only ${pc(fixed)} of net income, below the usual 50–60%. Worth checking nothing is missing.` };
+    if (disc > 0.35) out.discretionary = { status: 'high', text: `Discretionary spending is ${pc(disc)} of net income, above the usual 20–35%.` };
+    else if (disc < 0.15) out.discretionary = { status: 'low', text: `Discretionary spending is only ${pc(disc)} of net income, below the usual 20–35%. Lean, or some lines are under-budgeted.` };
+    // Housing against what lenders look at: its share of gross income.
+    if (gross > 0 && r.hFull / gross > 0.28)
+      out.housing = { status: 'high', text: `Housing is ${pc(r.hFull / gross)} of gross income (${usd(r.hFull / 12)} a month), above the 28% lenders usually look for.` };
+    const a = allocation(P, R, year);
+    const phase = phases(R).find(ph => year >= ph.from && year <= ph.to);
+    const planned = phase && phase.kind === 'draw' ? ` The plan expects to draw down in ${phase.from}–${phase.to}, so this one is by design.` : '';
+    if (a && a.deficit > 0) out.bottom = { status: 'draw', text: `${year} spends ${usd(a.deficit)} more than it takes in, met by selling Stripe shares and drawing on the brokerage.${planned}` };
+    else if (a && a.excess / net < 0.10) {
+      const kept = a.excess / net;
+      out.investing = { status: 'low', text: `Only ${pc(kept)} of net income is left to save and invest, below the usual 10% or more.${planned}` };
+    }
+    if (a && a.reserveMonths != null && a.reserveMonths < 3)
+      out.saving = { status: 'low', text: `The ${usd(a.reserveFloor)} reserve floor covers only ${a.reserveMonths} months of fixed costs; the usual guidance is 3–6 months.` };
+    return out;
+  }
+
+  const api = { groupChecks, overrides, overrideText, CATEGORY_RULES, lineOfCategory, actuals, variance, BUCKETS, EMERGENCY, emergencyKey, bucketOf, allocation, allocationSeries, emergencySaved, modelPlan, parseInput, edit, describe, funding, phases, headroom, feasible };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PlannerBudget = api;
 })(typeof window !== 'undefined' ? window : this);

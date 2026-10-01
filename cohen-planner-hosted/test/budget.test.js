@@ -607,12 +607,13 @@ describe('everything you have changed',()=>{
 // the render function and checks every name used is defined above where it is first used.
 describe('the Budget render defines what it uses before it uses it',()=>{
  const src=html.slice(html.indexOf('function renderBudgetTab('));
- const body=src.slice(0,src.indexOf('\n}\n'));
+ // Comments are prose, and a comment that says "the groups" is not a use of `groups`.
+ const body=src.slice(0,src.indexOf('\n}\n')).replace(/(^|\s)\/\/[^\n]*/g,'$1');
  const defs=[...body.matchAll(/^  const (\w+)\s*=/gm)].map(m=>({name:m[1],at:m.index}));
  it('has every top-level const defined before any later template or statement mentions it',()=>{
   const late=[];
   for(const d of defs){
-   if(d.name.length<3)continue;                                    // one- and two-letter names are parameters almost everywhere
+   if(d.name.length<2)continue;                                    // single letters are parameters almost everywhere
    const re=new RegExp('(?<![\\w.$\'"`])'+d.name+'(?![\\w$\'"`:])','g');   // not a property, a string, or an object key
    let m;while((m=re.exec(body))){
     if(m.index<d.at){
@@ -645,5 +646,77 @@ describe('changes over time on the Budget screen',()=>{
   const fn=html.slice(html.indexOf('function budgetRemoveOverride('),html.indexOf('\n}\n',html.indexOf('function budgetRemoveOverride('))+3);
   expect(fn).toContain('budgetChange(');expect(fn).toContain('budgetRemoveItem(');
   expect(fn).toContain('segs.splice(Number(ref),1)');
+ });
+});
+
+describe('call-outs for a whole group, and the bottom line',()=>{
+ const R0=M.run(plan()).R;
+ const withSpend=(over)=>{const P=plan(over);return {P,R:M.run(P).R}};
+ it('flags fixed costs above the usual range, and below it, and says nothing in between',()=>{
+  const {P,R}=withSpend();
+  expect(B.groupChecks(P,R,2031).fixed).toMatchObject({status:'high'});
+  expect(B.groupChecks(P,R,2031).fixed.text).toContain('above the usual 50–60%');
+  // Crafted rows: fixed costs set to an exact share of net income, nothing else in the group.
+  const at=share=>R.map(r=>r.yr===2031?{...r,hFull:share*r.netTC,ccFull:0,tuFull:0,livFullParts:{}}:r);
+  expect(B.groupChecks(P,at(.75),2031).fixed).toMatchObject({status:'high'});
+  expect(B.groupChecks(P,at(.55),2031).fixed).toBeUndefined();
+  expect(B.groupChecks(P,at(.40),2031).fixed).toBeUndefined();
+  expect(B.groupChecks(P,at(.20),2031).fixed).toMatchObject({status:'low'});
+  expect(B.groupChecks(P,at(.20),2031).fixed.text).toContain('below the usual 50–60%');
+ });
+ it('flags discretionary spending above or below its usual range',()=>{
+  const {P,R}=withSpend({budgetRules:{dining:[{from:2026,kind:'amount',value:90000}]}});
+  const c=B.groupChecks(P,R,2030).discretionary;
+  expect(c).toMatchObject({status:'high'});expect(c.text).toContain('20–35%');
+  const lean=withSpend({budgetRules:Object.fromEntries(['dining','shopping','vacations','entertainment','misc','charity','clothing'].map(k=>[k,[{from:2026,kind:'amount',value:500}]]))});
+  expect(B.groupChecks(lean.P,lean.R,2030).discretionary).toMatchObject({status:'low'});
+ });
+ it('flags housing against the share of gross income lenders look at',()=>{
+  const {P,R}=withSpend({nycRent:30000,rentCap:60000,housingMode:'rent'});
+  const c=B.groupChecks(P,R,2027).housing;
+  expect(c).toMatchObject({status:'high'});expect(c.text).toContain('28%');
+  expect(B.groupChecks(plan(),R0,2027).housing).toBeUndefined();
+ });
+ it('says when a year spends more than it takes in, and whether the plan meant it',()=>{
+  const P=plan(),R=M.run(P).R,deficit=R.find(r=>r.flowFull<-1000);
+  const c=B.groupChecks(P,R,deficit.yr).bottom;
+  expect(c.status).toBe('draw');expect(c.text).toContain('more than it takes in');
+  expect(c.text).toContain('by design');            // the plan itself runs a drawing-down stretch there
+  expect(B.groupChecks(P,R,2027).bottom).toBeUndefined();
+ });
+ it('flags too little left to save, but never in a deficit year (that is the bottom line\'s job)',()=>{
+  const P=plan(),R=M.run(P).R;
+  const thin=R.find(r=>r.flowFull>0&&r.flowFull/r.netTC<.10);
+  expect(thin).toBeTruthy();
+  const c=B.groupChecks(P,R,thin.yr);
+  expect(c.investing).toMatchObject({status:'low'});expect(c.bottom).toBeUndefined();
+  const deficit=R.find(r=>r.flowFull<-1000);
+  expect(B.groupChecks(P,R,deficit.yr).investing).toBeUndefined();
+ });
+ it('flags a reserve floor that covers under three months of fixed costs',()=>{
+  const P=plan({liquidReserveFloor:30000}),R=M.run(P).R;
+  expect(B.groupChecks(P,R,2030).saving).toMatchObject({status:'low'});
+  expect(B.groupChecks(plan(),R0,2030).saving).toBeUndefined();
+ });
+ it('returns nothing for a year outside the plan, and does not touch the plan',()=>{
+  expect(B.groupChecks(plan(),R0,1999)).toEqual({});
+  const P=plan(),snap=JSON.stringify(P);B.groupChecks(P,R0,2031);expect(JSON.stringify(P)).toBe(snap);
+ });
+});
+
+describe('group call-outs and bigger targets on the Budget screen',()=>{
+ const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
+ const css=fs.readFileSync(new URL('../public/ui.css',import.meta.url),'utf8');
+ it('shows a call-out under each group and under the bottom line, and a housing one on its row',()=>{
+  expect(ui).toContain('const gc=B.groupChecks(P,R,yr);');
+  expect(ui).toContain("${callout(gc[b.key])}<div class=\"cl-list\">");
+  expect(ui).toContain('${callout(gc.bottom)}</div>`;');
+  expect(ui).toContain('if(gc.housing)checkByLine.housing=');
+  expect(ui).toContain("c.status==='low'?'Looks light':c.status==='draw'?'Heads up':'Looks high'");
+ });
+ it('makes the small text and the tap targets larger',()=>{
+  expect(css).toContain('.bd-pct{min-height:30px;font-size:13px;width:58px}');
+  expect(css).toContain('.bd-tag{font-size:11px;padding:2px 8px}');
+  expect(css).toContain('@media(pointer:coarse){.bd-pct{min-height:38px}.bd-link{min-height:40px}');
  });
 });

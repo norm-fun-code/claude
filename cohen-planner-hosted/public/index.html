@@ -3897,6 +3897,8 @@ function renderBudgetTab(R,P){
   if(_spend===null&&!_spendLoading&&!_demoMode)loadSpending();
   const act=yr===PlannerTime.year()?B.actuals(_spend,yr,P.monarchLineMap):null;
   const allOv=B.overrides(P);                    // every rule, pin and plan item, for the markers and the list
+  const gc=B.groupChecks(P,R,yr);                // call-outs for whole groups and the bottom line
+  const callout=c=>c?`<p class="bd-callout ${c.status==='low'?'low':c.status==='draw'?'draw':''}"><b>${c.status==='low'?'Looks light':c.status==='draw'?'Heads up':'Looks high'}.</b> ${advEscape(c.text)}</p>`:'';
     const lbl='font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3)';
   const chip=(on,click,text,dis)=>`<button type="button" class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}"${dis?' disabled':''} onclick="${click}">${text}</button>`;
 
@@ -4013,6 +4015,7 @@ function renderBudgetTab(R,P){
   // ── The lines ──
   const modelParts=(modelRow&&modelRow.livFullParts)||{};
   const checkByLine=Object.fromEntries(PlannerSuggest.checks(P,R,yr).map(c=>[c.line,c]));
+  if(gc.housing)checkByLine.housing={status:gc.housing.status,text:gc.housing.text};
   const ovUnit=v=>mo?`${fmtF(Math.round(v/12))}/mo`:`${fmtF(Math.round(v))}/yr`;
   const changeChips=k=>{
     const mine=allOv.filter(o=>o.category===k&&o.type!=='item');
@@ -4097,7 +4100,7 @@ function renderBudgetTab(R,P){
     const spent=groupTotal(b.key),share=den>0?spent/den:0;
     const rows=b.key==='investing'?investRows():b.key==='saving'?savingRows():bucketRows(b.key);
     return `<div class="cl-group bd-sec" id="bd-g-${b.key}" style="--tier:${RM_COLOR[b.key]}"><div class="cl-ghead"><span><i></i>${advEscape(b.label)}</span><span class="cl-gtot">${_lensPct(share)} <small>${amtShort(spent)}${unitWord}</small></span></div>
-      <p class="cl-gnote">${advEscape(b.note)}</p><div class="cl-list">${rows}</div></div>`;
+      <p class="cl-gnote">${advEscape(b.note)}</p>${callout(gc[b.key])}<div class="cl-list">${rows}</div></div>`;
   });
   // ── The top of the page, the way a P&L starts: what comes in, what comes off, what is left to
   // allocate. Read-only here because income is set where it is earned (Stripe compensation, Nancy).
@@ -4109,7 +4112,7 @@ function renderBudgetTab(R,P){
       <div class="cl-list">${inRow('Norm — cash pay',row.normCash,'comp','Compensation')}${inRow('Norm — Stripe stock at vest',row.normStock,'comp','Compensation','Counted at its vest value; you cannot spend it until you sell it')}${inRow('Nancy',row.nancyG,'nancy','Inputs')}</div>
       <div class="bd-pls">${subRow('Gross income',gross,'',true)}${subRow('Taxes',taxes,'−')}${subRow('401(k), benefits & practice costs',pretaxCosts,'−')}${subRow('Net income',net,'',true)}</div></div>`;
   const spendTotal=Math.round(row.totEFull),left=net-spendTotal;
-  const bottomLine=`<div class="bd-bottom"><div><span>Net income</span><strong>${amt(net)}<small>${unitWord}</small></strong></div><b>−</b><div><span>Spending</span><strong>${amt(spendTotal)}<small>${unitWord}</small></strong></div><b>=</b><div class="${left<0?'neg':'pos'}"><span>${left<0?'Drawn from savings & Stripe':'Left over'}</span><strong>${left<0?'−':''}${amt(Math.abs(left))}<small>${unitWord}</small></strong></div><p>${left<0?'That is the shortfall the plan covers by selling Stripe shares and drawing on the brokerage.':'Savings and investments below divide this.'}</p></div>`;
+  const bottomLine=`<div class="bd-bottom"><div><span>Net income</span><strong>${amt(net)}<small>${unitWord}</small></strong></div><b>−</b><div><span>Spending</span><strong>${amt(spendTotal)}<small>${unitWord}</small></strong></div><b>=</b><div class="${left<0?'neg':'pos'}"><span>${left<0?'Drawn from savings & Stripe':'Left over'}</span><strong>${left<0?'−':''}${amt(Math.abs(left))}<small>${unitWord}</small></strong></div><p>${left<0?'That is the shortfall the plan covers by selling Stripe shares and drawing on the brokerage.':'Savings and investments below divide this.'}</p>${callout(gc.bottom)}</div>`;
   // Income, then the spending groups, then what is left, then what is done with it.
   const groups=incomeSec+bucketParts[0]+bucketParts[1]+bottomLine+bucketParts[2]+bucketParts[3];
   // A way to move between the sections without scrolling for them: each chip is a section, with its

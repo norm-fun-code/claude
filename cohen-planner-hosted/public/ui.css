@@ -1247,3 +1247,18 @@ body:has(.demo-banner) .bd-bar{top:46px}
 .bd-led-kind.rule{color:#b6a8ff}.bd-led-kind.pin{color:var(--a)}
 .bd-led-text{color:var(--t2)}
 @media(max-width:760px){.bd-led-row{grid-template-columns:1fr auto}.bd-led-text{grid-column:1/-1;order:3}.bd-led-kind{justify-self:start}}
+
+/* Group and bottom-line call-outs; bigger text and targets on the Budget */
+.bd-callout.draw{border-left-color:#ff9caf;background:rgba(255,156,175,.08)}.bd-callout.draw b{color:#ff9caf}
+.cl-group>.bd-callout,.bd-bottom>.bd-callout{margin:2px 0 6px}
+.bd-bottom>.bd-callout{flex:1 1 100%}
+.bd-lines .cl-sub,.bd-lines .cl-gnote,.bd-lines .bd-why,.bd-lines .bd-model{font-size:12px}
+.bd-lines .cl-sub{gap:6px 14px}
+.bd-lines .cl-gnote,.bd-lines .cl-sub{color:var(--t2)}
+.bd-pct{min-height:30px;font-size:13px;width:58px}
+.bd-link{display:inline-flex;align-items:center;min-height:32px;padding:0 4px;font-size:12px}
+.bd-input{min-height:34px}
+.bd-chg{min-height:30px;font-size:12px}
+.bd-jump button,.spend-scope-chip{min-height:34px}
+@media(pointer:coarse){.bd-pct{min-height:38px}.bd-link{min-height:40px}.bd-chg{min-height:36px}.bd-input{min-height:42px}}
+.bd-tag{font-size:11px;padding:2px 8px}
