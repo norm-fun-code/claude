@@ -13,10 +13,10 @@
 
 (function (root) {
   const TIERS = [
-    { key: 'fixed', label: 'Fixed commitments',
-      note: 'Arrives whether or not you change how you live: housing, childcare, tuition, insurance, utilities & phone, transit, auto.' },
-    { key: 'essential', label: 'Everyday essentials',
-      note: 'Flexes a little, can\'t be skipped: groceries and medical.' },
+    // The same two groups the Budget uses, under the same names, so a figure means one thing on both
+    // screens. Groceries and medical flex a little but cannot be skipped, so they sit with the fixed costs.
+    { key: 'fixed', label: 'Fixed costs',
+      note: 'Housing, childcare, tuition, insurance, utilities & phone, transit, auto, and the essentials: groceries and medical.' },
     { key: 'choice', label: 'Discretionary',
       note: 'Choices: dining, shopping, clothing, vacations, entertainment, charity, misc.' },
   ];
@@ -25,7 +25,7 @@
 
   // A living line the engine adds later lands in discretionary rather than vanishing — the
   // alternative is a breakdown that stops adding up the day someone adds a category.
-  const tierOfLiving = k => FIXED_LIVING.includes(k) ? 'fixed' : ESSENTIAL_LIVING.includes(k) ? 'essential' : 'choice';
+  const tierOfLiving = k => FIXED_LIVING.includes(k) || ESSENTIAL_LIVING.includes(k) ? 'fixed' : 'choice';
 
   const LIVING_LABEL = { groceries: 'Groceries', dining: 'Dining', shopping: 'Shopping', clothing: 'Clothing',
     vacations: 'Vacations', auto: 'Auto', insurance: 'Insurance', misc: 'Misc', entertainment: 'Entertainment',

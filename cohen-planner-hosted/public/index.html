@@ -3467,7 +3467,7 @@ function monthLabel(ym,{short=false}={}){
 // ── Categories against your income — what was, and what the plan says will be ──
 // One card, one visual language, two sources. ACTUAL reads the imported records for the period
 // chosen above; PLAN reads any year of the projection and groups it the way the decision is made:
-// fixed commitments, everyday essentials, discretionary, one-offs, and what is left.
+// fixed costs (essentials included), discretionary, one-offs, and what is left.
 //
 // Each line is a share of net income, gross income or spending — one sets the bars, the other two
 // sit beneath. Net is the default: tax is not spent, so a share of take-home is the one that
@@ -3550,12 +3550,12 @@ function renderIncomeLens(R,actual){
     const one=c.oneOff?`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off</span><span class="cl-gtot">${_lensPct(Math.abs(sh(c.oneOff)[basis]))} <small>${c.oneOff<0?'−':''}${fmt(Math.abs(c.oneOff))}</small></span></div></div>`:'';
     const leftover=basis==='spend'?'':`<div class="cl-left ${c.overspent?'is-short':''}"><span>${c.overspent?'Beyond income — from savings or Stripe':'Left over'}</span><strong>${_lensPct(Math.abs(c.left)/c.denom)} <small>${_lensWord[basis]} · ${fmt(Math.abs(c.left))}</small></strong></div>`;
     body=bar+groups+one+leftover;
-    const fx=c.tiers.find(t=>t.key==='fixed'),es=c.tiers.find(t=>t.key==='essential'),ch=c.tiers.find(t=>t.key==='choice');
+    const fx=c.tiers.find(t=>t.key==='fixed'),ch=c.tiers.find(t=>t.key==='choice');
     headline=basis==='spend'
-      ?`In ${yr} the plan spends <strong>${fmt(c.spend)}</strong> (<strong>${fmtF(Math.round(c.spend/12))}</strong> a month): <strong>${_lensPct(fx.share)}</strong> fixed, <strong>${_lensPct(es.share)}</strong> essentials, <strong>${_lensPct(ch.share)}</strong> discretionary.`
+      ?`In ${yr} the plan spends <strong>${fmt(c.spend)}</strong> (<strong>${fmtF(Math.round(c.spend/12))}</strong> a month): <strong>${_lensPct(fx.share)}</strong> fixed costs and <strong>${_lensPct(ch.share)}</strong> discretionary.`
       :c.overspent
         ?`In ${yr} the plan spends <strong>${fmt(-c.left)}</strong> more than it takes in — <strong>${_lensPct(-c.left/c.denom)}</strong> ${_lensWord[basis]} comes from savings or Stripe. Spending is <strong>${fmtF(Math.round(c.spend/12))}</strong> a month.`
-        :`In ${yr}, <strong>${_lensPct(fx.share)}</strong> ${_lensWord[basis]} is fixed commitments, <strong>${_lensPct(es.share)}</strong> essentials and <strong>${_lensPct(ch.share)}</strong> discretionary${c.left>0?` — leaving <strong>${_lensPct(c.left/c.denom)}</strong>`:''}. Spending is <strong>${fmtF(Math.round(c.spend/12))}</strong> a month.`;
+        :`In ${yr}, <strong>${_lensPct(fx.share)}</strong> ${_lensWord[basis]} is fixed costs and <strong>${_lensPct(ch.share)}</strong> discretionary${c.left>0?` — leaving <strong>${_lensPct(c.left/c.denom)}</strong>`:''}. Spending is <strong>${fmtF(Math.round(c.spend/12))}</strong> a month.`;
     foot=`Projected, not imported. Income counts Stripe stock at its vest value; net is after tax, 401(k) and benefits.${bc?` The small figure on each line is its share in ${first}, the plan's first year.`:''} Which lines count as fixed is a judgement — each group lists what is in it.${c.overspent?' The marker on the bar is where income ends.':''}`;
     const yrOptions=R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('');
     ctl=`<div class="ps-year" role="group" aria-label="Year to look at">

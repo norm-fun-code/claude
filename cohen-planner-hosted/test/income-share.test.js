@@ -33,12 +33,16 @@ describe('where a year\'s income goes',()=>{
   expect(g.denom).toBe(at(2035).gross);expect(n.denom).toBe(at(2035).netTC);
   expect(g.tax).toBe(at(2035).tax);
  });
- it('classifies lines by one written rule, and an unknown line is not lost',()=>{
+ it('classifies lines by one written rule, matching the Budget, and an unknown line is not lost',()=>{
   const c=S.compute(at(2035),'gross');
   const lines=t=>c.tiers.find(x=>x.key===t).lines.map(l=>l.key);
-  expect(lines('fixed')).toEqual(expect.arrayContaining(['housing','tuition','childcare','insurance','utilities','transit','auto']));
-  expect(lines('essential').sort()).toEqual(['groceries','medical']);
+  expect(c.tiers.map(t=>t.key)).toEqual(['fixed','choice']);
+  expect(c.tiers.map(t=>t.label)).toEqual(['Fixed costs','Discretionary']);
+  expect(lines('fixed')).toEqual(expect.arrayContaining(['housing','tuition','childcare','insurance','utilities','transit','auto','groceries','medical']));
   expect(lines('choice')).toEqual(expect.arrayContaining(['dining','shopping','clothing','vacations','entertainment','charity','misc']));
+  // The same line lands in the same group on both screens.
+  const B=require('../public/budget.js');
+  for(const l of c.tiers.flatMap(t=>t.lines.map(x=>[t.key,x.key])))expect(B.bucketOf(l[1])==='fixed',l[1]).toBe(l[0]==='fixed');
   const extra=S.compute({...at(2035),livFullParts:{...at(2035).livFullParts,pets:500},eAdj:0,totEFull:at(2035).totEFull-at(2035).eAdj+500},'gross');
   expect(extra.tiers.find(x=>x.key==='choice').lines.some(l=>l.key==='pets')).toBe(true);
   expect(extra.accounted).toBe(extra.denom);
