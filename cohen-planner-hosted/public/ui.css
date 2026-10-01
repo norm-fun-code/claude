@@ -1075,3 +1075,13 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .case-name input{flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--accent);background:var(--s3);color:var(--tx);font:inherit;font-size:13px}
 .case-name .case-act{border:1px solid var(--a);padding:8px 14px}
 @media(max-width:760px){.case-wrap{flex-wrap:wrap}.case-btn{max-width:170px}.case-save{max-width:100%}.case-menu{position:fixed;left:14px;right:14px;top:auto;bottom:90px;width:auto}}
+
+/* Down payment, mortgage payoff, tuition, amortisation */
+.bd-amort{display:flex;gap:2px;align-items:flex-end;height:54px}
+.bd-amort>div{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%;min-width:0}
+.bd-amort span{display:block;width:100%;opacity:.85}
+.bd-load{display:flex;gap:2px;align-items:flex-end;height:64px;margin-top:12px}
+.bd-load>div{flex:1;height:100%;display:flex;align-items:flex-end;min-width:0}
+.bd-load i{display:block;width:100%;background:#ecc183;border-radius:2px 2px 0 0;opacity:.85}
+.bd-load .two i{background:#ff9caf}
+.mc-mode-btn{cursor:pointer}

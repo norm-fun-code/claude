@@ -2121,8 +2121,7 @@ function render(){
     else if(_todayView==='holdings')renderPortfolioTab(R,P);
     else if(_todayView==='spending')renderSpendingTab(R,P);
     else if(_todayView==='budget')renderBudgetTab(R,P);
-    else if(_todayView==='overview')renderOverviewTab(R,P);
-    else renderGoalsTab(R,P,tT);
+    else renderOverviewTab(R,P);
     return;
   }
   if(activeTab==='stripe'){renderStripeTab(R,P);return}
@@ -2314,7 +2313,7 @@ function render(){
       if(!reuseChart||!_updateChart(dsInc,labels))charts.main=new Chart(ctx,{type:'bar',data:{labels,datasets:dsInc},options:{...opts,scales:{x:{stacked:true,...opts.scales.x},y:{stacked:true,...opts.scales.y,ticks:{...opts.scales.y.ticks,callback:v=>fmtK(v)}}}}});
     }
   }
-  document.getElementById('summaries').innerHTML=`<details class="polish-fold refine-fold"><summary>Projection assumptions</summary><p>All charts use the same saved income, tax, housing and family-cost inputs. Use Inputs to adjust them, or inspect the annual table for exact amounts.</p><button class="ui-btn" onclick="setSubView('table')">Open annual table →</button></details>`;
+  document.getElementById('summaries').innerHTML=(activeTab==='projection'&&_projView==='nw'?riskFoldHtml():'')+`<details class="polish-fold refine-fold"><summary>Projection assumptions</summary><p>All charts use the same saved income, tax, housing and family-cost inputs. Use Inputs to adjust them, or inspect the annual table for exact amounts.</p><button class="ui-btn" onclick="setSubView('table')">Open annual table →</button></details>`;
 }
 
 let _stripeYear=null;
@@ -3674,6 +3673,29 @@ function sharedCard(){
     <div class="bd-share-chips" role="group" aria-label="Groups shared across scenarios">${chips}</div></section>`;
 }
 
+// ── Why the plan draws down ──────────────────────────────────────────────────
+// The long stretch of deficit years is tuition. It used to be a card on the Goals tab; it belongs
+// beside the shape of the plan, as the reason for it.
+function budgetTuitionHtml(R,P){
+  const act=R.filter(r=>r.tu>0);
+  if(!act.length)return '';
+  const first=act[0],last=act[act.length-1],peak=act.reduce((a,b)=>b.tu>a.tu?b:a);
+  const total=act.reduce((t,r)=>t+r.tu,0),span=last.yr-first.yr+1;
+  const births=[P.kid1Birth,P.kid2Birth,P.kid3Birth,P.kid4Birth].slice(0,P.numKids);
+  const wins=births.map((b,i)=>({n:i+1,from:b+(i===0?P.kid1YeshivaStartAge:P.yeshivaStartAge),to:b+P.yeshivaEndAge}));
+  const both=wins.length>=2?Math.max(0,Math.min(...wins.map(w=>w.to))-Math.max(...wins.map(w=>w.from))+1):0;
+  const tile=(k,v,sub,col)=>`<div class="ps-tile"><span>${k}</span><strong style="${col?`color:${col}`:''}">${v}</strong><small>${sub}</small></div>`;
+  return `<section class="cp-card bd-tuition"><div class="ps-head"><div><h3>Why the plan draws down: tuition</h3>
+    <p>${first.yr}–${last.yr}, ${span} years, ${fmt(total)} in all (inflated). Heaviest in ${peak.yr}, when it is ${fmt(peak.tu)} against ${fmt(peak.liq)} of liquid assets.</p></div></div>
+    <div class="bd-load" role="img" aria-label="Tuition each year">${R.map(r=>{
+      const inSchool=wins.filter(w=>r.yr>=w.from&&r.yr<=w.to).length;
+      return `<div title="${r.yr}: ${fmt(r.tu)}${inSchool?` · ${inSchool} in school`:''}" class="${inSchool>=2?'two':''}"><i style="height:${peak.tu>0?(r.tu/peak.tu*100).toFixed(1):0}%"></i></div>`}).join('')}</div>
+    <div class="spend-caption" style="display:flex;justify-content:space-between;margin:4px 0 12px"><span>${R[0].yr}</span><span>${R[R.length-1].yr}</span></div>
+    <div class="ps-tiles">${tile('First tuition',String(first.yr),`${fmt(first.tu)} that year`)}${tile('Peak',String(peak.yr),fmt(peak.tu),'var(--r)')}${tile('Average',fmt(Math.round(total/act.length)),`over ${act.length} years`)}
+      ${wins.map(w=>tile(`Kid ${w.n}`,`${w.from}–${w.to}`,`${w.to-w.from+1} years in school`)).join('')}${both?tile('Both in school',`${both} yr${both===1?'':'s'}`,'the heaviest stretch','var(--a)'):''}</div>
+  </section>`;
+}
+
 function renderBudgetTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
@@ -3709,6 +3731,8 @@ function renderBudgetTab(R,P){
     <div class="bd-phasebar">${ph.map(p=>`<button type="button" class="bd-phase ${p.kind}${yr>=p.from&&yr<=p.to?' on':''}" style="flex:${p.years}" onclick="budgetYearSet(${p.from})" title="${p.kind==='save'?'Adding to savings':'Drawing on savings and Stripe'} ${p.from}–${p.to}: ${p.total>=0?'+':'−'}${fmt(Math.abs(p.total))}">
         <span>${p.kind==='save'?'Saving':'Drawing down'}</span><b>${p.from===p.to?p.from:p.from+'–'+String(p.to).slice(2)}</b><small>${p.total>=0?'+':'−'}${fmt(Math.abs(p.total))}</small></button>`).join('')}
       <i class="bd-here" style="left:${((yr-first+.5)/years*100).toFixed(2)}%" aria-hidden="true"></i></div></section>`;
+
+  h+=budgetTuitionHtml(R,P);
 
   // ── Headroom ──
   const ho=hd.ongoing.value,once=hd.once.value,st=hd.stress.ongoing.value;
@@ -4622,6 +4646,59 @@ function afParams(){
     homePurchaseYear:_afYear??P.homePurchaseYear};
 }
 
+// ── Down payment readiness and the mortgage's whole life (these lived on the Goals tab) ──────────
+// Both answer questions about the home, so they sit with the home. Readiness asks whether the cash
+// will be there in the year before the purchase; the payoff view shows what the loan costs over its
+// life and how equity builds. Neither has inputs of its own — the levers above move them.
+function housingReadinessHtml(R,P){
+  const dp=P.homePrice*(P.downPctg/100),sy=P.planStartYear||2026;
+  const prior=R.find(r=>r.yr===P.homePurchaseYear-1);
+  // Everything that can fund the purchase, not just the diversified pool: the waterfall sells held
+  // Stripe for the down payment once the portfolio reaches its reserve floor.
+  const start=(P.startingLiquid||0)+(P.startingStripeEquity||0);
+  const proj=prior?prior.liq+prior.sEnd:start;
+  const yearsLeft=P.homePurchaseYear-sy;
+  const pct=v=>dp>0?Math.min(100,Math.round(v/dp*100)):100;
+  const ok=proj>=dp,short=Math.max(0,dp-proj);
+  const moNeed=short>0&&yearsLeft>0?Math.round(short/yearsLeft/12):0;
+  const tile=(k,v,sub,col)=>`<div class="ps-tile"><span>${k}</span><strong style="${col?`color:${col}`:''}">${v}</strong><small>${sub}</small></div>`;
+  return `<section class="cp-card"><div class="ps-head"><div><h3>Down payment readiness</h3>
+    <p>${fmt(dp)} down on a ${P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':fmt(P.homePrice)} home in ${P.homePurchaseYear}, ${yearsLeft} year${yearsLeft===1?'':'s'} away.</p></div></div>
+    <div class="ps-tiles">${tile('Assets today',fmt(start),`${pct(start)}% of the down payment`)}
+      ${tile(`Projected, ${P.homePurchaseYear-1}`,fmt(proj),`${pct(proj)}% of the down payment`,ok?'var(--g)':'var(--a)')}
+      ${tile(ok?'On track':'Shortfall',ok?`+${fmt(proj-dp)}`:fmt(short),ok?'buffer above the down payment':'needed on top of what is projected',ok?'var(--g)':'var(--a)')}</div>
+    <div class="cl-track" style="margin-top:12px"><i style="width:${pct(proj)}%;--tier:${ok?'#7ae3c3':'#ecc183'}"></i></div>
+    ${moNeed>0?`<p class="spend-caption" style="margin-top:8px">Closing that gap by saving would take about ${fmtF(moNeed)} a month more, from now.</p>`:''}
+  </section>`;
+}
+function mortgagePayoffHtml(R,P){
+  const loan=P.homePrice*(1-P.downPctg/100),rate=P.mortgageRate/100,mr=rate/12,n=360;
+  const mo=loan>0&&mr>0?loan*(mr*(1+mr)**n)/((1+mr)**n-1):0;
+  const ptRate=P.propTaxRate??.012,tax0=ptRate*P.homePrice/12,maint0=(P.maintBase||D.maintBase)/12,allIn=mo+tax0+maint0;
+  const interest=mo*n-loan,payoff=P.homePurchaseYear+30;
+  const hv30=P.homePrice*(1+P.homeAppreciation)**30,tax30=ptRate*hv30/12;
+  const rows=[];
+  for(let y=1;y<=30;y++){
+    const a=mBal(loan,rate,y-1),b=mBal(loan,rate,y),princ=a-b,int=mo*12-princ,hv=P.homePrice*(1+P.homeAppreciation)**y;
+    rows.push({yr:P.homePurchaseYear+y,princ,int,equity:hv-b,hv});
+  }
+  const eq=i=>rows[i],maxEq=Math.max(...rows.map(r=>r.equity),1);
+  const tile=(k,v,sub,col)=>`<div class="ps-tile"><span>${k}</span><strong style="${col?`color:${col}`:''}">${v}</strong><small>${sub}</small></div>`;
+  return `<details class="polish-fold refine-fold"><summary>Mortgage payoff & amortization</summary><div>
+    <p class="spend-caption" style="margin:0 0 12px">${fmt(loan)} borrowed at ${P.mortgageRate}% for 30 years, paid off in ${payoff}. All-in monthly cost in ${P.homePurchaseYear} is <strong style="color:var(--tx)">${fmtF(Math.round(allIn))}</strong>.</p>
+    <div class="ps-tiles">${tile('Principal & interest',fmtF(Math.round(mo))+'/mo',`${P.mortgageRate}% · 30 yr`)}
+      ${tile('Property tax',fmtF(Math.round(tax0))+'/mo',`${(ptRate*100).toFixed(2)}% · ${fmtF(Math.round(tax30))}/mo by ${payoff}`)}
+      ${tile('Maintenance',fmtF(Math.round(maint0))+'/mo','+2% a year')}
+      ${tile('All-in',fmtF(Math.round(allIn))+'/mo',`${fmtF(Math.round(allIn*12))}/yr`,'var(--accent)')}</div>
+    <div class="ps-tiles" style="margin-top:10px">${tile('Total interest',fmt(interest),`${Math.round(interest/P.homePrice*100)}% of the price`,'var(--r)')}
+      ${tile('Equity, year 10',fmt(eq(9).equity),String(eq(9).yr))}${tile('Equity, year 20',fmt(eq(19).equity),String(eq(19).yr))}
+      ${tile('Equity, year 30',fmt(eq(29).equity),`home worth ${fmt(eq(29).hv)}`,'var(--g)')}</div>
+    <div class="cl-legend" style="margin:14px 0 6px"><span><i style="background:#7ae3c3"></i>Principal</span><span><i style="background:#ff9caf"></i>Interest</span><span>Each bar is a year of payments</span></div>
+    <div class="bd-amort" role="img" aria-label="Principal and interest paid each year of the loan">${rows.map(r=>{const t=r.princ+r.int;return `<div title="${r.yr}: ${fmt(r.princ)} principal, ${fmt(r.int)} interest"><span style="height:${(r.princ/t*100).toFixed(1)}%;background:#7ae3c3"></span><span style="height:${(r.int/t*100).toFixed(1)}%;background:#ff9caf"></span></div>`}).join('')}</div>
+    <div class="spend-caption" style="display:flex;justify-content:space-between;margin-top:4px"><span>${P.homePurchaseYear+1}</span><span>${payoff}</span></div>
+  </div></details>`;
+}
+
 function renderHousingTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
@@ -4883,6 +4960,9 @@ function renderHousingTab(R,P){
     </div>`;
   }
 
+  h+=housingReadinessHtml(R,P);
+  h+=mortgagePayoffHtml(R,P);
+
   // ── Refi calculator: a different question, kept but folded away ──
   h+=`<details class="glass-card" style="padding:14px 18px">
     <summary style="cursor:pointer;font-size:11px;font-weight:700;color:var(--tx)">🔄 Refinance break-even calculator</summary>
@@ -5131,50 +5211,20 @@ function sensiUpdateDelta(input){
   renderSensitivityTab(window._lastR,window._lastP);
 }
 
-function goalInlineEl(key,display,parseAs){
-  return `<span data-goal-key="${key}" data-goal-parse="${parseAs}" onclick="goalInlineEdit(this)" style="cursor:pointer;border-bottom:1px dashed var(--t3);padding:0 1px;white-space:nowrap" title="Click to edit">${display}</span>`;
+function riskFoldHtml(){
+  const btn=(m,t,title)=>`<button class="mc-mode-btn spend-scope-chip${_mcMode===m?' is-on':''}" data-mode="${m}" onclick="setMCMode('${m}')" title="${title}">${t}</button>`;
+  return `<details class="polish-fold refine-fold"><summary>Risk &amp; confidence</summary><div>
+    <p class="spend-caption" style="margin:0 0 10px">Runs 800 market scenarios against the plan, so you see the range of outcomes and not only the single line above. The single line is roughly the median.</p>
+    <div class="ps-controls" style="margin-bottom:10px"><div class="spend-scope" role="group" aria-label="How returns are simulated">${btn('lognormal','Synthetic','Synthetic lognormal returns calibrated to your assumed rate')}${btn('historical','Historical','Replays real contiguous runs of annual S&amp;P 500 returns, 1928–2023')}</div>
+      <button type="button" class="bd-btn primary" onclick="runGoalsRiskAnalysis()">Run simulation</button></div>
+    <div id="goalsRiskOut"></div></div></details>`;
 }
-function goalInlineEdit(span){
-  const key=span.dataset.goalKey;
-  const parseAs=span.dataset.goalParse;
-  const cur=P[key];
-  let dflt;
-  if(parseAs==='dollar-m')dflt=(cur/1e6).toFixed(2)+'M';
-  else if(parseAs==='dollar-k')dflt=cur>=1000?Math.round(cur/1000)+'K':String(cur);
-  else if(parseAs==='pct-decimal')dflt=(cur*100).toFixed(1)+'%';
-  else if(parseAs==='pct')dflt=String(cur);
-  else dflt=String(cur);
-  const inp=document.createElement('input');
-  inp.type='text';inp.value=dflt;
-  inp.style.cssText='width:72px;font-size:inherit;font-family:inherit;color:var(--tx);background:var(--s1);border:1px solid var(--accent);border-radius:3px;padding:0 3px;outline:none';
-  let committed=false;
-  const commit=()=>{
-    if(committed)return;
-    committed=true;
-    const s=inp.value.trim().toUpperCase();
-    let v=parseFloat(s.replace(/[$,MK%]/g,''));
-    if(isNaN(v)){committed=false;if(inp.parentNode)inp.parentNode.replaceChild(span,inp);return;}
-    if(s.includes('M'))v=v*1e6;
-    else if(s.includes('K'))v=v*1000;
-    else if(parseAs==='dollar-m'&&v<10000)v=v*1e6;
-    else if(parseAs==='pct-decimal')v=v>1?v/100:v;
-    // Restore span before U() so render() doesn't tear down a live input
-    if(inp.parentNode)inp.parentNode.replaceChild(span,inp);
-    U(key,v);
-  };
-  inp.onblur=commit;
-  inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();commit();}if(e.key==='Escape'){committed=true;if(inp.parentNode)inp.parentNode.replaceChild(span,inp);}};
-  span.parentNode.replaceChild(inp,span);
-  inp.focus();inp.select();
-}
-
 function setMCMode(mode){
   if(_mcMode===mode)return;
   _mcMode=mode;
   document.querySelectorAll('.mc-mode-btn').forEach(b=>{
     const on=b.dataset.mode===mode;
-    b.style.background=on?'linear-gradient(135deg,#6e66ff,#5048d6)':'var(--s1)';
-    b.style.color=on?'#fff':'var(--t2)';
+    b.classList.toggle('is-on',on);b.setAttribute('aria-pressed',String(on));
   });
   runGoalsRiskAnalysis();
   if(_bandMode)_recomputeBandIfStale(); // keep the NW chart's band overlay in sync
@@ -5217,309 +5267,6 @@ function runGoalsRiskAnalysis(){
   },30);
 }
 
-function renderGoalsTab(R,P,tT){
-  const ca=document.getElementById('chartArea');
-  destroyCharts();
-  const sy=P.planStartYear||2026;
-  const now=sy; // plan start = "today" for goal countdowns
-
-  // ── Home Purchase ──
-  const dp=P.homePrice*(P.downPctg/100);
-  const yearsLeft=P.homePurchaseYear-now;
-  const priorRow=R.find(r=>r.yr===P.homePurchaseYear-1);
-  // Everything that can fund the purchase, not just the diversified pool. The waterfall
-  // sells held Stripe for the down payment once the portfolio hits its reserve floor.
-  const startAssets=(P.startingLiquid||0)+(P.startingStripeEquity||0);
-  const projLiq=priorRow?priorRow.liq+priorRow.sEnd:startAssets;
-  const projStripeShare=priorRow?priorRow.sEnd:(P.startingStripeEquity||0);
-  const dpPct=Math.min(100,Math.round(startAssets/dp*100));
-  const dpProjPct=Math.min(100,Math.round(projLiq/dp*100));
-  const dpShortfall=Math.max(0,dp-projLiq);
-  const dpOnTrack=projLiq>=dp;
-  const dpMoNeeded=dpShortfall>0&&yearsLeft>0?Math.round(dpShortfall/yearsLeft/12):0;
-
-  // ── Tuition ──
-  const firstTuRow=R.find(r=>r.tu>0);
-  const lastTuRow=[...R].reverse().find(r=>r.tu>0);
-  const peakTuRow=R.reduce((a,b)=>b.tu>a.tu?b:a,R[0]);
-  const yearsToTu=firstTuRow?firstTuRow.yr-now:null;
-  const tuLiq=R.find(r=>r.yr===peakTuRow.yr);
-  const kids=[P.kid1Birth];
-  if(P.numKids>=2)kids.push(P.kid2Birth);
-  if(P.numKids>=3)kids.push(P.kid3Birth);
-  if(P.numKids>=4)kids.push(P.kid4Birth);
-
-  // per-kid school windows (years only, not dollar split)
-  const kidWindows=kids.map((kb,ki)=>{
-    const startAge=ki===0?P.kid1YeshivaStartAge:P.yeshivaStartAge;
-    const endAge=P.yeshivaEndAge;
-    return{kb,startYr:kb+startAge,endYr:kb+endAge,years:endAge-startAge+1};
-  });
-
-  // ── progress bar helper ──
-  function pbar(pct,color,bg){
-    return `<div style="height:10px;border-radius:5px;background:${bg||'var(--s3)'};overflow:hidden;position:relative">
-      <div style="height:100%;width:${pct}%;background:${color};border-radius:5px;transition:width .4s"></div>
-    </div>`;
-  }
-
-  // ── surplus years liquid ladder (condensed view) ──
-  const surpYrs=R.filter(r=>r.flow>=0).length;
-  const defYrs=drawYears(R);
-
-  // ── build HTML ──
-  let h=`<div class="refine-goals" style="display:flex;flex-direction:column;gap:14px;padding:2px"><header class="ui-head"><div><h2>Milestones & resilience</h2><p>Home funding, education and the reserves that support them.</p></div></header>`;
-
-  // GOAL 1: Home purchase
-  if(P.housingMode!=='rent')h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
-      <div>
-        <div style="font-size:13px;font-weight:700;color:var(--tx)">🏠 Home Down Payment</div>
-        <div style="font-size:10px;color:var(--t2);margin-top:2px">${goalInlineEl('homePrice',P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K','dollar-m')} home · ${goalInlineEl('downPctg',P.downPctg+'%','pct')} down · ${goalInlineEl('homePurchaseYear',P.homePurchaseYear,'year')}</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:${dpOnTrack?'var(--g)':'var(--a)'}">${fmt(dp)}</div>
-        <div style="font-size:9px;color:var(--t3);margin-top:1px">target</div>
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
-      <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
-        <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Today's Assets</div>
-        <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--b)">${fmt(startAssets)}</div>
-        <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${dpPct}% of target</div>
-      </div>
-      <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
-        <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Projected (${P.homePurchaseYear-1})</div>
-        <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:${dpOnTrack?'var(--g)':'var(--a)'}">${fmt(projLiq)}</div>
-        <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${dpProjPct}% of target</div>
-      </div>
-      <div style="background:${dpOnTrack?'var(--g-soft)':'var(--a-soft)'};border:1px solid ${dpOnTrack?'rgba(26,135,84,.2)':'rgba(191,105,0,.2)'};border-radius:7px;padding:9px 11px">
-        <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:${dpOnTrack?'var(--g)':'var(--a)'};margin-bottom:3px">${yearsLeft} years away</div>
-        <div style="font-size:13px;font-weight:700;color:${dpOnTrack?'var(--g)':'var(--a)'}">${dpOnTrack?'✓ On Track':'⚠ Shortfall'}</div>
-        <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${dpOnTrack?`+${fmt(projLiq-dp)} buffer`:`Need +${fmt(dpShortfall)}`}</div>
-      </div>
-    </div>
-    <div style="margin-bottom:5px;font-size:8.5px;color:var(--t3);display:flex;justify-content:space-between"><span>Today</span><span>${P.homePurchaseYear}</span></div>
-    <div style="position:relative;height:20px">
-      ${pbar(dpPct,'var(--b)40','var(--s3)')}
-      <div style="position:absolute;top:0;left:0;right:0;height:100%">
-        <div style="height:10px;border-radius:5px;background:transparent;position:relative">
-          <div style="position:absolute;top:0;left:0;height:100%;width:${dpProjPct}%;background:transparent;border-right:2px dashed ${dpOnTrack?'var(--g)':'var(--a)'};border-radius:0"></div>
-        </div>
-      </div>
-    </div>
-    <div style="margin-top:5px;font-size:8.5px;color:var(--t3);display:flex;gap:12px">
-      <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:4px;background:var(--b);opacity:.4;border-radius:2px"></span>Current assets</span>
-      <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:0;border-top:2px dashed ${dpOnTrack?'var(--g)':'var(--a)'}"></span>Projected at ${P.homePurchaseYear-1}</span>
-      ${dpMoNeeded>0?`<span style="color:var(--a);font-weight:600">Need ~${fmtF(dpMoNeeded)}/mo additional savings</span>`:''}
-    </div>
-  </div>`;
-
-  // GOAL 2: Mortgage
-  if(P.housingMode!=='rent'){
-    const loanAmt=P.homePrice*(1-P.downPctg/100);
-    const rate=P.mortgageRate/100;
-    const moRate=rate/12;
-    const nPmt=30*12;
-    const moPmt=loanAmt>0&&moRate>0?loanAmt*(moRate*(1+moRate)**nPmt)/((1+moRate)**nPmt-1):0;
-    const annPmt=moPmt*12;
-    const totalPaid=moPmt*nPmt;
-    const totalInterest=totalPaid-loanAmt;
-    const payoffYr=P.homePurchaseYear+30;
-    // Property tax = rate × appreciating home value. Show purchase-year figure
-    // in the headline (it grows with the home over time).
-    const ptRate=P.propTaxRate??.012;
-    const moPropTax0=ptRate*P.homePrice/12;          // year 1
-    const moMaint0=(P.maintBase||D.maintBase)/12;          // matches model: maintBase, grows 2%/yr
-    const moAllIn0=moPmt+moPropTax0+moMaint0;
-    const homeVal30=P.homePrice*(1+P.homeAppreciation)**30;
-    const moPropTax30=ptRate*homeVal30/12;           // year 30 (tax keeps rising)
-    // Year-by-year principal vs interest (annual)
-    const mortRows=[];
-    for(let y=1;y<=30;y++){
-      const balStart=mBal(loanAmt,rate,y-1);
-      const balEnd=mBal(loanAmt,rate,y);
-      const princPaid=balStart-balEnd;
-      const intPaid=annPmt-princPaid;
-      const hv=P.homePrice*(1+P.homeAppreciation)**y;
-      mortRows.push({y,yr:P.homePurchaseYear+y,princPaid,intPaid,equity:hv-balEnd,hv});
-    }
-    const maxEq=Math.max(...mortRows.map(r=>r.equity));
-    const eq10=mortRows[9];const eq20=mortRows[19];const eq30=mortRows[29];
-    h+=`<details class="polish-fold refine-fold"><summary>Mortgage payoff & amortization</summary><div>
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
-        <div>
-          <div style="font-size:13px;font-weight:700;color:var(--tx)">🏦 Mortgage</div>
-          <div style="font-size:10px;color:var(--t2);margin-top:2px">${goalInlineEl('homePrice',P.homePrice>=1e6?'$'+(P.homePrice/1e6).toFixed(2)+'M':'$'+Math.round(P.homePrice/1000)+'K','dollar-m')} · ${goalInlineEl('mortgageRate',P.mortgageRate+'%','pct')} · 30 yr · closes ${goalInlineEl('homePurchaseYear',P.homePurchaseYear,'year')} · tax ${goalInlineEl('propTaxRate',(ptRate*100).toFixed(2)+'%','pct-decimal')}</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--p)">${fmtF(Math.round(moAllIn0))}/mo</div>
-          <div style="font-size:9px;color:var(--t3);margin-top:1px">all-in monthly · ${P.homePurchaseYear}</div>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px">
-        ${[
-          {l:'Principal & Interest',mo:moPmt,c:'var(--b)',s:`${P.mortgageRate}% · 30 yr`},
-          {l:'Property Tax',mo:moPropTax0,c:'var(--a)',s:`${(ptRate*100).toFixed(2)}% · rises w/ value`},
-          {l:'Maintenance',mo:moMaint0,c:'var(--t2)',s:'+2%/yr'},
-          {l:'All-In',mo:moAllIn0,c:'var(--p)',s:`${fmtF(Math.round(moAllIn0*12))}/yr`}
-        ].map(x=>`
-        <div style="background:${x.l==='All-In'?'var(--s3)':'var(--s2)'};border-radius:7px;padding:9px 11px${x.l==='All-In'?';border:1px solid var(--bd)':''}">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">${x.l}</div>
-          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:${x.c}">${fmtF(Math.round(x.mo))}<span style="font-size:9px;color:var(--t3);font-weight:400">/mo</span></div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${x.s}</div>
-        </div>`).join('')}
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px">
-        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Loan Amount</div>
-          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmt(loanAmt)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${P.downPctg}% down</div>
-        </div>
-        <div style="background:var(--r-soft);border:1px solid rgba(205,61,100,.12);border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--r);margin-bottom:3px">Total Interest</div>
-          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--r)">${fmt(totalInterest)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${Math.round(totalInterest/P.homePrice*100)}% of price</div>
-        </div>
-        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Payoff Year</div>
-          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${payoffYr}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${payoffYr-(P.planStartYear||2026)} yrs from now</div>
-        </div>
-        <div style="background:var(--g-soft);border:1px solid rgba(26,135,84,.15);border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--g);margin-bottom:3px">Equity @ ${eq30.yr}</div>
-          <div style="font-size:14px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(eq30.equity)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">home: ${fmt(eq30.hv)}</div>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
-        ${[{label:'Equity @ yr 10',r:eq10},{label:'Equity @ yr 20',r:eq20},{label:'Equity @ yr 30',r:eq30}].map(({label,r})=>`
-        <div style="background:var(--s2);border-radius:6px;padding:8px 10px">
-          <div style="font-size:8px;color:var(--t3);font-weight:600;margin-bottom:2px">${label} (${r.yr})</div>
-          <div style="font-size:12px;font-weight:700;font-family:'SF Mono',monospace;color:var(--g)">${fmt(r.equity)}</div>
-          <div style="margin-top:5px;height:6px;border-radius:3px;background:var(--s3);overflow:hidden">
-            <div style="height:100%;width:${Math.round(r.equity/maxEq*100)}%;background:var(--g);border-radius:3px"></div>
-          </div>
-        </div>`).join('')}
-      </div>
-      <div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:6px">Principal vs. interest over 30 years</div>
-      <div style="display:flex;gap:1px;align-items:flex-end;height:45px">
-        ${mortRows.map(r=>{
-          const total=r.princPaid+r.intPaid;
-          const pPct=r.princPaid/total*100;
-          const iPct=r.intPaid/total*100;
-          return`<div title="${r.yr}: ${fmt(r.princPaid)} principal, ${fmt(r.intPaid)} interest" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%">
-            <div style="width:100%;background:var(--g);height:${pPct}%;opacity:.8;border-radius:1px 1px 0 0"></div>
-            <div style="width:100%;background:var(--r);height:${iPct}%;opacity:.6"></div>
-          </div></details>`;
-        }).join('')}
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${P.homePurchaseYear}</span><span>${payoffYr}</span></div>
-      <div style="margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;font-size:8.5px;color:var(--t3)">
-        <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:2px;opacity:.8"></span>Principal</span>
-        <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--r);border-radius:2px;opacity:.6"></span>Interest</span>
-        <span>Hover bars for year detail</span>
-        <span style="margin-left:auto">Appreciation: ${goalInlineEl('homeAppreciation',(P.homeAppreciation*100).toFixed(1)+'%/yr','pct-decimal')}</span>
-      </div>
-      <div style="margin-top:8px;padding:8px 10px;background:var(--s2);border-radius:7px;font-size:9px;color:var(--t2);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-        <span>🏛 Property tax (${(ptRate*100).toFixed(2)}% of home value, grows as home appreciates)</span>
-        <span style="font-family:'SF Mono',monospace"><b style="color:var(--tx)">${fmtF(Math.round(moPropTax0))}/mo</b> @ ${P.homePurchaseYear} → <b style="color:var(--tx)">${fmtF(Math.round(moPropTax30))}/mo</b> @ ${payoffYr}</span>
-      </div>
-    </div></details>`;
-  }
-
-  // GOAL 3: Tuition
-  if(firstTuRow){
-    const tuActive=R.filter(r=>r.tu>0);
-    const tuSpan=lastTuRow.yr-firstTuRow.yr+1;
-    h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
-        <div>
-          <div style="font-size:13px;font-weight:700;color:var(--tx)">🎓 Tuition Summit</div>
-          <div style="font-size:10px;color:var(--t2);margin-top:2px">${firstTuRow.yr}–${lastTuRow.yr} · ${tuSpan} year window · ${P.numKids} kid${P.numKids!==1?'s':''} · ${goalInlineEl('yeshivaStartAge',P.yeshivaStartAge+' start age','year')}–${goalInlineEl('yeshivaEndAge',P.yeshivaEndAge+' end age','year')}</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-size:20px;font-weight:700;font-family:'SF Mono',monospace;color:var(--r)">${fmt(tT)}</div>
-          <div style="font-size:9px;color:var(--t3);margin-top:1px">total (inflated)</div>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
-        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">First Tuition</div>
-          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${firstTuRow.yr}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">${yearsToTu} yrs away · ${fmt(firstTuRow.tu)}/yr</div>
-        </div>
-        <div style="background:var(--r-soft);border:1px solid rgba(205,61,100,.15);border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--r);margin-bottom:3px">Peak Year · ${peakTuRow.yr}</div>
-          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--r)">${fmt(peakTuRow.tu)}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">liquid then: ${fmt(tuLiq?.liq||0)}</div>
-        </div>
-        <div style="background:var(--s2);border-radius:7px;padding:9px 11px">
-          <div style="font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:3px">Avg Annual</div>
-          <div style="font-size:15px;font-weight:700;font-family:'SF Mono',monospace;color:var(--a)">${fmt(Math.round(tT/tuActive.length))}</div>
-          <div style="font-size:8.5px;color:var(--t2);margin-top:1px">over ${tuActive.length} active yrs</div>
-        </div>
-      </div>
-      <div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:7px">Annual tuition load</div>
-      <div style="display:flex;gap:2px;align-items:flex-end;height:50px">
-        ${R.map(r=>{
-          const pct=peakTuRow.tu>0?r.tu/peakTuRow.tu*100:0;
-          if(pct<=0)return`<div style="flex:1;background:transparent"></div>`;
-          const numKidsInSchool=kidWindows.filter(kw=>r.yr>=kw.startYr&&r.yr<=kw.endYr).length;
-          const color=numKidsInSchool>=2?'var(--r)':'var(--a)';
-          return`<div title="${r.yr}: ${fmt(r.tu)}" style="flex:1;background:${color};height:${pct}%;border-radius:2px 2px 0 0;opacity:.8"></div>`;
-        }).join('')}
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${sy}</span><span>${P.planEndYear||2058}</span></div>
-      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-        ${kidWindows.map((kw,ki)=>{const bKey=['kid1Birth','kid2Birth','kid3Birth','kid4Birth'][ki];return`
-        <div style="background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:6px 10px;font-size:9.5px">
-          <span style="font-weight:600;color:var(--tx)">Kid ${ki+1}</span>
-          <span style="color:var(--t2)"> born ${goalInlineEl(bKey,kw.kb,'year')} · school ${kw.startYr}–${kw.endYr}</span>
-          <span style="color:var(--t3)"> (${kw.years} yrs)</span>
-        </div>`;}).join('')}
-        ${kidWindows.length>=2?`<div style="background:var(--r-soft);border:1px solid rgba(205,61,100,.15);border-radius:6px;padding:6px 10px;font-size:9.5px;color:var(--r);font-weight:500">
-          Overlap: ${Math.max(0,Math.min(...kidWindows.map(kw=>kw.endYr))-Math.max(...kidWindows.map(kw=>kw.startYr))+1)} yrs both in school
-        </div>`:''}
-      </div>
-    </div>`;
-  }
-
-  // GOAL 4: Liquid health timeline (mini sparkline)
-  h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
-    <div style="font-size:13px;font-weight:700;color:var(--tx);margin-bottom:4px">💧 Liquid Health Over Time</div>
-    <div style="font-size:10px;color:var(--t2);margin-bottom:12px">${surpYrs} surplus yrs · ${defYrs} deficit yrs · floor ${fmt(R.reduce((a,b)=>b.liq<a.liq?b:a).liq)} in ${R.reduce((a,b)=>b.liq<a.liq?b:a).yr}</div>
-    <div style="display:flex;gap:2px;align-items:flex-end;height:60px">
-      ${(()=>{const maxL=Math.max(...R.map(r=>r.liq),1);return R.map(r=>{const pct=r.liq/maxL*100;const draws=r.sold>0||r.sHold>0;const color=r.liq<(P.liquidReserveFloor??D.liquidReserveFloor)?'var(--r)':draws?'var(--a)':'var(--g)';return`<div title="${r.yr}: ${fmt(r.liq)} liquid${draws?' \u2014 draws on savings':''}" style="flex:1;background:${color};height:${Math.max(2,pct)}%;border-radius:2px 2px 0 0;opacity:.75"></div>`}).join('')})()}
-    </div>
-    <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);margin-top:3px"><span>${sy}</span><span>${P.planEndYear||2058}</span></div>
-    <div style="margin-top:6px;display:flex;gap:10px;font-size:8.5px">
-      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:2px;opacity:.75"></span>Positive net flow</span>
-      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--a);border-radius:2px;opacity:.75"></span>Deficit (selling stock)</span>
-      <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--r);border-radius:2px;opacity:.75"></span>Below $500K</span>
-    </div>
-  </div>`;
-
-  // ── Risk & Confidence (Monte Carlo, on-demand) ──
-  h+=`<details class="polish-fold refine-fold"><summary>Risk & confidence simulation</summary><div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px">
-      <div style="font-size:13px;font-weight:700;color:var(--tx)">🎲 Risk & Confidence</div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <div style="display:flex;border:1px solid var(--bd);border-radius:7px;overflow:hidden">
-          <button class="mc-mode-btn" data-mode="lognormal" onclick="setMCMode('lognormal')" title="Synthetic lognormal returns calibrated to your assumed rate" style="font-size:9.5px;font-weight:600;padding:5px 9px;border:none;cursor:pointer;font-family:inherit;background:${_mcMode==='lognormal'?'linear-gradient(135deg,#6e66ff,#5048d6)':'var(--s1)'};color:${_mcMode==='lognormal'?'#fff':'var(--t2)'}">Synthetic</button>
-          <button class="mc-mode-btn" data-mode="historical" onclick="setMCMode('historical')" title="Bootstrap real historical S&amp;P 500 return sequences (1928-2023)" style="font-size:9.5px;font-weight:600;padding:5px 9px;border:none;cursor:pointer;font-family:inherit;background:${_mcMode==='historical'?'linear-gradient(135deg,#6e66ff,#5048d6)':'var(--s1)'};color:${_mcMode==='historical'?'#fff':'var(--t2)'}">Historical</button>
-        </div>
-        <button onclick="runGoalsRiskAnalysis()" style="font-size:11px;font-weight:600;padding:6px 13px;background:var(--accent);color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:inherit">Run simulation</button>
-      </div>
-    </div>
-    <div style="font-size:10.5px;color:var(--t2);line-height:1.5;margin-bottom:4px">Runs 800 market scenarios against your plan to show the range of outcomes — not just the single-line projection. <strong>Synthetic</strong> uses a calibrated random distribution; <strong>Historical</strong> replays real market sequences.</div>
-    <div id="goalsRiskOut"></div>
-  </div></details>`;
-
-  h+=`<div class="refine-links"><button class="ui-btn" onclick="setTab('housing')">Explore home affordability →</button><button class="ui-btn" onclick="setSubView('watch')">Review alerts & tax opportunities →</button></div>`;
-  h+='</div>';
-  ca.innerHTML=h;
-}
 
 let _compareDiffIdx=-1; // index into `scenarios` currently shown in the Compare tab's diff view; -1 = none
 function setCompareDiff(idx){_compareDiffIdx=idx;render();}
@@ -5753,7 +5500,7 @@ function setTab(t){
   // Retired top-level tabs now address a view within Projection. Saved plan state, the
   // command palette and any in-app link can keep using the old names.
   if(t==='nw'||t==='income'||t==='cashflow'||t==='table'){_projView=t;t='projection';}
-  if(t==='goals'){_todayView='plan';t='today';}
+  if(t==='goals'){_todayView='budget';t='today';}
   if(t==='housing'||t==='sensitivity'||t==='compare'){_homeView=(t==='sensitivity'?'levers':t);t='home';}
   if(t==='portfolio'){_todayView='holdings';t='today';}
   activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();if(!_reduceMotion())requestAnimationFrame(()=>{['chartArea','summaries'].forEach(id=>{const e=document.getElementById(id);if(e){e.classList.remove('tab-fade');void e.offsetWidth;e.classList.add('tab-fade')}})});savePlannerState()}
@@ -5872,7 +5619,7 @@ const SUB_VIEWS={
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','chart','Net worth'],['income','circle','Income & tax'],['cashflow','arrow','Cash flow'],['table','doc','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
-    views:[['overview','circle','Accounts'],['spending','card','Spending'],['budget','doc','Budget'],['holdings','chart','Holdings'],['plan','target','Goals'],['watch','bell','Watchlist']]},
+    views:[['overview','circle','Accounts'],['spending','card','Spending'],['budget','doc','Budget'],['holdings','chart','Holdings'],['watch','bell','Watchlist']]},
 };
 let _stressMode=false;
 // ── Monte Carlo confidence band overlay (NW chart) ──
@@ -5931,7 +5678,7 @@ function _paletteCommands(){
     {icon:'💰',label:'Income & tax',hint:'Projection',run:()=>setTab('income')},
     {icon:'💸',label:'Cash flow',hint:'Projection',run:()=>setTab('cashflow')},
     {icon:'📋',label:'Table',hint:'Projection',run:()=>setTab('table')},
-    {icon:'🎯',label:'Plan vs actual',hint:'Today',run:()=>setTab('goals')},
+    {icon:'🎯',label:'Budget',hint:'Today',run:()=>{_todayView='budget';setTab('today')}},
     {icon:'🏠',label:'Housing',hint:'Decisions',run:()=>setTab('housing')},
     {icon:'🎚️',label:'Key levers',hint:'Decisions',run:()=>setTab('sensitivity')},
     {icon:'⚖',label:'Compare',hint:'Decisions',run:()=>setTab('compare')},
