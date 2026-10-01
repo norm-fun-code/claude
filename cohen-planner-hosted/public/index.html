@@ -1675,7 +1675,7 @@ function expActualYTD(year){
 // vanishing, because a line silently missing from a breakdown is how a total stops adding up.
 const LIV_LABEL={groceries:'Groceries',dining:'Dining',shopping:'Shopping',vacations:'Vacations',
   clothing:'Clothing',auto:'Auto',insurance:'Insurance',misc:'Misc',entertainment:'Entertainment',charity:'Charity',
-  medical:'Medical',transit:'Transit',utilities:'Utilities & phone'};
+  medical:'Medical',transit:'Transit',utilities:'Utilities & phone',emergency:'Emergency fund'};
 function expActualBlock(r){
   const a=expActualYTD(r.yr);
   if(!a)return '';
@@ -3653,6 +3653,11 @@ function budgetItemAmount(i,text){
 function budgetCurrent(cat){
   const yr=_budgetYear??PlannerTime.year();
   const R=run(P).R,row=R.find(r=>r.yr===yr);
+  if(cat===PlannerBudget.EMERGENCY){
+    // Not a spending line: its figure is the amount asked of the year, from the allocation.
+    const a=PlannerBudget.allocation(P,R,yr);
+    return{yr,row,R,annual:a?a.saving.target:0,src:a?a.saving.src:'model'};
+  }
   return{yr,row,R,annual:row?(row.livFullParts||{})[cat]||0:0,src:row&&row.livSrc?row.livSrc[cat]:'model'};
 }
 function budgetCommit(cat,text){
@@ -3861,8 +3866,8 @@ function renderBudgetTab(R,P){
   };
   const segsB=[
     ...(basis==='gross'?[['tax','Taxes',Math.round(row.tax)],['pretax','401(k) & benefits',Math.round(row.gross-row.tax-row.netTC)]]:[]),
-    ['fixed','Fixed commitments',groupSpend('fixed')],['essential','Everyday essentials',groupSpend('essential')],['discretionary','Discretionary',groupSpend('discretionary')],
-    ['saving','Savings',alloc0.saving.total],['investing','Investing',alloc0.investing.total],
+    ['fixed','Fixed costs',groupSpend('fixed')],['discretionary','Discretionary',groupSpend('discretionary')],
+    ['saving','Savings',alloc0.saving.total],['investing','Investments',alloc0.investing.total],
     ...(row.eAdj>0?[['oneoff','One-off',row.eAdj]]:[]),
     ...(alloc0.deficit>0?[['short','Drawn from savings & Stripe',alloc0.deficit]]:[]),
   ].filter(x=>x[2]>0);
@@ -3875,7 +3880,7 @@ function renderBudgetTab(R,P){
     <div class="spend-caption" style="display:flex;justify-content:space-between;margin-top:3px"><span>${R[0].yr}</span><span>Above the line: left over each year · below: drawn down</span><span>${R[R.length-1].yr}</span></div>`;
   const reserveNote=alloc0.reserveMonths!=null?`Your emergency fund (the ${fmt(alloc0.reserveFloor)} reserve floor) is <strong>${alloc0.reserveMonths} months</strong> of ${yr}'s fixed costs${alloc0.reserveMonths>12?' — well beyond the usual six months':''}.`:'';
   const exHead=alloc0.excess>0
-    ?`${yr} leaves <strong>${amtShort(alloc0.excess)}${unitWord}</strong> over: <strong>${amtShort(alloc0.investing.total)}</strong> goes to investing${alloc0.saving.total?` and <strong>${amtShort(alloc0.saving.total)}</strong> to refill the cash reserve`:', none to the cash reserve — it is already above its floor'}.`
+    ?`${yr} leaves <strong>${amtShort(alloc0.excess)}${unitWord}</strong> over: <strong>${amtShort(alloc0.investing.total)}</strong> goes to investments${alloc0.saving.total?` after <strong>${amtShort(alloc0.saving.total)}</strong> to the emergency fund`:', none to the emergency fund'}.`
     :alloc0.deficit>0?`${yr} spends <strong>${amtShort(alloc0.deficit)}${unitWord}</strong> more than it takes in, so nothing is added to savings or investments — the gap is drawn from them.`:`${yr} comes out level: nothing left over, nothing drawn.`;
   h+=`<section class="cp-card bd-buckets"><div class="ps-head"><div><h3>Where ${yr}'s money goes</h3><p>${exHead}</p></div></div>
     ${bucketBar}<p class="spend-caption" style="margin:12px 0 4px">${reserveNote}</p>${strip}</section>`;
@@ -3958,16 +3963,27 @@ function renderBudgetTab(R,P){
     return ro.join('')+ks.map(k=>lineOf(k,LIV_LABEL[k]||k,living[k],(row.livSrc||{})[k]||'model',false)).join('');
   };
   const computedRow=(key,label,v,sub)=>`<div class="bd-row" style="--tier:${RM_COLOR[key]}"><div class="cl-top"><span class="cl-name">${label}</span><strong class="bd-fixed">${amt(v)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span>${pct(v)} of ${basisWord} income</span><span class="bd-why">${sub}</span></div></div>`;
-  const savingRows=()=>computedRow('saving','Emergency fund',alloc.saving.total,alloc.reserveFunded?`Full: your liquid assets (${fmt(alloc.liquidBegin)}) are above the ${fmt(alloc.reserveFloor)} floor${alloc.reserveMonths!=null?`, about ${alloc.reserveMonths} months of fixed costs`:''}, so nothing is added this year`:`${fmt(alloc.saving.reserveGap)} below its ${fmt(alloc.reserveFloor)} floor, so this year's left-over cash goes here first`);
+  const savingRows=()=>{
+    const sv=alloc.saving,have=B.emergencySaved(P,R,yr);
+    const bits=[];
+    if(sv.src==='model')bits.push(alloc.reserveFunded?`Not set. Your liquid assets (${fmt(alloc.liquidBegin)}) are above the ${fmt(alloc.reserveFloor)} floor${alloc.reserveMonths!=null?`, about ${alloc.reserveMonths} months of fixed costs`:''}, so nothing is added. Type a figure or a percentage to set some aside each year.`:`Not set. ${fmt(sv.reserveGap)} below the ${fmt(alloc.reserveFloor)} floor, so this year's left-over money refills it first.`);
+    else{
+      bits.push(`${fmt(sv.total)} set aside in ${yr}${sv.fromShares>0?`, of which <strong>${fmt(sv.fromShares)}</strong> would come from selling Stripe shares the plan keeps (the cash left over covers ${fmt(sv.fromCash)})`:''}.`);
+      if(sv.shortfall>0)bits.push(`<strong style="color:var(--a)">${fmt(sv.shortfall)} short</strong>: ${yr} leaves ${fmt(alloc.excess)} over.`);
+    }
+    if(have.total>0)bits.push(`${fmt(have.total)} set aside since ${R[0].yr}${have.months!=null?`, about ${have.months} months of ${yr}'s fixed costs`:''}.`);
+    return line(PlannerBudget.EMERGENCY,'Emergency fund',sv.target,sv.src,{color:RM_COLOR.saving,max:maxLine})
+      +`<p class="spend-caption bd-ef-note">${bits.join(' ')}</p>`;
+  };
   const investRows=()=>{
-    if(alloc.deficit>0)return `<div class="bd-row"><div class="cl-top"><span class="cl-name">Drawing down</span><strong class="bd-fixed" style="color:var(--a)">−${amt(alloc.deficit)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span class="bd-why">${yr} spends more than it takes in, so nothing is invested. The shortfall is met by selling Stripe shares${alloc.drawn.stripe?` (${fmt(alloc.drawn.stripe)} here)`:''} and drawing on the Fidelity brokerage.</span></div></div>`;
-    return computedRow('investing','Fidelity brokerage',alloc.investing.portfolio,'All the cash left over after the emergency fund')
+    if(alloc.deficit>0)return `<div class="bd-row"><div class="cl-top"><span class="cl-name">Drawing down</span><strong class="bd-fixed" style="color:var(--a)">−${amt(alloc.deficit)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span class="bd-why">${yr} spends more than it takes in, so nothing is invested or saved. The shortfall is met by selling Stripe shares${alloc.drawn.stripe?` (${fmt(alloc.drawn.stripe)} here)`:''} and drawing on the Fidelity brokerage.</span></div></div>`;
+    return computedRow('investing','Fidelity brokerage',alloc.investing.portfolio,'All the cash left over after savings')
       +computedRow('investing','Stripe shares kept',alloc.investing.stripe,'Vested shares the plan does not need to sell')
       +`<p class="spend-caption" style="margin:4px 0 0">Plus <strong style="color:var(--t2)">${fmtF(Math.round(alloc.investing.k401/(mo?12:1)))}${unitWord}</strong> into your 401(k), taken from pay before it counts as net income.</p>`;
   };
   const groupTotal=key=>key==='saving'?alloc.saving.total:key==='investing'?alloc.investing.total
     :B.BUCKETS.find(x=>x.key===key).lines.reduce((t,k)=>t+(k==='housing'?row.hFull:k==='childcare'?row.ccFull:k==='tuition'?row.tuFull:(living[k]||0)),0)
-      +(key==='discretionary'?Object.keys(living).filter(k=>B.bucketOf(k)==='discretionary'&&!B.BUCKETS[2].lines.includes(k)).reduce((t,k)=>t+living[k],0):0);
+      +(key==='discretionary'?Object.keys(living).filter(k=>B.bucketOf(k)==='discretionary'&&!B.BUCKETS.find(x=>x.key==='discretionary').lines.includes(k)).reduce((t,k)=>t+living[k],0):0);
   const bucketGroups=B.BUCKETS.map(b=>{
     const spent=groupTotal(b.key),share=den>0?spent/den:0;
     const rows=b.key==='investing'?investRows():b.key==='saving'?savingRows():bucketRows(b.key);

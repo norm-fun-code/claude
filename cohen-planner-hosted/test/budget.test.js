@@ -204,37 +204,67 @@ describe('the Budget screen',()=>{
 
 describe('the groups a year falls into',()=>{
  const P=plan(),R=M.run(P).R;
- it('sort every line into exactly one group, and an unknown one lands in discretionary',()=>{
+ it('sort every line into exactly one group, with essentials inside fixed costs',()=>{
   const all=B.BUCKETS.flatMap(b=>b.lines);
   expect(new Set(all).size).toBe(all.length);
   for(const k of M.LIV_KEYS)expect(B.BUCKETS.some(b=>b.lines.includes(k))).toBe(true);
-  expect(B.bucketOf('insurance')).toBe('fixed');expect(B.bucketOf('groceries')).toBe('essential');
+  expect(B.bucketOf('insurance')).toBe('fixed');expect(B.bucketOf('groceries')).toBe('fixed');expect(B.bucketOf('medical')).toBe('fixed');
   expect(B.bucketOf('vacations')).toBe('discretionary');expect(B.bucketOf('charity')).toBe('discretionary');
   expect(B.bucketOf('pets')).toBe('discretionary');
-  expect(B.BUCKETS.find(b=>b.key==='investing').lines).toEqual([]);expect(B.BUCKETS.find(b=>b.key==='saving').lines).toEqual([]);
+  for(const k of ['saving','investing'])expect(B.BUCKETS.find(b=>b.key===k).lines).toEqual([]);
  });
- it('runs fixed, essentials, discretionary, then savings, then investing',()=>{
-  expect(B.BUCKETS.map(b=>b.key)).toEqual(['fixed','essential','discretionary','saving','investing']);
+ it('runs fixed, discretionary, savings, then investments',()=>{
+  expect(B.BUCKETS.map(b=>b.key)).toEqual(['fixed','discretionary','saving','investing']);
   expect(B.BUCKETS.filter(b=>b.computed).map(b=>b.key)).toEqual(['saving','investing']);
  });
- it('split a surplus into Stripe kept, portfolio and reserve, adding to the excess exactly',()=>{
-  for(const r of R){
-   const a=B.allocation(P,R,r.yr);
-   expect(a.investing.stripe+a.investing.portfolio+a.saving.reserve).toBeGreaterThanOrEqual(a.excess-2);
-   expect(a.investing.stripe+a.investing.portfolio+a.saving.reserve).toBeLessThanOrEqual(a.excess+2);
+ it('split a surplus into savings, Stripe kept and brokerage, adding to the excess exactly',()=>{
+  const sets=[P,{...P,budgetRules:{emergency:[{from:2026,kind:'pct',value:.04,basis:'net'}]}}];
+  for(const Q of sets)for(const r of R){
+   const a=B.allocation(Q,R,r.yr);
+   expect(Math.abs(a.investing.stripe+a.investing.portfolio+a.saving.total-a.excess),String(r.yr)).toBeLessThanOrEqual(2);
    expect(a.excess*a.deficit).toBe(0);
-   expect(a.investing.stripe).toBeLessThanOrEqual(Math.max(0,r.sRet||0)+1);
+   expect(a.saving.total).toBeLessThanOrEqual(a.saving.target);
+   expect(a.saving.total).toBeLessThanOrEqual(a.excess);
+   expect(a.investing.stripe).toBeGreaterThanOrEqual(-1);expect(a.investing.portfolio).toBeGreaterThanOrEqual(-1);
   }
  });
- it('says drawing down when the year runs a deficit, with nothing invested',()=>{
-  const r=R.find(r=>r.flowFull<-1000),a=B.allocation(P,R,r.yr);
+ it('says drawing down when the year runs a deficit, with nothing invested or saved',()=>{
+  const r=R.find(r=>r.flowFull<-1000),Q={...P,budgetRules:{emergency:[{from:2026,kind:'amount',value:30000}]}},a=B.allocation(Q,R,r.yr);
   expect(a.deficit).toBe(-r.flowFull);expect(a.investing.total).toBe(0);expect(a.saving.total).toBe(0);
+  expect(a.saving.shortfall).toBeGreaterThan(0);
  });
- it('tops up the cash reserve first when it is below its floor',()=>{
-  const low=plan({liquidReserveFloor:2000000}),RL=M.run(low).R,a=B.allocation(low,RL,2026);
+ it('asks nothing of a year that you set nothing for, unless the reserve is below its floor',()=>{
+  expect(B.allocation(P,R,2029).saving).toMatchObject({src:'model',target:0,total:0});
+  const low={...P,liquidReserveFloor:2000000},RL=M.run(low).R,a=B.allocation(low,RL,2026);
   expect(a.reserveFunded).toBe(false);
-  expect(a.saving.reserveGap).toBeGreaterThan(0);
-  expect(a.saving.reserve).toBe(Math.min(a.excess-a.investing.stripe,a.saving.reserveGap));
+  expect(a.saving.src).toBe('model');expect(a.saving.target).toBe(a.saving.reserveGap);
+  expect(a.saving.total).toBe(Math.min(a.saving.target,a.excess));
+ });
+ it('takes a dollar rule, a share of income or a pin, in that order of precedence from the specific',()=>{
+  const row=y=>R.find(r=>r.yr===y);
+  const ruled={...P,budgetRules:{emergency:[{from:2027,kind:'amount',value:10000},{from:2031,kind:'pct',value:.03,basis:'net'}]}};
+  expect(B.allocation(ruled,R,2026).saving.src).toBe('model');
+  expect(B.allocation(ruled,R,2028).saving).toMatchObject({src:'rule',target:Math.round(10000*1.03)});
+  expect(B.allocation(ruled,R,2033).saving.target).toBe(Math.round(.03*row(2033).netTC));
+  const pinned={...ruled,savingEmergencyY7:50000};   // 2033
+  expect(B.allocation(pinned,R,2033).saving).toMatchObject({src:'pin',target:50000});
+  expect(B.allocation(pinned,R,2034).saving.src).toBe('rule');
+ });
+ it('funds savings from left-over cash first, then from the Stripe shares the plan keeps, and says so',()=>{
+  const Q={...P,budgetRules:{emergency:[{from:2026,kind:'amount',value:60000}]}};
+  const a=B.allocation(Q,R,2029);
+  expect(a.saving.fromCash+a.saving.fromShares).toBe(a.saving.total);
+  expect(a.saving.fromCash).toBe(Math.min(a.saving.total,a.excess-Math.min(R.find(r=>r.yr===2029).sRet,a.excess)));
+  expect(a.saving.fromShares).toBeGreaterThan(0);
+  const base=B.allocation(P,R,2029);
+  expect(a.investing.stripe).toBe(base.investing.stripe-a.saving.fromShares);
+ });
+ it('adds up what has been set aside, and what that is in months of fixed costs',()=>{
+  const Q={...P,budgetRules:{emergency:[{from:2027,kind:'amount',value:20000}]}};
+  const e=B.emergencySaved(Q,R,2030);
+  expect(e.total).toBe([2027,2028,2029,2030].map(y=>B.allocation(Q,R,y).saving.total).reduce((t,v)=>t+v,0));
+  expect(e.months).toBeCloseTo(e.total/B.allocation(Q,R,2030).fixedPerMonth,0);
+  expect(B.emergencySaved(P,R,2030).total).toBe(0);
  });
  it('states the reserve in months of fixed costs, and the 401(k) as outside the surplus',()=>{
   const a=B.allocation(P,R,2030);
@@ -242,9 +272,21 @@ describe('the groups a year falls into',()=>{
   expect(a.investing.k401).toBe(P.pretax401k);
  });
  it('does not change the projection, and covers every year once',()=>{
+  const Q={...P,budgetRules:{emergency:[{from:2026,kind:'pct',value:.1,basis:'net'}]},savingEmergencyY3:12345};
+  expect(M.run(Q)).toEqual(M.run(P));
   const before=JSON.stringify(M.run(P).R);B.allocationSeries(P,R);expect(JSON.stringify(M.run(P).R)).toBe(before);
   expect(B.allocationSeries(P,R).map(a=>a.year)).toEqual(R.map(r=>r.yr));
   expect(B.allocation(P,R,1999)).toBe(null);
+ });
+ it('is edited like any line: a share becomes dollars or a rule, and a pin keeps its own key',()=>{
+  const income={net:400000,gross:650000};
+  expect(B.edit(P,{category:'emergency',year:2030,scope:'onward',input:{kind:'pct',pct:.05},basis:'net',income}).budgetRules.emergency)
+    .toEqual([{from:2030,kind:'amount',value:20000,sized:{pct:.05,basis:'net'}}]);
+  expect(B.edit(P,{category:'emergency',year:2030,scope:'onward',input:{kind:'pct',pct:.05,tied:true},basis:'gross',income}).budgetRules.emergency)
+    .toEqual([{from:2030,kind:'pct',value:.05,basis:'gross'}]);
+  expect(B.edit(P,{category:'emergency',year:2030,scope:'year',input:{kind:'amount',annual:15000},income}).pins).toEqual({savingEmergencyY4:15000});
+  expect(B.edit(P,{category:'emergency',year:2030,scope:'onward',input:{kind:'clear'},income}).budgetRules.emergency).toEqual([{from:2030,kind:'model'}]);
+  expect(B.edit(P,{category:'nope',year:2030,scope:'year',input:{kind:'clear'},income}).ok).toBe(false);
  });
 });
 
@@ -252,16 +294,20 @@ describe('the groups on the Budget screen',()=>{
  const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
  it('groups lines as fixed, essentials and discretionary, then savings and investing',()=>{
   expect(ui).toContain('B.BUCKETS.map(b=>{');
+  expect(ui).not.toContain("'essential'");
   expect(ui).toContain("Where ${yr}'s money goes");
   expect(ui).not.toContain('Ramit');
   expect(ui).not.toContain('bd-ruler');
  });
- it('makes savings the emergency fund and investing the Fidelity brokerage and Stripe',()=>{
-  expect(ui).toContain("computedRow('saving','Emergency fund'");
+ it('makes savings an editable emergency fund, and investments the Fidelity brokerage and Stripe',()=>{
+  expect(ui).toContain("line(PlannerBudget.EMERGENCY,'Emergency fund'");
+  expect(ui).toContain("if(cat===PlannerBudget.EMERGENCY){");
   expect(ui).toContain("computedRow('investing','Fidelity brokerage'");
   expect(ui).toContain("computedRow('investing','Stripe shares kept'");
-  expect(ui).toContain('All the cash left over after the emergency fund');
+  expect(ui).toContain('All the cash left over after savings');
+  expect(ui).toContain('would come from selling Stripe shares the plan keeps');
   expect(ui).toContain('Drawing down');
+  expect(html).toContain("emergency:'Emergency fund'");
  });
  it('moves suggestions and baselines to the bottom, collapsed, with the long check text off the rows',()=>{
   const render=ui.slice(ui.indexOf('function renderBudgetTab('));

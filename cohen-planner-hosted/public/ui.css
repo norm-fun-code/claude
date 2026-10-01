@@ -1144,3 +1144,4 @@ body:has(.demo-banner) .bd-bar{top:46px}
 .bd-infl input:focus{outline:none;border-color:var(--accent)}
 .bd-infl-sm{margin-left:6px}
 @media(max-width:760px){.bd-bar{padding:8px 10px;gap:8px 12px}.bd-infl{margin-left:0}}
+.bd-ef-note{grid-column:1/-1;margin:2px 0 0!important}

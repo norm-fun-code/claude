@@ -43,7 +43,12 @@
     return { kind: 'amount', annual: Math.round(n * mult * (unit === 'month' ? 12 : 1)) };
   }
 
-  const keyFor = (category, i) => M.livingCategoryKey(category, i);
+  // The emergency fund is set the same way as a spending line (a dollar figure or a share of income,
+  // for one year or from a year on) but it is not spending, so it keeps its own pin key and the
+  // projection never reads it: it decides how a year's left-over money is divided, nothing more.
+  const EMERGENCY = 'emergency';
+  const emergencyKey = i => `savingEmergencyY${i}`;
+  const keyFor = (category, i) => category === EMERGENCY ? emergencyKey(i) : M.livingCategoryKey(category, i);
 
   // An edit becomes either a PIN (one named year) or a RULE (this year, and every year after
   // until another rule starts). Nothing is mutated: the result says what to write, and what was
@@ -57,7 +62,7 @@
   // A later change you already made is left alone and reported, never silently overwritten.
   function edit(P, c) {
     const sy = P.planStartYear || 2026, i = c.year - sy;
-    if (!M.LIV_KEYS.includes(c.category)) return { ok: false, error: 'Unknown line.' };
+    if (!M.LIV_KEYS.includes(c.category) && c.category !== EMERGENCY) return { ok: false, error: 'Unknown line.' };
     if (i < 0 || i > M.LIV_OVERRIDE_MAX) return { ok: false, error: 'That year is outside the plan.' };
     const basis = c.basis === 'gross' ? 'gross' : 'net';
     const income = c.income || {};
@@ -203,19 +208,16 @@
   // Fidelity brokerage (every dollar of cash left over once the emergency fund is full) and the Stripe
   // shares kept. Those two are not lines: they are what the plan does with what is left.
   const BUCKETS = [
-    { key: 'fixed', label: 'Fixed commitments',
-      note: 'Arrives whether or not you change how you live: housing, childcare, tuition, insurance, utilities & phone, transit, auto',
-      lines: ['housing', 'childcare', 'tuition', 'insurance', 'utilities', 'transit', 'auto'] },
-    { key: 'essential', label: 'Everyday essentials',
-      note: 'Flexes a little, cannot be skipped: groceries and medical',
-      lines: ['groceries', 'medical'] },
+    { key: 'fixed', label: 'Fixed costs',
+      note: 'Housing, childcare, tuition, insurance, utilities & phone, transit, auto, and the essentials: groceries and medical',
+      lines: ['housing', 'childcare', 'tuition', 'insurance', 'utilities', 'transit', 'auto', 'groceries', 'medical'] },
     { key: 'discretionary', label: 'Discretionary',
       note: 'Choices: dining, shopping, clothing, vacations, entertainment, charity, misc',
       lines: ['dining', 'shopping', 'clothing', 'vacations', 'entertainment', 'charity', 'misc'] },
     { key: 'saving', label: 'Savings', computed: true,
-      note: 'The emergency fund: cash held against the unexpected, filled before anything is invested', lines: [] },
-    { key: 'investing', label: 'Investing', computed: true,
-      note: 'Fidelity brokerage, which takes all the cash left once the emergency fund is full, and Stripe shares kept', lines: [] },
+      note: 'The emergency fund: a share of income set aside each year, filled before anything is invested', lines: [] },
+    { key: 'investing', label: 'Investments', computed: true,
+      note: 'Fidelity brokerage, which takes all the cash left once savings are set aside, and Stripe shares kept', lines: [] },
   ];
   // A line the engine adds later lands in discretionary rather than vanishing, so the groups always
   // add up to the year's spending.
@@ -235,24 +237,39 @@
     const i = R.findIndex(r => r.yr === year);
     if (i < 0) return null;
     const r = R[i], prev = i > 0 ? R[i - 1] : null;
+    const sy = P.planStartYear || 2026;
     const floor = Number(P.liquidReserveFloor) || 0;
     const liqBegin = prev ? prev.liq : Number(P.startingLiquid) || 0;
     const flow = Number(r.flowFull) || 0;
     const excess = Math.max(0, flow), deficit = Math.max(0, -flow);
-    const stripe = Math.min(Math.max(0, Number(r.sRet) || 0), excess);
-    const toPortfolio = excess - stripe;
+    const stripeRet = Math.min(Math.max(0, Number(r.sRet) || 0), excess);
+    const toCash = excess - stripeRet;
     const reserveGap = Math.max(0, floor - liqBegin);
-    const reserve = Math.min(toPortfolio, reserveGap);
-    const invested = toPortfolio - reserve;
+
+    // What the emergency fund is asked to take this year: the figure you pinned for the year, else the
+    // rule in force, else — if you have set nothing — only what it takes to refill to the reserve floor.
+    const pin = Number(P[emergencyKey(year - sy)]);
+    const pinned = P[emergencyKey(year - sy)] !== undefined && P[emergencyKey(year - sy)] !== null
+      && P[emergencyKey(year - sy)] !== '' && Number.isFinite(pin);
+    const ruled = pinned ? null : M.budgetValue(P, EMERGENCY, year, { net: r.netTC, gross: r.gross });
+    const src = pinned ? 'pin' : ruled !== null ? 'rule' : 'model';
+    const target = Math.max(0, Math.round(pinned ? pin : ruled !== null ? ruled : reserveGap));
+
+    // Savings come first. They are paid from the cash left over, and if that is not enough, from the
+    // Stripe shares the plan would otherwise keep (selling some of them is what funding it would take).
+    // Nothing can be saved that the year does not leave over.
+    const saved = Math.min(target, excess);
+    const fromCash = Math.min(saved, toCash), fromShares = saved - fromCash;
+    const stripe = stripeRet - fromShares, brokerage = toCash - fromCash;
     const k401 = Math.round(Number(P.pretax401k) || 0);
-    // Fixed costs, per month, for the reserve in months.
     const liv = r.livFullParts || {};
     const fixed = (r.hFull || 0) + (r.ccFull || 0) + (r.tuFull || 0)
-      + BUCKETS[0].lines.concat(BUCKETS[1].lines).filter(k => liv[k] != null).reduce((t, k) => t + liv[k], 0);
+      + BUCKETS[0].lines.filter(k => liv[k] != null).reduce((t, k) => t + liv[k], 0);
     return {
       year, flow, excess, deficit,
-      investing: { stripe: Math.round(stripe), portfolio: Math.round(invested), total: Math.round(stripe + invested), k401 },
-      saving: { reserve: Math.round(reserve), reserveGap: Math.round(reserveGap), total: Math.round(reserve) },
+      investing: { stripe: Math.round(stripe), portfolio: Math.round(brokerage), total: Math.round(stripe + brokerage), k401 },
+      saving: { target, src, total: Math.round(saved), fromCash: Math.round(fromCash), fromShares: Math.round(fromShares),
+        shortfall: Math.round(Math.max(0, target - saved)), reserveGap: Math.round(reserveGap) },
       // A shortfall is met by selling shares, then drawing the portfolio down.
       drawn: { stripe: Math.round(Math.max(0, (Number(r.sold) || 0) + (Number(r.sHold) || 0))), total: Math.round(deficit) },
       reserveFloor: floor, liquid: Math.round(r.liq), liquidBegin: Math.round(liqBegin),
@@ -263,8 +280,16 @@
   }
   // The same, for every year — the strip that shows saving early and drawing down later.
   const allocationSeries = (P, R) => R.map(r => allocation(P, R, r.yr));
+  // What has been set aside for the emergency fund from the plan's first year through `year`, and what
+  // that is in months of that year's fixed costs.
+  function emergencySaved(P, R, year) {
+    let total = 0;
+    for (const r of R) if (r.yr <= year) total += allocation(P, R, r.yr).saving.total;
+    const a = allocation(P, R, year);
+    return { total, months: a && a.fixedPerMonth > 0 ? Math.round(total / a.fixedPerMonth * 10) / 10 : null };
+  }
 
-  const api = { BUCKETS, bucketOf, allocation, allocationSeries, modelPlan, parseInput, edit, describe, funding, phases, headroom, feasible };
+  const api = { BUCKETS, EMERGENCY, emergencyKey, bucketOf, allocation, allocationSeries, emergencySaved, modelPlan, parseInput, edit, describe, funding, phases, headroom, feasible };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PlannerBudget = api;
 })(typeof window !== 'undefined' ? window : this);
