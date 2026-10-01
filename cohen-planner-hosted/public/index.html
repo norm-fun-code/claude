@@ -3602,6 +3602,20 @@ function budgetJump(key){
   window.scrollTo({top:el.getBoundingClientRect().top+window.scrollY-stuck-12,behavior:calm?'auto':'smooth'});
 }
 // Set a line to the pace the imported records show, over the years the scope says.
+// Take one override away: a rule, a pin or a plan item. Each is an ordinary change, so it has an undo.
+function budgetRemoveOverride(type,cat,ref){
+  const name=LIV_LABEL[cat]||cat;
+  if(type==='rule'){
+    const before={budgetRules:JSON.parse(JSON.stringify(P.budgetRules||{}))};
+    budgetChange(`${name}: rule removed`,before,()=>{
+      const segs=[...((P.budgetRules||{})[cat]||[])];segs.splice(Number(ref),1);
+      P.budgetRules={...(P.budgetRules||{})};
+      if(segs.length)P.budgetRules[cat]=segs;else delete P.budgetRules[cat];
+    });
+  }else if(type==='pin'){
+    budgetChange(`${name}: one-year figure removed`,{pins:{[ref]:P[ref]}},()=>{delete P[ref]});
+  }else if(type==='item')budgetRemoveItem(Number(ref));
+}
 function budgetSetActual(cat){
   const cur=budgetCurrent(cat),a=PlannerBudget.actuals(_spend,cur.yr,P.monarchLineMap);
   const ln=a&&a.lines[cat];if(!ln)return;
@@ -3882,6 +3896,7 @@ function renderBudgetTab(R,P){
   // against its budget. Loads the imported records if they are not here yet.
   if(_spend===null&&!_spendLoading&&!_demoMode)loadSpending();
   const act=yr===PlannerTime.year()?B.actuals(_spend,yr,P.monarchLineMap):null;
+  const allOv=B.overrides(P);                    // every rule, pin and plan item, for the markers and the list
     const lbl='font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3)';
   const chip=(on,click,text,dis)=>`<button type="button" class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}"${dis?' disabled':''} onclick="${click}">${text}</button>`;
 
@@ -3989,11 +4004,23 @@ function renderBudgetTab(R,P){
   const mapFold=catNames.length?`<details class="cp-card spend-details bd-over" ${bdFold('map')}><summary>Match your imported categories to budget lines${act&&act.unmapped.length?` · ${act.unmapped.length} unmatched`:''}</summary><div class="bd-over-in">
     <p class="spend-caption" style="margin:0">Your records use the bank's categories; the budget uses its own lines. These are matched by name, and anything you change here wins. A category set to “Leave out” is kept out of the comparison.</p>
     <div class="bd-map">${catNames.map(([n,t])=>{const key=n.trim().toLowerCase(),over=(P.monarchLineMap||{})[key],auto=B.lineOfCategory(n,{}),eff=B.lineOfCategory(n,P.monarchLineMap);return `<div class="bd-map-row${eff?'':' unmatched'}"><span>${advEscape(n)}</span><small>${fmt(t)} this year</small><select aria-label="Budget line for ${advEscape(n)}" onchange="budgetMapSet('${advEscape(n).replace(/'/g,'&#39;')}',this.value)">${mapOptions(over||'')}</select><em>${over?'':(auto?'→ '+advEscape(LIV_LABEL[auto]||auto):'no match')}</em></div>`}).join('')}</div></div></details>`:'';
+  const ovByLine=new Map();allOv.forEach(o=>{const key=o.category;(ovByLine.get(key)||ovByLine.set(key,[]).get(key)).push(o)});
+  const ledgerFold=allOv.length?`<details class="cp-card spend-details bd-over" ${bdFold('ledger')}><summary>Everything you've changed · ${allOv.length}</summary><div class="bd-over-in">
+    <p class="spend-caption" style="margin:0">Every rule, one-year figure and plan item in this plan, by line, oldest first. A rule keeps applying until the next one starts, so this is where to check nothing is still running that you forgot about. Removing one can be undone.</p>
+    <div class="bd-ledger">${[...ovByLine.entries()].map(([cat,list])=>`<div class="bd-led-group"><h4>${advEscape(cat==='oneoff'?'One-off costs':LIV_LABEL[cat]||cat)}</h4>${list.map(o=>`<div class="bd-led-row"><button type="button" class="bd-led-year" onclick="budgetYearSet(${o.from})" title="Go to ${o.from}">${o.type==='pin'?o.from:o.type==='item'?(o.from===o.to?o.from:o.from+'–'+o.to):(o.to>=(P.planEndYear||2058)?o.from+' on':o.from+'–'+o.to)}</button><span class="bd-led-kind ${o.type}">${o.type==='pin'?'One year':o.type==='item'?'Plan item':'Rule'}</span><span class="bd-led-text">${advEscape(B.overrideText(P,o,fmtF))}</span><button type="button" class="bd-link" onclick="budgetRemoveOverride('${o.type}','${o.category}','${String(o.ref).replace(/'/g,'')}')" aria-label="Remove: ${advEscape(B.overrideText(P,o,fmtF))}">Remove</button></div>`).join('')}</div>`).join('')}</div></div></details>`:'';
   const scenarioFold=`<details class="cp-card spend-details bd-over" ${bdFold('scenarios')}><summary>Scenarios · what stays the same across your cases</summary><div class="bd-over-in">${sharedHtml}</div></details>`;
 
   // ── The lines ──
   const modelParts=(modelRow&&modelRow.livFullParts)||{};
   const checkByLine=Object.fromEntries(PlannerSuggest.checks(P,R,yr).map(c=>[c.line,c]));
+  const ovUnit=v=>mo?`${fmtF(Math.round(v/12))}/mo`:`${fmtF(Math.round(v))}/yr`;
+  const changeChips=k=>{
+    const mine=allOv.filter(o=>o.category===k&&o.type!=='item');
+    if(!mine.length)return '';
+    const when=o=>o.type==='pin'?String(o.from):o.to>=(P.planEndYear||2058)?`${o.from} on`:`${o.from}–${o.to}`;
+    const what=o=>o.type==='pin'?`${ovUnit(o.value)}, that year only`:o.seg.kind==='model'?'back to the model':o.seg.kind==='pct'?`${(o.seg.value*100).toFixed(1).replace(/\.0$/,'')}% of ${o.seg.basis==='gross'?'gross':'net'}`:`${ovUnit(o.seg.value)}`;
+    return `<p class="bd-changes" aria-label="Changes to ${advEscape(LIV_LABEL[k]||k)} over time"><span>Changes</span>${mine.map(o=>`<button type="button" class="bd-chg ${o.type}${o.from<=yr&&yr<=o.to?' now':''}" onclick="budgetYearSet(${o.from})" title="${advEscape(B.overrideText(P,o,fmtF))} — click to go to ${o.from}">${when(o)} · ${what(o)}</button>`).join('')}</p>`;
+  };
   const actualStrip=(k,value,readonly)=>{
     if(!act||k==='emergency'||!(value>0||(act.lines[k]&&act.lines[k].perMonth>0)))return '';
     const ln=act.lines[k];
@@ -4024,7 +4051,7 @@ function renderBudgetTab(R,P){
     return `<div class="bd-row" style="--tier:${o.color}">
       <div class="cl-top"><span class="cl-name">${advEscape(label)}${tag}</span>${inputHtml}</div>
       <div class="cl-track"><i style="width:${Math.max(1.5,(o.max>0?value/o.max:0)*100).toFixed(1)}%"></i></div>
-      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord} income</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord} income"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord} income" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord} income</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${actualStrip(k,value,o.readonly)}${chk?`<p class="bd-callout ${chk.status}"><b>${chk.status==='low'?'Looks light':'Looks high'}.</b> ${advEscape(chk.text)}</p>`:''}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${embedControls(k==='housing'?'home':k)}</div>`:''}`;
+      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord} income</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord} income"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord} income" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord} income</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${actualStrip(k,value,o.readonly)}${changeChips(k)}${chk?`<p class="bd-callout ${chk.status}"><b>${chk.status==='low'?'Looks light':'Looks high'}.</b> ${advEscape(chk.text)}</p>`:''}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${embedControls(k==='housing'?'home':k)}</div>`:''}`;
   };
   const living=row.livFullParts||{};
   const c=IS.compute(row,'net');
@@ -4104,7 +4131,7 @@ function renderBudgetTab(R,P){
       ${(P.planItems||[]).map((it,i)=>`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
         <label class="bd-sug-amt"><span class="ui-sr">Amount</span><input type="text" inputmode="decimal" value="${fmtF(it.amount)}" aria-label="${advEscape(it.label)} amount" onfocus="this.select()" onchange="budgetItemAmount(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${it.from===it.to?'once':'/yr'}</small></label>
         <button type="button" class="bd-btn" onclick="budgetRemoveItem(${i})" aria-label="Remove ${advEscape(it.label)}">Remove</button></div>`).join('')}</div>`:''}
-    <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${overTimeHtml}${mapFold}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
+    <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${overTimeHtml}${ledgerFold}${mapFold}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
 }

@@ -358,7 +358,47 @@
     return { status: diff > 0 ? 'over' : 'under', diff, pct: diff / b };
   }
 
-  const api = { CATEGORY_RULES, lineOfCategory, actuals, variance, BUCKETS, EMERGENCY, emergencyKey, bucketOf, allocation, allocationSeries, emergencySaved, modelPlan, parseInput, edit, describe, funding, phases, headroom, feasible };
+  // ── Everything you have changed ────────────────────────────────────────────
+  // A rule rolls forward silently, so it is easy to forget it is there. This lists every one — a rule
+  // and where it ends, a pin for a single year, a plan item — in one flat list that a screen can show
+  // beside the line it belongs to and again as a whole, so nothing you changed is out of sight.
+  const ORDER = [...BUCKETS.flatMap(b => b.lines), EMERGENCY];
+  function overrides(P) {
+    const sy = P.planStartYear || 2026, end = P.planEndYear || 2058, out = [];
+    const kinds = M.BUDGET_KINDS || ['amount', 'pct', 'model'];
+    for (const cat of ORDER.filter(c => c !== 'housing' && c !== 'childcare' && c !== 'tuition')) {
+      const raw = ((P.budgetRules || {})[cat] || []);
+      const segs = raw.map((seg, index) => ({ seg, index }))
+        .filter(x => x.seg && kinds.includes(x.seg.kind) && Number.isFinite(Number(x.seg.from)))
+        .sort((a, b) => Number(a.seg.from) - Number(b.seg.from));
+      segs.forEach((x, i) => {
+        const next = segs[i + 1];
+        out.push({ type: 'rule', category: cat, from: Number(x.seg.from), to: next ? Number(next.seg.from) - 1 : end, seg: x.seg, ref: x.index });
+      });
+      for (let i = 0; i <= M.LIV_OVERRIDE_MAX; i++) {
+        const key = keyFor(cat, i), v = P[key];
+        if (v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v)))
+          out.push({ type: 'pin', category: cat, from: sy + i, to: sy + i, value: Number(v), ref: key });
+      }
+    }
+    (Array.isArray(P.planItems) ? P.planItems : []).forEach((it, i) => {
+      if (it) out.push({ type: 'item', category: it.category, label: it.label, from: Number(it.from), to: Number(it.to), amount: Number(it.amount), grow: it.grow !== false, ref: i });
+    });
+    const rank = c => { const i = ORDER.indexOf(c); return i < 0 ? 999 : i; };
+    return out.sort((a, b) => rank(a.category) - rank(b.category) || a.from - b.from);
+  }
+  // One sentence for one override. `fmt` formats dollars; amounts are yearly figures.
+  function overrideText(P, o, fmt) {
+    if (o.type === 'pin') return `${fmt(o.value)} a year, for ${o.from} only`;
+    if (o.type === 'item') return `${o.label || 'Plan item'}: ${fmt(o.amount)}${o.from === o.to ? ' once' : ' a year'}${o.grow && o.from !== o.to ? ', growing with inflation' : ''}`;
+    const seg = o.seg, basis = seg.basis === 'gross' ? 'gross' : 'net';
+    if (seg.kind === 'model') return "back to the model's figure";
+    if (seg.kind === 'pct') return `${(seg.value * 100).toFixed(1).replace(/\.0$/, '')}% of ${basis} income, every year`;
+    const sized = seg.sized ? ` (sized from ${(seg.sized.pct * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.sized.basis === 'gross' ? 'gross' : 'net'} income)` : '';
+    return `${fmt(seg.value)} a year in ${seg.from}, then rising with inflation${sized}`;
+  }
+
+  const api = { overrides, overrideText, CATEGORY_RULES, lineOfCategory, actuals, variance, BUCKETS, EMERGENCY, emergencyKey, bucketOf, allocation, allocationSeries, emergencySaved, modelPlan, parseInput, edit, describe, funding, phases, headroom, feasible };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PlannerBudget = api;
 })(typeof window !== 'undefined' ? window : this);

@@ -441,7 +441,9 @@ describe('Budget layout: the lines come first',()=>{
  it('opens with one summary card, then the line by line, and everything else folds below',()=>{
   const at=s=>render.indexOf(s);
   expect(at('<section class="cp-card bd-buckets">')).toBeLessThan(at('<section class="cp-card bd-lines">'));
-  expect(at('<section class="cp-card bd-lines">')).toBeLessThan(at('${overTimeHtml}${mapFold}${scenarioFold}${assumeHtml}'));
+  const tail=render.slice(at('<section class="cp-card bd-lines">'));
+  // After the lines come the folds, in this order. Which others sit between does not matter.
+  expect(tail).toMatch(/\$\{overTimeHtml\}[\s\S]*\$\{scenarioFold\}[\s\S]*\$\{assumeHtml\}/);
   for(const piece of ['const phasesHtml=','const tuitionHtml=','const fundHtml=','const sharedHtml='])expect(render).toContain(piece);
   // None of the over-time material is emitted before the lines any more.
   const before=render.slice(0,at('<section class="cp-card bd-lines">'));
@@ -558,10 +560,90 @@ describe('actual against budget on the Budget screen',()=>{
   expect(html).toContain('function budgetMapSet(name,line)');
   expect(ui).toContain('Leave out');
   expect(ui).toContain("bdFold('map')");
-  expect(ui).toContain('${overTimeHtml}${mapFold}${scenarioFold}');
+  expect(ui).toMatch(/\$\{overTimeHtml\}[^`]*\$\{mapFold\}[^`]*\$\{scenarioFold\}/);
  });
  it('adopting a pace is an ordinary edit, with the same scope, snackbar and undo',()=>{
   const fn=html.slice(html.indexOf('function budgetSetActual('),html.indexOf('\n}\n',html.indexOf('function budgetSetActual('))+3);
   expect(fn).toContain('PlannerBudget.edit(P,');expect(fn).toContain('budgetApply(e,');expect(fn).toContain('scope:_budgetScope');
+ });
+});
+
+describe('everything you have changed',()=>{
+ const f=v=>'$'+Math.round(v).toLocaleString('en-US');
+ const P0=plan({
+  budgetRules:{groceries:[{from:2030,kind:'amount',value:20000},{from:2027,kind:'pct',value:.05,basis:'net'},{from:2040,kind:'model'}],emergency:[{from:2028,kind:'amount',value:15000,sized:{pct:.05,basis:'net'}}],bogus:[{from:2027,kind:'amount',value:1}],dining:[{from:'x',kind:'amount',value:1},{from:2031,kind:'wat',value:1}]},
+  livingGroceriesY9:30000,savingEmergencyY2:9000,
+  planItems:[{label:'Camp',category:'entertainment',from:2032,to:2039,amount:8000,grow:true},{label:'Gear',category:'oneoff',from:2027,to:2027,amount:6000,grow:false}]});
+ it('lists every rule, pin and plan item, line by line and oldest first, and ignores what is malformed',()=>{
+  const o=B.overrides(P0);
+  expect(o.map(x=>x.type+':'+x.category+':'+x.from)).toEqual([
+   // each line's changes run oldest to newest, so the list reads as that line's history
+   'rule:groceries:2027','rule:groceries:2030','pin:groceries:2035','rule:groceries:2040',
+   'item:entertainment:2032','rule:emergency:2028','pin:emergency:2028','item:oneoff:2027']);
+  expect(B.overrides(plan()).length).toBe(0);
+ });
+ it('says where each rule ends: at the next one, or at the end of the plan',()=>{
+  const g=B.overrides(P0).filter(x=>x.type==='rule'&&x.category==='groceries');
+  expect(g.map(x=>[x.from,x.to])).toEqual([[2027,2029],[2030,2039],[2040,2058]]);
+  expect(g.map(x=>x.ref)).toEqual([1,0,2]);                     // the position in the stored list, for removal
+ });
+ it('writes one plain sentence for each kind',()=>{
+  const t=o=>B.overrideText(P0,o,f);const o=B.overrides(P0);
+  expect(t(o.find(x=>x.type==='rule'&&x.from===2027))).toBe('5% of net income, every year');
+  expect(t(o.find(x=>x.type==='rule'&&x.from===2030))).toBe('$20,000 a year in 2030, then rising with inflation');
+  expect(t(o.find(x=>x.type==='rule'&&x.from===2040))).toBe("back to the model's figure");
+  expect(t(o.find(x=>x.type==='rule'&&x.category==='emergency'))).toBe('$15,000 a year in 2028, then rising with inflation (sized from 5% of net income)');
+  expect(t(o.find(x=>x.type==='pin'&&x.category==='groceries'))).toBe('$30,000 a year, for 2035 only');
+  expect(t(o.find(x=>x.type==='item'&&x.label==='Camp'))).toBe('Camp: $8,000 a year, growing with inflation');
+  expect(t(o.find(x=>x.type==='item'&&x.label==='Gear'))).toBe('Gear: $6,000 once');
+ });
+ it('does not touch the plan',()=>{
+  const snap=JSON.stringify(P0);B.overrides(P0);expect(JSON.stringify(P0)).toBe(snap);
+ });
+});
+
+// The Budget page is built top to bottom from `const`s. Using one before the line that defines it throws and
+// blanks the whole tab, and unit tests of the pure functions cannot see it — it has happened twice. This reads
+// the render function and checks every name used is defined above where it is first used.
+describe('the Budget render defines what it uses before it uses it',()=>{
+ const src=html.slice(html.indexOf('function renderBudgetTab('));
+ const body=src.slice(0,src.indexOf('\n}\n'));
+ const defs=[...body.matchAll(/^  const (\w+)\s*=/gm)].map(m=>({name:m[1],at:m.index}));
+ it('has every top-level const defined before any later template or statement mentions it',()=>{
+  const late=[];
+  for(const d of defs){
+   if(d.name.length<3)continue;                                    // one- and two-letter names are parameters almost everywhere
+   const re=new RegExp('(?<![\\w.$\'"`])'+d.name+'(?![\\w$\'"`:])','g');   // not a property, a string, or an object key
+   let m;while((m=re.exec(body))){
+    if(m.index<d.at){
+     // A mention before the definition: only fine inside a nested function that runs later. Check it is not at the top level.
+     const before=body.slice(0,m.index);
+     const depthFn=(before.match(/=>\s*[\{`(]|function\s*\w*\(/g)||[]).length;
+     const line=before.slice(before.lastIndexOf('\n')+1);
+     if(/^  (const|let|h\+=)/.test(line)||/^  \w/.test(line))late.push(d.name+' used at '+m.index+' before it is defined at '+d.at);
+    }
+   }
+  }
+  expect([...new Set(late)]).toEqual([]);
+ });
+});
+
+describe('changes over time on the Budget screen',()=>{
+ const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
+ it('puts a chip under each changed line for every rule and pin, that jumps to its year',()=>{
+  expect(ui).toContain('const changeChips=k=>{');
+  expect(ui).toContain('onclick="budgetYearSet(${o.from})"');
+  expect(ui).toContain("${actualStrip(k,value,o.readonly)}${changeChips(k)}");
+  expect(ui).toContain('const allOv=B.overrides(P);');
+ });
+ it('lists everything changed in one fold, by line, with a way to remove each',()=>{
+  expect(ui).toContain("Everything you've changed · ${allOv.length}");
+  expect(ui).toContain("budgetRemoveOverride('${o.type}','${o.category}'");
+  expect(ui).toContain("bdFold('ledger')");
+ });
+ it('removes a rule, a pin or an item as an ordinary undoable change',()=>{
+  const fn=html.slice(html.indexOf('function budgetRemoveOverride('),html.indexOf('\n}\n',html.indexOf('function budgetRemoveOverride('))+3);
+  expect(fn).toContain('budgetChange(');expect(fn).toContain('budgetRemoveItem(');
+  expect(fn).toContain('segs.splice(Number(ref),1)');
  });
 });
