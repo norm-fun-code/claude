@@ -1639,7 +1639,13 @@ function expCatReset(yr,cat){
 function expDetailRow(r,span,stub){
   // A zero component shows as a dash rather than disappearing: a year with no tuition read
   // as a year whose breakdown was missing a line, which is the opposite of the point.
-  const part=(label,v,note,cls)=>`<div class="exp-part${cls?' '+cls:''}"><span${note?` title="${advEscape(note)}"`:''}>${label}</span><strong${v?'':' class="exp-zero"'}>${v?fmt(v):'—'}</strong></div>`;
+  // Beside every figure, its share of the year's income. Net by default: tax is not a spending
+  // choice, so "groceries are 4% of take-home" is the comparison that means something. Gross is a
+  // click away, and the setting is shared with the look-ahead card so the two always agree.
+  const gross=_planShareBasis==='gross',den=gross?r.gross:r.netTC;
+  const basisWord=gross?'gross income':'net income';
+  const share=v=>den>0&&v?`${(v/den*100).toFixed(1)}%`:'';
+  const part=(label,v,note,cls)=>`<div class="exp-part${cls?' '+cls:''}"><span${note?` title="${advEscape(note)}"`:''}>${label}</span><strong${v?'':' class="exp-zero"'}>${v?fmt(v):'—'}</strong>${share(v)?`<small class="exp-share" title="Share of ${basisWord}">${share(v)}</small>`:''}</div>`;
   const signed=v=>(v>0?'+':'−')+fmt(Math.abs(v));
   const keys=typeof LIV_KEYS!=='undefined'?LIV_KEYS:Object.keys(r.livParts||{});
   // Whole-year throughout, because that is the figure this opened from. The modelled
@@ -1657,19 +1663,23 @@ function expDetailRow(r,span,stub){
   const livCell=k=>{
     const pinned=editable&&P[expCatKeyFor(r.yr,k)]!==undefined&&P[expCatKeyFor(r.yr,k)]!==null&&P[expCatKeyFor(r.yr,k)]!=='';
     const lbl=advEscape(LIV_LABEL[k]||k);
-    if(!editable)return `<div><span>${lbl}</span><strong>${fmt(lp[k]||0)}</strong></div>`;
+    const pc=share(lp[k]||0);
+    if(!editable)return `<div><span>${lbl}</span><strong>${fmt(lp[k]||0)}</strong>${pc?`<small class="exp-pct">${pc}</small>`:''}</div>`;
     return `<div class="exp-edit-row${pinned?' pinned':''}"><label for="exp_${r.yr}_${k}">${lbl}${pinned?`<i title="Set by you for ${r.yr}" aria-label="Set by you"></i>`:''}</label>
       <input id="exp_${r.yr}_${k}" class="exp-edit" type="text" inputmode="numeric" value="${fmtF(lp[k]||0)}" aria-label="${lbl}, ${r.yr}"
         onfocus="this.select()" onchange="expCatSet(${r.yr},'${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+      <small class="exp-pct" title="Share of ${basisWord}">${pc}</small>
       ${pinned?`<button type="button" class="exp-reset" title="Back to the model's figure" aria-label="Reset ${lbl} for ${r.yr}" onclick="expCatReset(${r.yr},'${k}')">↺</button>`:''}</div>`;
   };
+  const basisChip=(b,l)=>`<button type="button" class="spend-scope-chip${_planShareBasis===b?' is-on':''}" aria-pressed="${_planShareBasis===b}" onclick="planShareBasis('${b}')">${l}</button>`;
   return `<tr class="exp-detail"><td colspan="${span}"><div class="exp-detail-in">
+    <div class="exp-basis"><span>Show each as a share of</span><div class="spend-scope" role="group" aria-label="Share of">${basisChip('net','Net income')}${basisChip('gross','Gross income')}</div></div>
     <div class="exp-parts">
       ${part('Housing',r.hFull,'Rent, or mortgage + property tax + insurance + maintenance once the home is bought')}
       ${part('Living',livTotal,'Everyday spending — opened out below, including each child\'s share')}
       ${part('Childcare',r.ccFull,'A flat monthly rate per child, from birth until school starts')}
       ${part('Tuition',r.tuFull,r.kiy?`${r.kiy} ${r.kiy===1?'kid':'kids'} in school`:'No child is in school this year')}
-      ${r.eAdj?`<div class="exp-part"><span title="A one-off for this year alone — not inflated, not repeated">One-off</span><strong style="color:var(--a)">${signed(r.eAdj)}</strong></div>`:''}
+      ${r.eAdj?`<div class="exp-part"><span title="A one-off for this year alone — not inflated, not repeated">One-off</span><strong style="color:var(--a)">${signed(r.eAdj)}</strong>${den>0?`<small class="exp-share">${(r.eAdj/den*100).toFixed(1)}%</small>`:''}</div>`:''}
       ${part('Total',r.totEFull,'','exp-part-total')}
     </div>
     ${keys.length?`<div class="exp-liv">
@@ -3391,7 +3401,7 @@ function monthLabel(ym,{short=false}={}){
 // The records show what was spent. This shows what the PLAN says a chosen year will cost, as a
 // share of that year's income — so fixed commitments can be weighed against everything else
 // before they are signed up for, not after.
-let _planShareYear=null,_planShareBasis='gross',_planShareOpen=new Set();
+let _planShareYear=null,_planShareBasis='net',_planShareOpen=new Set();
 const PS_COLOR={tax:'#6b7a90',pretax:'#8ebfff',fixed:'#8278ee',essential:'#8bdded',choice:'#ecc183',oneoff:'#b6a8ff',left:'#7ae3c3',short:'#ff9caf'};
 function planShareSet(y){_planShareYear=Number(y);render()}
 function planShareStep(d,first,last){_planShareYear=Math.min(last,Math.max(first,(_planShareYear??first)+d));render()}
@@ -3417,7 +3427,7 @@ function renderPlanShareCard(R){
   const bar=c.segments.filter(s=>s.value>0).map(s=>`<span style="width:${(s.value/total*100).toFixed(3)}%;background:${PS_COLOR[s.key]}" title="${advEscape(s.label)} · ${pct(s.share)}"></span>`).join('');
   const marker=c.overspent?`<i class="ps-income-mark" style="left:${(c.denom/total*100).toFixed(2)}%" title="Income ends here"></i>`:'';
 
-  const basisWord=net?'after-tax income':'gross income';
+  const basisWord=net?'net income':'gross income';
   const headline=c.overspent
     ?`In ${yr} the plan spends <strong>${fmt(-c.left)}</strong> more than it takes home — <strong>${pct(-c.left/c.denom)}</strong> of ${basisWord} comes from savings or Stripe.`
     :`In ${yr}, <strong>${pct(fixed.share)}</strong> of ${basisWord} is fixed commitments, <strong>${pct(essential.share)}</strong> everyday essentials and <strong>${pct(choice.share)}</strong> discretionary${c.left>0?` — leaving <strong>${pct(c.left/c.denom)}</strong>.`:'.'}`;
@@ -3460,13 +3470,13 @@ function renderPlanShareCard(R){
           <label><span class="ui-sr">Year</span><select onchange="planShareSet(this.value)">${yrOptions}</select></label>
           <button type="button" onclick="planShareStep(1,${first},${last})" aria-label="Next year"${yr>=last?' disabled':''}>›</button>
         </div>
-        <div class="spend-scope" role="group" aria-label="Share of">${chip('gross','Gross income')}${chip('net','After tax')}</div>
+        <div class="spend-scope" role="group" aria-label="Share of">${chip('net','Net income')}${chip('gross','Gross income')}</div>
       </div></div>
     <p class="ps-headline">${headline}</p>
     <div class="ps-bar" role="img" aria-label="${yr} income split: ${c.segments.map(s=>s.label+' '+pct(s.share)).join(', ')}">${bar}${marker}</div>
     <div class="ps-tiles">${tiles}</div>
     <div class="tw" style="max-height:none"><table class="ps-table"><thead><tr><th>${yr}</th><th>Amount</th><th>Share</th>${base?`<th>${first}</th>`:''}</tr></thead><tbody>${trs}</tbody></table></div>
-    <p class="spend-caption">Click a group to see what is in it. Income counts Stripe stock at its vest value; ${net?'after-tax is what is left once tax, 401(k) and benefits are taken out':'taxes and 401(k)/benefits come off first'}. Which lines count as fixed is a judgement — the groups are listed when opened.${c.overspent?' The marker on the bar is where income ends.':''}</p>
+    <p class="spend-caption">Click a group to see what is in it. Income counts Stripe stock at its vest value; ${net?'net income is what is left once tax, 401(k) and benefits are taken out':'taxes and 401(k)/benefits come off first'}. Which lines count as fixed is a judgement — the groups are listed when opened.${c.overspent?' The marker on the bar is where income ends.':''}</p>
   </section>`;
 }
 

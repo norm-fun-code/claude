@@ -72,3 +72,17 @@ describe('where a year\'s income goes',()=>{
   expect(fn).toContain('Year to look at');
  });
 });
+
+describe('a share of income beside every expense figure',()=>{
+ const fn=html.slice(html.indexOf('function expDetailRow('),html.indexOf('function expAdjSet('));
+ it('defaults to net income, shares the look-ahead card\'s setting, and divides the full-year figures',()=>{
+  expect(html).toContain("let _planShareYear=null,_planShareBasis='net',");
+  expect(fn).toContain("den=gross?r.gross:r.netTC");
+  expect(fn).toContain('onclick="planShareBasis(');
+  expect(fn).toMatch(/exp-pct/);expect(fn).toMatch(/exp-share/);
+ });
+ it('a living line over net income is the figure the card would report',()=>{
+  const r=at(2035),c=S.compute(r,'net'),g=c.tiers.flatMap(t=>t.lines).find(l=>l.key==='groceries');
+  expect((r.livFullParts.groceries/r.netTC*100).toFixed(1)).toBe((g.share*100).toFixed(1));
+ });
+});
