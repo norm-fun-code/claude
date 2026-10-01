@@ -28,7 +28,7 @@
   // Bounds are sanity rails, not opinions: they catch a decimal-point slip or a percentage
   // entered as 6 instead of 0.06, which would otherwise produce a confident, absurd answer.
   const LIMITS={
-    homePrice:[0,5e7],downPctg:[0,100],mortgageRate:[0,25],homePurchaseYear:[2020,2100],
+    rentInflation:[0,1],homePrice:[0,5e7],downPctg:[0,100],mortgageRate:[0,25],homePurchaseYear:[2020,2100],
     homeAppreciation:[-0.5,0.5],propTaxRate:[0,0.1],
     investReturn:[-0.5,0.5],expenseInflation:[-0.2,0.5],tuitionInflation:[-0.2,0.5],
     taxInflation:[-0.2,0.2],capGainsTaxRate:[0,0.7],costBasisPct:[0,1],
@@ -51,6 +51,7 @@
     normGrowth:[-0.5,1],normStockGrowth:[-0.5,2],
   };
   const ENUMS={
+    housingMode:['buy','rent'],
     stripePolicy:['deficit','floor','pct','retain','sell'],
   };
   // Per-year comp and return inputs, addressed by index.

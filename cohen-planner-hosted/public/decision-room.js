@@ -42,8 +42,8 @@ function renderDecisionRoom(R){
       </div>
     </section>
     <section class="dr-card" id="decisionLab"><div class="dr-section-head"><div><h3>Explore a what-if</h3><p>Try a starting point, then combine changes. Your current plan stays intact.</p></div><button class="dr-secondary" onclick="decisionReset()">Reset preview</button></div>
-      <div class="dr-presets">${[['smaller','A $200K smaller home'],['later','Buy 2 years later'],['rate','Mortgage rate +1%'],['down','10% more down'],['care','An extra $1K in childcare'],['time','3 fewer clients / week'],['returns','Returns 2 points lower']].map(([key,label])=>`<button onclick="decisionPreset('${key}')">${label}</button>`).join('')}</div>
-      <div class="dr-lab-layout"><div class="dr-sliders">${Object.entries(PlannerDecisions.fields).map(([key,f])=>{
+      <div class="dr-presets">${[['smaller','A $200K smaller home'],['later','Buy 2 years later'],['rate','Mortgage rate +1%'],['down','10% more down'],['care','An extra $1K in childcare'],['time','3 fewer clients / week'],['returns','Returns 2 points lower']].filter(([key])=>P.housingMode!=='rent'||!['smaller','later','rate','down'].includes(key)).map(([key,label])=>`<button onclick="decisionPreset('${key}')">${label}</button>`).join('')}</div>
+      <div class="dr-lab-layout"><div class="dr-sliders">${Object.entries(PlannerDecisions.fields).filter(([key])=>P.housingMode!=='rent'||!['homePrice','homePurchaseYear','mortgageRate','downPctg'].includes(key)).map(([key,f])=>{
         const value=decisionOverrides[key]??P[key];
         const min=key==='homePurchaseYear'?Math.min(P.planStartYear,value):Math.min(f.min,value);
         const max=Math.max(f.max,value);
@@ -52,7 +52,7 @@ function renderDecisionRoom(R){
     </section>
     <details class="polish-fold refine-fold dr-context" id="decisionContextFold"><summary>Current plan context & timeline</summary>
     <div class="dr-metrics">
-      <article><span>Before closing · ${P.homePurchaseYear}</span><strong>${summary.closingBuffer===null?'Outside horizon':fmt(summary.closingBuffer)}</strong><p>${summary.closingBuffer===null?'Choose a purchase year within the plan.':`Investable assets (portfolio + Stripe) the year before, less the ${fmt(summary.down)} down payment. Before closing costs and taxes on the sales that fund it.`}</p></article>
+      <article><span>Before closing · ${P.homePurchaseYear}</span><strong>${summary.closingBuffer===null?(P.housingMode==='rent'?'Renting':'Outside horizon'):fmt(summary.closingBuffer)}</strong><p>${summary.closingBuffer===null?(P.housingMode==='rent'?'No home purchase in this case.':'Choose a purchase year within the plan.'):`Investable assets (portfolio + Stripe) the year before, less the ${fmt(summary.down)} down payment. Before closing costs and taxes on the sales that fund it.`}</p></article>
       <article><span>Lowest projected liquid assets</span><strong class="${summary.floor.liq<0?'dr-negative':''}">${fmt(summary.floor.liq)}</strong><p>${summary.floor.yr} year-end · includes invested assets; not a cash reserve.</p></article>
       <article><span>Tightest cash-flow year · ${summary.tightest.yr}</span><strong class="${summary.tightest.flow<0?'dr-negative':''}">${decisionMoney(summary.tightest.flowMonthly)}<small>/mo</small></strong><p>Net flow per modeled month — all income, all spending. Home down payment is separate.</p><button class="dr-text-button" onclick="decisionSelectYear(${summary.tightest.yr})">Explore this year →</button></article>
     </div>
@@ -146,8 +146,8 @@ function decisionUpdatePreview(){
     ['Years drawing on savings',a.deficitYears,b.deficitYears,
       chg(a.deficitYears,b.deficitYears,n=>n+(n===1?' yr':' yrs'),true)],
     ['Before-closing buffer (incl. Stripe)',
-      a.closingBuffer===null?'Outside horizon':`${fmt(at(a.closingBuffer,P.homePurchaseYear))}<small>${P.homePurchaseYear}</small>`,
-      b.closingBuffer===null?'Outside horizon':`${fmt(at(b.closingBuffer,params.homePurchaseYear))}<small>${params.homePurchaseYear}</small>`,
+      a.closingBuffer===null?(P.housingMode==='rent'?'N/A — renting':'Outside horizon'):`${fmt(at(a.closingBuffer,P.homePurchaseYear))}<small>${P.homePurchaseYear}</small>`,
+      b.closingBuffer===null?(params.housingMode==='rent'?'N/A — renting':'Outside horizon'):`${fmt(at(b.closingBuffer,params.homePurchaseYear))}<small>${params.homePurchaseYear}</small>`,
       chg(a.closingBuffer,b.closingBuffer)],
   ];
   const years=base.map(r=>r.yr);
@@ -158,7 +158,7 @@ function decisionUpdatePreview(){
       <select id="decisionYearPick" onchange="decisionSelectYear(Number(this.value),false)">${years.map(y=>`<option value="${y}"${y===yr?' selected':''}>${y}</option>`).join('')}</select>
       <button type="button" onclick="decisionStepYear(1)" aria-label="Next year"${yr>=years[years.length-1]?' disabled':''}>▶</button>
       <span>${(()=>{const k=Array.from({length:P.numKids},(_,i)=>yr-P['kid'+(i+1)+'Birth']).filter(x=>x>=0);
-        return k.length?`${k.length} ${k.length===1?'child':'children'} · age${k.length===1?'':'s'} ${k.join(', ')}`:'before the kids arrive';})()}${yr===params.homePurchaseYear?' · home purchase':''}</span>
+        return k.length?`${k.length} ${k.length===1?'child':'children'} · age${k.length===1?'':'s'} ${k.join(', ')}`:'before the kids arrive';})()}${params.housingMode!=='rent'&&yr===params.homePurchaseYear?' · home purchase':''}</span>
     </div>
     <table class="dr-comparison"><thead><tr><th>Measure</th><th>Current</th><th>Preview</th><th>Change</th></tr></thead><tbody>
     ${rows.map(r=>r[0]==='head'
@@ -168,7 +168,7 @@ function decisionUpdatePreview(){
   document.getElementById('decisionSave').disabled=!changed.length||decisionSaving;
   const row=b.current;
   const family=Array.from({length:P.numKids},(_,i)=>({n:i+1,age:row.yr-P['kid'+(i+1)+'Birth']})).filter(k=>k.age>=0);
-  document.getElementById('decisionYearDetail').innerHTML=`<div class="dr-kicker">${changed.length?'PREVIEW':'CURRENT PLAN'} / ${row.yr}</div><h4>${family.length?family.map(k=>'Kid '+k.n+' · '+(k.age===0?'newborn':'age '+k.age)).join('<br>'):'Before the kids arrive'}</h4><dl><div><dt>Net worth</dt><dd>${fmt(decisionDollars(row.netWorth,row.yr))}</dd></div><div><dt>of which retirement</dt><dd>${fmt(decisionDollars(row.k401,row.yr))}</dd></div><div><dt>Liquid assets</dt><dd>${fmt(decisionDollars(row.liq,row.yr))}</dd></div><div><dt>Net flow / month</dt><dd class="${row.flow<0?'dr-negative':''}">${decisionMoney(decisionDollars(row.flowMonthly,row.yr))}</dd></div><div><dt>Vest sold to cover</dt><dd>${row.gap>0?fmt(decisionDollars(row.gap,row.yr)):'None needed'}</dd></div><div><dt>Education + care / yr</dt><dd>${fmt(decisionDollars(row.tu+row.cc,row.yr))}</dd></div></dl><p>${row.yr===params.homePurchaseYear?`${fmt(b.down)} down payment this year, separate from monthly margin.`:row.yr>params.homePurchaseYear?'Homeowner phase':'Renting phase'}</p>`;
+  document.getElementById('decisionYearDetail').innerHTML=`<div class="dr-kicker">${changed.length?'PREVIEW':'CURRENT PLAN'} / ${row.yr}</div><h4>${family.length?family.map(k=>'Kid '+k.n+' · '+(k.age===0?'newborn':'age '+k.age)).join('<br>'):'Before the kids arrive'}</h4><dl><div><dt>Net worth</dt><dd>${fmt(decisionDollars(row.netWorth,row.yr))}</dd></div><div><dt>of which retirement</dt><dd>${fmt(decisionDollars(row.k401,row.yr))}</dd></div><div><dt>Liquid assets</dt><dd>${fmt(decisionDollars(row.liq,row.yr))}</dd></div><div><dt>Net flow / month</dt><dd class="${row.flow<0?'dr-negative':''}">${decisionMoney(decisionDollars(row.flowMonthly,row.yr))}</dd></div><div><dt>Vest sold to cover</dt><dd>${row.gap>0?fmt(decisionDollars(row.gap,row.yr)):'None needed'}</dd></div><div><dt>Education + care / yr</dt><dd>${fmt(decisionDollars(row.tu+row.cc,row.yr))}</dd></div></dl><p>${params.housingMode!=='rent'&&row.yr===params.homePurchaseYear?`${fmt(b.down)} down payment this year, separate from monthly margin.`:params.housingMode!=='rent'&&row.yr>params.homePurchaseYear?'Homeowner phase':'Renting phase'}</p>`;
   decisionRenderChart(base,preview,changed.length>0);
 }
 function decisionRenderChart(base,preview,changed){

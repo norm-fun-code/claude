@@ -35,13 +35,13 @@
     // surplus. With a stock-heavy package the latter is negative in nearly every year, so it
     // picks a "tightest year" that has nothing to do with how tight the year actually is.
     const tightest=R.reduce((a,b)=>b.flow<a.flow?b:a);
-    const purchase=R.find(r=>r.yr===p.homePurchaseYear)||null;
+    const purchase=p.housingMode==='rent'?null:R.find(r=>r.yr===p.homePurchaseYear)||null;
     const before=R.find(r=>r.yr===p.homePurchaseYear-1);
     // Assets on hand the moment before closing. Stripe belongs here: the funding waterfall
     // sells held shares for the down payment once the portfolio reaches its reserve floor, so
     // measuring readiness against the diversified pool alone understated it by the entire
     // Stripe position — and reported a shortfall for a purchase the model completes.
-    const beforeAssets=before?before.liq+before.sEnd
+    const beforeAssets=p.housingMode==='rent'?null:before?before.liq+before.sEnd
       :p.homePurchaseYear===R[0].yr?(p.startingLiquid||0)+(p.startingStripeEquity||0):null;
     const down=p.homePrice*p.downPctg/100;
     const peak=R.reduce((a,b)=>b.tu+b.cc>a.tu+a.cc?b:a);
@@ -72,7 +72,7 @@
       add(birth,'Baby '+i+' arrives','family');
       add(birth+(i===1?p.kid1YeshivaStartAge:p.yeshivaStartAge),'Kid '+i+' starts school','school');
     }
-    add(p.homePurchaseYear,'Move into your home','home');
+    if(p.housingMode!=='rent')add(p.homePurchaseYear,'Move into your home','home');
     add(p.nancyRampYear+p.nancyRampYears,'Nancy’s practice at capacity','work');
     const peak=R.reduce((a,b)=>b.tu+b.cc>a.tu+a.cc?b:a);
     if(peak.tu+peak.cc>0)add(peak.yr,'Peak education + care','school');

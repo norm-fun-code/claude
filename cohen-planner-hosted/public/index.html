@@ -469,7 +469,7 @@ const D={
   kid1Birth:2027,kid2Birth:2030,kid3Birth:2034,kid4Birth:2037,numKids:3,
   childcareMonthly:2800,childcareStartMonths:0,
   tuitionInflation:.035,yeshivaStartAge:2,yeshivaEndAge:17,kid1YeshivaStartAge:3,
-  startingLiquid:1100000,nycRent:5500,
+  housingMode:'buy',rentInflation:0.03,startingLiquid:1100000,nycRent:5500,
   // Norm — compensation, split into the two streams that behave differently AFTER tax.
   // Both are ordinary W2 income at vest (identical tax), but cash is spendable while stock
   // arrives as a Stripe asset that only becomes spendable if sold. 11 explicit years,
@@ -954,7 +954,7 @@ function printPDF(){
   const last=R[R.length-1],r0=R[0];
   const minL=R.reduce((a,b)=>b.liq<a.liq?b:a);
   const defYrs=drawYears(R);
-  const pur=R.find(r=>r.yr===P.homePurchaseYear);
+  const pur=P.housingMode==='rent'?null:R.find(r=>r.yr===P.homePurchaseYear);
   const pliq=pur?pur.liq:0;
   const today=PlannerTime.formatDate(new Date(),{year:'numeric',month:'long',day:'numeric'});
   const ey=P.planEndYear||2058;
@@ -988,7 +988,7 @@ function printPDF(){
 
   // Full projection table
   const tblRows=R.map(r=>{
-    const isHome=r.yr===P.homePurchaseYear;
+    const isHome=P.housingMode!=='rent'&&r.yr===P.homePurchaseYear;
     const hasTu=r.tu>0;
     const rowBg=isHome?'#fffbf0':hasTu&&r.tu>150000?'#fff5f7':'#fff';
     const surpColor=r.flow>=0?'#1a8754':'#cd3d64';
@@ -1094,7 +1094,7 @@ tr:hover td{background:#f6f9fc}
   <div style="text-align:right;font-size:9px;color:#8898aa">
     <div>Norm: ${fmtK(normComp(P,0).cash+normComp(P,0).stock)}/yr current</div>
     <div>Nancy: ${P.nancyMaxClients} clients max · $${P.nancyHourlyRate}/hr</div>
-    <div>${P.numKids} kid${P.numKids!==1?'s':''} · ${P.downPctg}% down in ${P.homePurchaseYear}</div>
+    <div>${P.numKids} kid${P.numKids!==1?'s':''} · ${P.housingMode==='rent'?'Renting · '+((P.rentInflation??.03)*100).toFixed(1)+'% annual rent inflation':P.downPctg+'% down in '+P.homePurchaseYear}</div>
   </div>
 </div>
 <h2>Key Metrics</h2>
@@ -1434,11 +1434,11 @@ function buildControls(){
   h+=ST('📦 Expenses (couple, 2026)','expenses',expBody);
 
   // Home
-  const homeBody=s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%');
+  const homeBody=housingModeControl()+s('Monthly rent','nycRent',0,20000,100,v=>'$'+v.toLocaleString()+'/mo')+(P.housingMode==='rent'?s('Annual rent inflation','rentInflation',0,.10,.005,v=>(v*100).toFixed(1)+'%')+`<p>Rent grows from ${P.planStartYear}. No purchase or suburban move is modeled.</p>`:s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%'));
   h+=ST('🏠 Home','home',homeBody);
 
   // Returns (cap gains hardcoded for NYC)
-  const retBody=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+sLinked('startingLiquid')+sLinked('k401Start')+sLinked('otherDebt')+s('NYC rent','nycRent',4000,8000,100,v=>'$'+v.toLocaleString()+'/mo')+`<div style="font-size:7.5px;color:var(--t3);margin-top:4px">Cap gains: 34.5% · cost basis: 55% (NYC, hardcoded)</div>`;
+  const retBody=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+sLinked('startingLiquid')+sLinked('k401Start')+sLinked('otherDebt')+`<div style="font-size:7.5px;color:var(--t3);margin-top:4px">Cap gains: 34.5% · cost basis: 55% (NYC, hardcoded)</div>`;
   h+=ST('📈 Returns','returns',retBody);
 
   h+=`<div style="height:1px;background:var(--bd);margin:6px 0"></div>`;
@@ -1511,7 +1511,7 @@ const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birt
 for(let i=0;i<11;i++){SF['normCashY'+i]=fmtF;SF['normStockY'+i]=fmtF}
 for(let i=0;i<10;i++)SF['stripeRetY'+i]=v=>(v*100).toFixed(0)+'%';
 
-function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];markDirty();if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear'||key==='childcareStartMonths')buildControls();render();savePlannerState()}
+function U(key,val){P[key]=parseFloat(val);const el=document.getElementById('v_'+key);const fn=key==='rentInflation'?v=>(v*100).toFixed(1)+'%':SF[key];if(el&&fn)el.textContent=fn(P[key]);else if(el)el.textContent=P[key];markDirty();if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear'||key==='childcareStartMonths')buildControls();render();savePlannerState()}
 function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);P[key]=num;if(el)el.value=fmtF(num);markDirty();render();savePlannerState()}
 // ── One-off costs, by year ───────────────────────────────────────────────────
 // Every other expense control is a level or a rate that applies to every year. Setting one
@@ -1636,6 +1636,9 @@ function expAdjAdd(){
   // line that does nothing and looks like it worked.
   if(!n){a.focus();showToast('Enter an amount for the one-off cost.','red');return}
   expAdjSet(Number(y.value),n);
+}
+function housingModeControl(){
+  return `<div role="group" aria-label="Rent or buy home" style="display:flex;gap:8px;margin-bottom:12px">${['buy','rent'].map(mode=>`<button type="button" class="ui-btn" aria-pressed="${(P.housingMode||'buy')===mode}" onclick="USel('housingMode','${mode}')" style="font-weight:${(P.housingMode||'buy')===mode?'700':'400'}">${mode==='rent'?'Rent':'Buy'}</button>`).join('')}</div>`;
 }
 function USel(key,val){P[key]=val;markDirty();buildControls();render();savePlannerState()}
 // Comp cells additionally refresh their row's derived total, which isn't a P value.
@@ -1955,12 +1958,12 @@ function render(){
   try{renderNavLive()}catch(e){}
   if(activeTab!=='income')document.getElementById('flowToggle')?.remove();
   const{R,tT,tC,tTx,tS,dp,mm}=run(P);
-  const last=R[R.length-1],pur=R.find(r=>r.yr===P.homePurchaseYear),pliq=pur?pur.liq:0;
+  const last=R[R.length-1],pur=P.housingMode==='rent'?null:R.find(r=>r.yr===P.homePurchaseYear),pliq=pur?pur.liq:0;
   const peak=R.reduce((a,b)=>b.tu>a.tu?b:a),minL=R.reduce((a,b)=>b.liq<a.liq?b:a);
   const r26=R[0];
   document.getElementById('kpis').innerHTML=`
     <div class="kpi"><div class="kpi-l">📊 ${r26.yr} Eff Tax</div><div class="kpi-v" style="color:var(--a)">${(r26.effRate*100).toFixed(1)}%</div><div class="kpi-s">${fmtF(r26.tax)} on ${fmtF(r26.gross)}</div></div>
-    <div class="kpi"><div class="kpi-l">🏠 Post-Down</div><div class="kpi-v" style="color:${pliq>800000?'var(--g)':'var(--a)'}">${fmt(pliq)}</div><div class="kpi-s">${P.homePurchaseYear}</div></div>
+    <div class="kpi"><div class="kpi-l">🏠 Post-Down</div><div class="kpi-v" style="color:${pliq>800000?'var(--g)':'var(--a)'}">${P.housingMode==='rent'?'N/A — renting':fmt(pliq)}</div><div class="kpi-s">${P.homePurchaseYear}</div></div>
     <div class="kpi"><div class="kpi-l">🎓 Tuition</div><div class="kpi-v" style="color:var(--r)">${fmt(tT)}</div><div class="kpi-s">${P.numKids} kids</div></div>
     <div class="kpi"><div class="kpi-l">💸 Tax on Sales</div><div class="kpi-v" style="color:var(--r)">${fmt(tTx)}</div><div class="kpi-s">${fmt(tS)} sold</div></div>
     <div class="kpi"><div class="kpi-l">📉 Liquid Floor</div><div class="kpi-v" style="color:${minL.liq>(P.liquidReserveFloor??D.liquidReserveFloor)?'var(--g)':'var(--a)'}">${fmt(minL.liq)}</div><div class="kpi-s">${minL.yr}</div></div>
@@ -2067,7 +2070,7 @@ function render(){
     const openNote=' · click any Expenses figure to see what makes it up';
     const stubNote=stubRow?` · <strong>${stubRow.yr} is shown as a full year</strong>, like every row. Your plan opened ${advEscape(String(P.observedOn||'').slice(0,10)||'partway through it')}, so that year's closing balances grow from only the ${stubPct}% after that date — the months before it are already inside your opening balances.`:'';
     ca.innerHTML=`<div class="polish-table-note">Year-end projections · scroll for all columns · net worth excludes retirement${openNote}${stubNote}</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
-      const bg=r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
+      const bg=P.housingMode!=='rent'&&r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
       const dash=v=>v>0?fmt(v):'—';
       const stub=r.stubFrac!=null&&r.stubFrac<1;
       const open=_expOpenYears.has(r.yr);
@@ -4019,6 +4022,14 @@ function afParams(){
 function renderHousingTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
+  if(P.housingMode==='rent'){
+    ca.innerHTML=`<div class="ui-head"><div><h2>Rent your home</h2><p>Rent is modeled for the full plan, with annual increases.</p></div></div>${housingModeControl()}
+      <label>Monthly rent in ${P.planStartYear} <input type="number" min="0" step="100" value="${P.nycRent}" onchange="U('nycRent',this.value)"></label>
+      <label>Annual rent inflation (%) <input type="number" min="0" max="100" step="0.5" value="${((P.rentInflation??.03)*100).toFixed(1)}" onchange="U('rentInflation',Math.max(0,Number(this.value))/100)"></label>
+      <p>Rent assumes you remain in your current location. The purchase, closing costs, mortgage, property tax, home maintenance, home equity and suburban expense increases are excluded. Money retained stays in the investment projection.</p>
+      <table><thead><tr><th>Year</th><th>Annual rent</th><th>Monthly rent</th></tr></thead><tbody>${R.map(r=>`<tr><td>${r.yr}</td><td>${fmtF(r.hFull??r.h)}</td><td>${fmtF(Math.round((r.hFull??r.h)/12))}</td></tr>`).join('')}</tbody></table>`;
+    return;
+  }
   const q=afParams();
   const dirty=(_afRate!==null&&_afRate!==P.mortgageRate)||(_afDown!==null&&_afDown!==P.downPctg)||(_afYear!==null&&_afYear!==P.homePurchaseYear);
   const a=affordability(q,_afShare);
@@ -4294,7 +4305,7 @@ function renderHousingTab(R,P){
   </div>`;
 
   h+=`</div>`;
-  ca.innerHTML=h;
+  ca.innerHTML=housingModeControl()+h;
   updateRefiCalc();
   document.getElementById('summaries').innerHTML='';
 }
@@ -4656,7 +4667,7 @@ function renderGoalsTab(R,P,tT){
   let h=`<div class="refine-goals" style="display:flex;flex-direction:column;gap:14px;padding:2px"><header class="ui-head"><div><h2>Milestones & resilience</h2><p>Home funding, education and the reserves that support them.</p></div></header>`;
 
   // GOAL 1: Home purchase
-  h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
+  if(P.housingMode!=='rent')h+=`<div style="background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:16px 18px">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
       <div>
         <div style="font-size:13px;font-weight:700;color:var(--tx)">🏠 Home Down Payment</div>
@@ -4701,7 +4712,7 @@ function renderGoalsTab(R,P,tT){
   </div>`;
 
   // GOAL 2: Mortgage
-  {
+  if(P.housingMode!=='rent'){
     const loanAmt=P.homePrice*(1-P.downPctg/100);
     const rate=P.mortgageRate/100;
     const moRate=rate/12;
@@ -4929,7 +4940,7 @@ function renderCompareTab(R,P){
     {label:'Years Drawing On Savings',get:(r,p)=>r.drawYears,fmt:n=>n+' yrs',b:-1},
     {label:'Worst Year Net Flow',get:(r,p)=>Math.min(...r.R.map(x=>x.flow)),fmt:fmt,b:1},
     {sep:true,label:'Milestones'},
-    {label:'Liquid After Home Purchase',get:(r,p)=>{const row=r.R.find(x=>x.yr===p.homePurchaseYear);return row?row.liq:0},fmt:fmt,b:1},
+    {label:'Liquid After Home Purchase',get:(r,p)=>{if(p.housingMode==='rent')return null;const row=r.R.find(x=>x.yr===p.homePurchaseYear);return row?row.liq:null},fmt:v=>v===null?'N/A':fmt(v),b:1},
     {label:'Total Tuition',get:(r,p)=>r.tT,fmt:fmt,b:-1},
     {label:'Tax on Stock Sales',get:(r,p)=>r.tTx,fmt:fmt,b:-1},
     {sep:true,label:'Year 1'},
@@ -4962,11 +4973,11 @@ function renderCompareTab(R,P){
       METRICS.forEach(m=>{
         if(m.sep){diffHtml+=`<tr><td colspan="4" style="padding:8px 8px 3px;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);background:var(--s3)">${m.label}</td></tr>`;return;}
         const base=m.get(planRes,P),scen=m.get(sRes,s.params);
-        const delta=scen-base;
-        const pct=base!==0?delta/Math.abs(base)*100:null;
+        const delta=base===null||scen===null?null:scen-base;
+        const pct=delta!==null&&base!==0?delta/Math.abs(base)*100:null;
         const favorable=!m.b?null:(m.b===1?delta>0:delta<0);
         const dColor=delta===0?'var(--t3)':favorable===null?'var(--t2)':favorable?'var(--g)':'var(--r)';
-        const dSign=delta>0?'+':'';
+        const dSign=delta!==null&&delta>0?'+':'';
         diffHtml+=`<tr>
           <td style="padding:6px 8px;color:var(--t2);font-weight:500;border-bottom:1px solid var(--bd)">${m.label}</td>
           <td style="padding:6px 10px;text-align:right;font-family:'SF Mono',monospace;color:var(--tx);border-bottom:1px solid var(--bd)">${m.fmt(base)}</td>
@@ -5023,9 +5034,9 @@ function renderCompareTab(R,P){
   });
   h+=`</tbody></table></div>`;
   // Parameter diffs
-  const PKEYS=['homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normCashY0','normStockY0','startingStripeEquity','stripePolicy','stripeLongTermReturn','normGrowth','pretax401k','numKids'];
-  const PLABELS={childcareMonthly:'Childcare / month',homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normCashY0:'Norm Cash (Y0)',normStockY0:'Stripe Grant (Y0)',startingStripeEquity:'Starting Stripe',stripePolicy:'Stripe Policy',stripeLongTermReturn:'Stripe LT Return',normGrowth:'Cash Growth',pretax401k:'401k Contrib',numKids:'# Kids'};
-  const fmtPv=(k,v)=>{if(['investReturn','expenseInflation','normGrowth'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normCashY0','normStockY0','startingStripeEquity','pretax401k'].includes(k))return fmt(v);
+  const PKEYS=['housingMode','nycRent','rentInflation','homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normCashY0','normStockY0','startingStripeEquity','stripePolicy','stripeLongTermReturn','normGrowth','pretax401k','numKids'];
+  const PLABELS={housingMode:'Housing choice',nycRent:'Monthly rent',rentInflation:'Rent inflation',childcareMonthly:'Childcare / month',homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normCashY0:'Norm Cash (Y0)',normStockY0:'Stripe Grant (Y0)',startingStripeEquity:'Starting Stripe',stripePolicy:'Stripe Policy',stripeLongTermReturn:'Stripe LT Return',normGrowth:'Cash Growth',pretax401k:'401k Contrib',numKids:'# Kids'};
+  const fmtPv=(k,v)=>{if(['investReturn','expenseInflation','normGrowth','rentInflation'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normCashY0','normStockY0','startingStripeEquity','pretax401k'].includes(k))return fmt(v);
   if(k==='stripeLongTermReturn')return(v*100).toFixed(0)+'%';
   if(k==='stripePolicy')return String(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
   const diffCols=cols.slice(1).filter(c=>PKEYS.some(k=>c.params[k]!==undefined&&c.params[k]!==P[k]));
@@ -5445,7 +5456,7 @@ function _storyMilestones(R,P){
   // of two, which is the parents' own number with the baby standing in for one of them.
   kids.forEach((kb,i)=>{if(kb>=sy)ms.push({yr:kb,icon:'👶',title:`Kid ${i+1} born`,
     sub:`A household of ${i+3} — two of you and ${i+1===1?'a baby':`${i+1} children`}`})});
-  if(P.homePurchaseYear>=sy)ms.push({yr:P.homePurchaseYear,icon:'🏠',title:'Home purchase',sub:`${fmt(P.homePrice*(P.downPctg/100))} down on a ${fmt(P.homePrice)} home`});
+  if(P.housingMode!=='rent'&&P.homePurchaseYear>=sy)ms.push({yr:P.homePurchaseYear,icon:'🏠',title:'Home purchase',sub:`${fmt(P.homePrice*(P.downPctg/100))} down on a ${fmt(P.homePrice)} home`});
   const firstTu=R.find(r=>r.tu>0);
   if(firstTu)ms.push({yr:firstTu.yr,icon:'🎓',title:'Tuition begins',sub:`First year of school costs: ${fmt(firstTu.tu)}`});
   const peakTu=R.reduce((a,b)=>b.tu>a.tu?b:a,R[0]);
@@ -5715,6 +5726,7 @@ ${P.stripePolicy==='pct'?`• Fixed sell share: ${((P.stripeSellPct??.3)*100).to
 • Net worth = diversified liquid + Stripe equity + home equity. ${planSY} split: ${fmt(y26.liq)} liquid / ${fmt(y26.sEnd)} Stripe / ${fmt(y26.eq)} home.
 
 HOME PURCHASE PLAN
+• Housing mode: ${P.housingMode||'buy'}; monthly rent ${fmt(P.nycRent)}; annual rent inflation ${((P.rentInflation??.03)*100).toFixed(1)}% (rent mode only). If renting, disregard purchase assumptions below.
 • Target: ${fmt(P.homePrice)} (${(P.downPctg)}% down) in ${P.homePurchaseYear}
 • Down payment: ${fmt(P.homePrice*P.downPctg/100)}
 • Mortgage: ${fmt(P.homePrice-P.homePrice*P.downPctg/100)} @ ${P.mortgageRate}% (30yr)

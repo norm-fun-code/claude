@@ -87,14 +87,14 @@ function calcTax(grossIncome,p,yr,numKids){
   // LIMITS it. Deducting the cap itself handed a household with $2,154 of state and city tax
   // a $40,400 deduction. Eligible taxes here are state and city income tax plus real property
   // tax; the deduction is the lesser of what was paid and the cap.
-  const propertyTaxPaid=yr>=p.homePurchaseYear
+  const propertyTaxPaid=p.housingMode!=='rent'&&yr>=p.homePurchaseYear
     ?(p.propTaxRate??(p.propTaxBase&&p.homePrice?p.propTaxBase/p.homePrice:0.012))
       *p.homePrice*(1+p.homeAppreciation)**(yr-p.homePurchaseYear)
     :0;
   const saltPaid=stateT+cityT+propertyTaxPaid;
   const saltDeduction=Math.min(saltPaid,saltCap);
   let mortInt=0,deductibleMortInt=0;
-  if(yr>=p.homePurchaseYear){
+  if(p.housingMode!=='rent'&&yr>=p.homePurchaseYear){
     const mortAmt=p.homePrice*(1-p.downPctg/100);
     const mr=p.mortgageRate/100/12;const n=360;
     // F3. At a zero rate the annuity formula divides by zero and every downstream figure
@@ -459,7 +459,7 @@ function run(p,rets,compiledGrants){
   if(p.numKids>=2)kids.push(p.kid2Birth);
   if(p.numKids>=3)kids.push(p.kid3Birth);
   if(p.numKids>=4)kids.push(p.kid4Birth);
-  const dp=p.homePrice*(p.downPctg/100),ma=p.homePrice-dp,am=mPmt(ma,p.mortgageRate/100);
+  const dp=p.housingMode==='rent'?0:p.homePrice*(p.downPctg/100),ma=p.housingMode==='rent'?0:p.homePrice-dp,am=mPmt(ma,p.mortgageRate/100);
   // F3. `||` treats a deliberate zero as absent, so a household with no retirement balance
   // was silently given $210,000 of it. Nullish coalescing preserves an explicit zero.
   // ── Private assets that are not vested Stripe ────────────────────────────
@@ -513,7 +513,7 @@ function run(p,rets,compiledGrants){
       const yrsIn=yr-p.nancyRampYear;
       let cl=yrsIn<0?0:yrsIn>=p.nancyRampYears?p.nancyMaxClients:p.nancyRampClients+(p.nancyMaxClients-p.nancyRampClients)*(yrsIn/p.nancyRampYears);
       nancyGross=Math.round(cl*p.nancyHourlyRate*p.nancyWeeksPerYear);
-      if(nancyIsSolo){nancyOH=p.nancyPracticeOverhead+(yr>=p.homePurchaseYear?p.nancyHomeOfficeDeduct:0);nancySENet=Math.max(0,nancyGross-nancyOH)}
+      if(nancyIsSolo){nancyOH=p.nancyPracticeOverhead+(p.housingMode!=='rent'&&yr>=p.homePurchaseYear?p.nancyHomeOfficeDeduct:0);nancySENet=Math.max(0,nancyGross-nancyOH)}
     }
     const grossIncome=normW2+nancyGross;
     // How much of this year is still ahead of the observation date. 1 for every year after
@@ -564,13 +564,13 @@ function run(p,rets,compiledGrants){
     // contributions (deposited throughout the year) earn ~half a year of return.
     // Contributions are pro-rated too — the ones already made are inside k401Start.
     k401=k401*(1+ret)+(p.pretax401k+p.company401kMatch)*stub*(1+ret/2);
-    const sub=yr>=p.homePurchaseYear;
+    const sub=p.housingMode!=='rent'&&yr>=p.homePurchaseYear;
     // Property tax = rate × current home value (appreciates each year). Falls back
     // to legacy flat propTaxBase/homePrice for saved states without a rate.
     const ptRate=p.propTaxRate??(p.propTaxBase&&p.homePrice?p.propTaxBase/p.homePrice:0.012);
     const homeVal=sub?p.homePrice*(1+p.homeAppreciation)**(yr-p.homePurchaseYear):0;
     const ptax=sub?ptRate*homeVal:0;
-    let h=sub?am+ptax+(p.maintBase+insuranceFor(p.homePrice,p))*1.02**(yr-p.homePurchaseYear):p.nycRent*12;
+    let h=sub?am+ptax+(p.maintBase+insuranceFor(p.homePrice,p))*1.02**(yr-p.homePurchaseYear):p.nycRent*12*(p.housingMode==='rent'?(1+(p.rentInflation??0.03))**(yr-sy):1);
     const inf=(1+p.expenseInflation)**(yr-sy);
     let gr=p.baseGroceries*inf,di=p.baseDining*inf,sh=p.baseShopping*inf,va=(nk>0?p.postKidVacations:p.baseVacations)*inf;
     let au=p.baseAuto*inf,ins=p.baseInsurance*inf,mi=p.baseMisc*inf,en=p.baseEntertainment*inf;
@@ -656,7 +656,7 @@ function run(p,rets,compiledGrants){
     // ── Stripe cash waterfall ──
     // Cash comp funds life first. Whatever it can't cover (including the down payment, a
     // real cash outflow) is the gap the retention policy decides how to close.
-    const dpThis=(yr===p.homePurchaseYear)?cashToClose(p.homePrice,p).total:0;
+    const dpThis=(p.housingMode!=='rent'&&yr===p.homePurchaseYear)?cashToClose(p.homePrice,p).total:0;
     const netCash=surp-dpThis;
     const sr=grantLedger?grantLedger.prices[yr+1].tender/grantLedger.prices[yr].tender-1:simplePrices?simplePrices[yr+1].tender/simplePrices[yr].tender-1:stripeReturn(p,yIdx);
     const gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate;
@@ -965,7 +965,7 @@ function planAffordablePrice(p,opts){
   const step=o.step||10000;
   let lo=o.lo||100000,hi=o.hi||8000000;
   const holds=price=>{
-    try{return run({...p,homePrice:price}).R.every(r=>r.liq>=floor-1)}
+    try{return run({...p,housingMode:'buy',homePrice:price}).R.every(r=>r.liq>=floor-1)}
     catch(e){return false}
   };
   if(!holds(lo))return 0;
@@ -1059,7 +1059,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
   return{band,bandExRet,trials,vol,geomMean,mode,
     finalP10:pct(finalNW,.10),finalP50:pct(finalNW,.50),finalP90:pct(finalNW,.90),
     ruinPct:ruin/trials*100,
-    dpFailPct:dpIdx>=1?dpFail/trials*100:null,
+    dpFailPct:p.housingMode!=='rent'&&dpIdx>=1?dpFail/trials*100:null,
     liqFloorP10:pct(floorLiq,.10)};
 }
 
