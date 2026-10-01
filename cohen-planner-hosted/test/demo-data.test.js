@@ -156,7 +156,7 @@ describe('Demo Mode in the page', () => {
   it('is loaded by the page and served to demo visitors', () => {
     expect(html).toContain('<script src="/demo-data.js"></script>');
     const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
-    expect(server).toContain("'pace.js', 'demo-data.js']");
+    expect(server).toContain("'pace.js', 'demo-data.js'");
     expect(server).toContain("const Demo = require('./public/demo-data.js');");
   });
 });

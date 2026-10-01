@@ -28,6 +28,7 @@
 <script src="/advisor-tools.js"></script>
 <script src="/demo-data.js"></script>
 <script src="/decisions.js"></script>
+<script src="/rent-buy.js"></script>
 <script src="/decision-room.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
@@ -2026,6 +2027,7 @@ function render(){
   if(activeTab==='cockpit'){renderCockpit(R);return;}
   if(activeTab==='home'){
     if(_homeView==='housing'){renderHousingTab(R,P);return}
+    if(_homeView==='rentbuy'){renderRentBuyTab(R,P);return}
     if(_homeView==='levers'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
     if(_homeView==='compare'){renderCompareTab(R,P);return}
     renderDecisionRoom(R);return;
@@ -3983,6 +3985,217 @@ function renderPortfolioTab(R,P){
   }
 }
 
+// ── Rent or buy: the same plan run twice ────────────────────────────────────
+// Housing asks "how much can I afford"; this asks "should I buy at all". The plan is run once
+// buying and once renting for good, everything else identical, and the levers here move both
+// runs together. They explore — nothing is saved until "Apply to my plan".
+let _rbOv={},_rbLens='networth',_rbHorizon='end';
+const RB_LEVERS=[
+  // key, label, min, max, step, format, group
+  ['investReturn','Portfolio return',0,.12,.0025,v=>(v*100).toFixed(2).replace(/\.?0+$/,'')+'%','market'],
+  ['homeAppreciation','Home appreciation',-.02,.08,.0025,v=>(v*100).toFixed(2).replace(/\.?0+$/,'')+'%','market'],
+  ['rentInflation','Rent increases',0,.08,.0025,v=>(v*100).toFixed(2).replace(/\.?0+$/,'')+'%/yr','market'],
+  ['stripeShift','Stripe growth vs plan',-.08,.08,.005,v=>(v>0?'+':v<0?'−':'')+Math.abs(v*100).toFixed(1).replace(/\.0$/,'')+' pts','market'],
+  ['homePrice','Home price',500000,4000000,50000,v=>fmt(v),'home'],
+  ['downPctg','Down payment',5,100,5,v=>v+'%','home'],
+  ['mortgageRate','Mortgage rate',2,9,.125,v=>v+'%','home'],
+  ['homePurchaseYear','Purchase year',null,null,1,v=>String(v),'home'],
+  ['nycRent','Monthly rent today',2000,15000,100,v=>fmtF(v)+'/mo','home'],
+  ['sellCost','Cost to sell the home',0,.12,.005,v=>(v*100).toFixed(1).replace(/\.0$/,'')+'%','home'],
+];
+function rbBase(k){
+  if(k==='stripeShift')return 0;
+  if(k==='sellCost')return PlannerRentBuy.DEFAULT_SELL_COST;
+  if(k==='rentInflation')return P.rentInflation??.03;
+  return P[k];
+}
+function rbVal(k){return _rbOv[k]!=null?_rbOv[k]:rbBase(k)}
+// The plan with every exploring lever applied. Stripe is a shift across its whole return path.
+function rbParams(){
+  const q={...P};
+  for(const [k] of RB_LEVERS)if(_rbOv[k]!=null&&k!=='stripeShift'&&k!=='sellCost')q[k]=_rbOv[k];
+  return PlannerRentBuy.withStripeShift(q,_rbOv.stripeShift||0);
+}
+function rbHorizonYear(R){
+  const last=R[R.length-1].yr,py=rbVal('homePurchaseYear');
+  return _rbHorizon==='end'?last:Math.min(last,py+Number(_rbHorizon));
+}
+function rbSet(k,v){
+  const n=k==='homePurchaseYear'?parseInt(v,10):parseFloat(v);
+  if(!Number.isFinite(n))return;
+  if(Math.abs(n-rbBase(k))<1e-9)delete _rbOv[k];else _rbOv[k]=n;
+  render();
+}
+// Dragging updates the number beside the slider; the comparison reruns when you let go.
+function rbPeek(k,v){const L=RB_LEVERS.find(x=>x[0]===k),el=document.getElementById('rbv_'+k);if(L&&el)el.textContent=L[5](parseFloat(v))}
+function rbLens(v){_rbLens=v;render()}
+function rbHorizon(v){_rbHorizon=v;render()}
+function rbReset(){_rbOv={};render()}
+// Only plan inputs can be applied. The Stripe shift and the selling cost are lenses on this
+// comparison, not settings the plan has, so they stay here.
+function rbApply(){
+  const keys=Object.keys(_rbOv).filter(k=>k!=='stripeShift'&&k!=='sellCost');
+  if(!keys.length)return;
+  const names=keys.map(k=>{const L=RB_LEVERS.find(x=>x[0]===k);return `${L[1].toLowerCase()} ${L[5](_rbOv[k])}`});
+  if(!showConfirm(`Set your plan's ${names.join(', ')}?`))return;
+  for(const k of keys){P[k]=_rbOv[k];delete _rbOv[k]}
+  markDirty();buildControls();render();savePlannerState();
+  showToast('Applied to your plan','green');
+}
+
+function renderRentBuyTab(R,P){
+  const ca=document.getElementById('chartArea');
+  destroyCharts();
+  if(typeof PlannerRentBuy==='undefined'){ca.innerHTML='<p>The rent-or-buy comparison did not load. Refresh to try again.</p>';return}
+  const q=rbParams(),first=R[0].yr,last=R[R.length-1].yr;
+  const py=q.homePurchaseYear;
+  if(!(py>=first&&py<=last)){
+    ca.innerHTML=`<div class="glass-card" style="padding:20px">The purchase year (${py}) is outside the plan (${first}–${last}). Move it inside to compare.</div>`;return;
+  }
+  const horizon=rbHorizonYear(R);
+  const opts={horizonYear:horizon,sellCostPct:rbVal('sellCost'),lens:_rbLens};
+  const c=PlannerRentBuy.compare(q,run,opts);
+  const fl=PlannerRentBuy.flips(q,run,opts);
+  const v=c.verdict,f=c.facts,cash=_rbLens==='cashflow';
+  const money=x=>Math.abs(x)>=1e6?'$'+(x/1e6).toFixed(2)+'M':fmt(x);
+  const exploring=Object.keys(_rbOv).length>0;
+  const lbl='font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3)';
+  const chip=(on,click,text)=>`<button type="button" class="ui-btn" aria-pressed="${on}" onclick="${click}" style="font-size:10.5px;padding:5px 11px;font-weight:${on?700:500}">${text}</button>`;
+
+  let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
+
+  // ── How to judge it ──
+  const hz=[['5','5 years'],['10','10 years'],['20','20 years'],['end','Plan end']].filter(([k])=>k==='end'||py+Number(k)<last);
+  h+=`<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between">
+    <div role="group" aria-label="Optimize for" style="display:flex;gap:6px;align-items:center"><span style="${lbl};margin-right:4px">Optimize for</span>
+      ${chip(!cash,"rbLens('networth')",'Net worth')}${chip(cash,"rbLens('cashflow')",'Cash flow')}</div>
+    <div role="group" aria-label="Judge at" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span style="${lbl};margin-right:4px">Judge after buying</span>
+      ${hz.map(([k,t])=>chip(String(_rbHorizon)===k,`rbHorizon('${k}')`,t)).join('')}</div>
+  </div>`;
+
+  // ── The answer ──
+  const win=v.winner==='buy'?'Buying':'Renting';
+  const measure=cash
+    ? `less cash spent through ${horizon} — ${money(v.rentCum)} renting vs ${money(v.buyCum)} buying, counting the ${money(f.cashAtPurchase)} to close`
+    : `more net worth in ${horizon} — ${money(v.rent)} renting vs ${money(v.buy)} buying, after ${money(v.saleCost)} to sell the home`;
+  const when=cash
+    ? (c.breakeven?`Buying has cost less in total from <strong>${c.breakeven}</strong>.`:c.cheaperFrom?`Owning becomes cheaper year to year from <strong>${c.cheaperFrom}</strong> as rent keeps rising, but not by enough to recover the cash to close by ${horizon}.`:`Owning never costs less year to year by ${horizon}.`)
+    : (c.breakeven?`Buying pulls ahead in <strong>${c.breakeven}</strong> and stays ahead.`:`Buying never pulls ahead by ${horizon}.`);
+  h+=`<div class="glass-card" style="padding:22px 24px;background:linear-gradient(135deg,rgba(99,91,255,.07),rgba(103,114,229,.03))">
+    <div style="${lbl}">Rent or buy · ${cash?'cash flow':'net worth'} · ${horizon}</div>
+    <div style="font-size:34px;font-weight:800;letter-spacing:-1.2px;color:var(--tx);margin:4px 0 2px;font-variant-numeric:tabular-nums">${win} wins by ${money(v.margin)}</div>
+    <div style="font-size:12px;color:var(--t2);line-height:1.6">${measure}.<br>${when}</div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:10.5px;color:var(--t2)">
+      <span>Your plan is set to <strong>${(P.housingMode||'buy')==='rent'?'rent':'buy'}</strong>.</span>
+      ${(P.housingMode||'buy')!==v.winner?`<button type="button" class="ui-btn" onclick="USel('housingMode','${v.winner}')" style="font-size:10px;padding:4px 10px">Switch plan to ${v.winner}</button>`:''}
+    </div>
+    ${exploring?`<div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:9.5px;color:var(--a)">● Exploring — your plan's own assumptions are unchanged</span>
+      ${Object.keys(_rbOv).some(k=>k!=='stripeShift'&&k!=='sellCost')?`<button onclick="rbApply()" style="font-size:9.5px;padding:4px 10px;border-radius:5px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">Apply to my plan</button>`:''}
+      <button onclick="rbReset()" style="font-size:9.5px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Reset</button>
+    </div>`:''}
+  </div>`;
+
+  // ── Levers ──
+  const lever=([k,label,min,max,step,fv])=>{
+    const val=rbVal(k),mn=k==='homePurchaseYear'?first:Math.min(min,val),mx=k==='homePurchaseYear'?last:Math.max(max,val);
+    const moved=_rbOv[k]!=null;
+    return `<div>
+      <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><label for="rb_${k}" style="font-size:10px;color:var(--t2)">${label}${moved?' <span style="color:var(--a)">●</span>':''}</label><span id="rbv_${k}" style="font-size:11px;font-weight:700;color:var(--tx);font-variant-numeric:tabular-nums">${fv(val)}</span></div>
+      <input type="range" id="rb_${k}" min="${mn}" max="${mx}" step="${step}" value="${val}" oninput="rbPeek('${k}',this.value)" onchange="rbSet('${k}',this.value)" style="width:100%">
+    </div>`;
+  };
+  const group=(g,title)=>`<div><div style="${lbl};margin-bottom:10px">${title}</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px">${RB_LEVERS.filter(x=>x[6]===g).map(lever).join('')}</div></div>`;
+  h+=`<div class="glass-card" style="padding:16px 18px;display:flex;flex-direction:column;gap:18px">${group('market','Markets')}${group('home','The home')}</div>`;
+
+  // ── Over time ──
+  h+=`<div class="glass-card" style="padding:16px 18px">
+    <div style="${lbl};margin-bottom:8px">${cash?'Cash spent, cumulative':'Net worth, renting vs buying'}</div>
+    <div style="position:relative;height:280px"><canvas id="rbChart" aria-label="${cash?'Cumulative cash spent renting and buying':'Net worth renting and buying'} by year"></canvas></div>
+  </div>`;
+
+  // ── Purchase year and where the gap comes from ──
+  const u=c.upfront;
+  const line=(a,b,sub)=>`<tr><td style="text-align:left">${a}${sub?`<div style="font-size:9.5px;color:var(--t3)">${sub}</div>`:''}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${b}</td></tr>`;
+  const tbl='width:100%;border-collapse:collapse;font-size:11.5px';
+  let left='';
+  if(u)left=`<div class="glass-card" style="padding:16px 18px"><div style="${lbl};margin-bottom:8px">Buying in ${py}</div>
+    <table class="rb-table" style="${tbl}"><tbody>
+    ${line('Down payment',fmt(u.down),'Becomes equity — moved, not lost')}
+    ${line('Closing costs',fmt(u.closing))}
+    ${line('Tax on investments sold to fund it',fmt(u.investmentTax),'The renter keeps these gains invested, untaxed until sold')}
+    ${u.stripeSold?line('Stripe sold to fund it',fmt(u.stripeSold),`Gains tax ${fmt(u.stripeTax)} · its future growth goes with it`):''}
+    ${line(`Extra spending in ${py}`,fmt(u.extraHousing),'Owning costs vs rent, part year')}
+    ${line('<strong>Cash to close</strong>',`<strong>${fmt(u.cashToClose)}</strong>`)}
+    </tbody></table></div>`;
+  let right='';
+  if(!cash&&c.attribution)right=`<div class="glass-card" style="padding:16px 18px"><div style="${lbl};margin-bottom:8px">Where the ${money(v.margin)} gap comes from · ${horizon}</div>
+    <table class="rb-table" style="${tbl}"><tbody>
+    ${c.attribution.filter(a=>a.value!==0).map(a=>line(a.label,`<span style="color:${a.value>=0?'var(--g)':'var(--r)'}">${a.value>=0?'+':'−'}${money(Math.abs(a.value))}</span>`)).join('')}
+    ${line('<strong>Buying vs renting</strong>',`<strong>${v.edge>=0?'+':'−'}${money(Math.abs(v.edge))}</strong>`)}
+    </tbody></table><div style="font-size:9.5px;color:var(--t3);margin-top:6px">Positive favours buying. Each line is buying's balance minus renting's.</div></div>`;
+  else right=`<div class="glass-card" style="padding:16px 18px"><div style="${lbl};margin-bottom:8px">Year by year</div>
+    <table class="rb-table" style="${tbl}"><tbody>
+    ${line(`Housing, ${f.ownedYear}`,`${fmt(f.housingFirst.rent)} rent · ${fmt(f.housingFirst.buy)} own`)}
+    ${line(`Housing, ${f.tenOn}`,`${fmt(f.housingTen.rent)} rent · ${fmt(f.housingTen.buy)} own`)}
+    ${f.suburbanLiving?line('Suburban living',`+${fmt(f.suburbanLiving)}/yr`,'Car, insurance, utilities — the model moves you out when you buy'):''}
+    ${line('Owning cheaper each year from',c.cheaperFrom?String(c.cheaperFrom):'—')}
+    </tbody></table></div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">${left}${right}</div>`;
+
+  // ── Side by side ──
+  const row=(a,r,b)=>`<tr><td style="text-align:left">${a}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${r}</td><td style="text-align:right;font-variant-numeric:tabular-nums">${b}</td></tr>`;
+  h+=`<div class="glass-card" style="padding:16px 18px;overflow-x:auto"><div style="${lbl};margin-bottom:8px">Side by side</div>
+    <table class="rb-table" style="${tbl}"><thead><tr><th style="text-align:left"></th><th style="text-align:right">Rent</th><th style="text-align:right">Buy</th></tr></thead><tbody>
+    ${row(`Net worth, ${horizon}`,money(v.rent),money(v.buy))}
+    ${row('Home value',`—`,money(f.homeValueAtHorizon))}
+    ${row(`Housing, ${f.ownedYear}`,fmt(f.housingFirst.rent),fmt(f.housingFirst.buy))}
+    ${row(`Housing, ${f.tenOn}`,fmt(f.housingTen.rent),fmt(f.housingTen.buy))}
+    ${row(`Housing, total to ${horizon}`,money(f.housingTotal.rent),money(f.housingTotal.buy))}
+    ${row('Lowest liquid balance',`${money(f.lowestLiquid.rent.liq)} <span style="color:var(--t3)">${f.lowestLiquid.rent.yr}</span>`,`${money(f.lowestLiquid.buy.liq)} <span style="color:var(--t3)">${f.lowestLiquid.buy.yr}</span>`)}
+    ${row('Years selling assets to cover costs',String(f.drawYears.rent||0),String(f.drawYears.buy||0))}
+    </tbody></table></div>`;
+
+  // ── What would change the answer ──
+  const pct=x=>(x*100).toFixed(1).replace(/\.0$/,'')+'%';
+  const shown=fl.map(x=>{
+    const isRate=x.key==='mortgageRate';
+    const fmtv=isRate?(y=>y.toFixed(2).replace(/\.?0+$/,'')+'%'):pct;
+    const cur=isRate?q.mortgageRate:x.key==='rentInflation'?(q.rentInflation??.03):q[x.key];
+    // Rent stops rising at the cap, so past a point faster rent inflation changes nothing.
+    const capNote=x.key==='rentInflation'&&x.value==null&&!x.alwaysBuy&&(q.rentCap??D.rentCap)>0?` Rent reaches the ${fmtF(q.rentCap??D.rentCap)}/mo cap and stops rising.`:'';
+    if(x.value==null)return `<li><strong>${x.label}</strong> — ${x.alwaysBuy?'buying':'renting'} wins anywhere from ${fmtv(x.lo)} to ${fmtv(x.hi)}.${capNote} <span style="color:var(--t3)">(now ${fmtv(cur)})</span></li>`;
+    return `<li><strong>${x.label}</strong> — buying wins ${x.buyAbove?'above':'below'} <strong>${fmtv(x.value)}</strong>. <span style="color:var(--t3)">(now ${fmtv(cur)})</span></li>`;
+  }).join('');
+  h+=`<div class="glass-card" style="padding:16px 18px"><div style="${lbl};margin-bottom:8px">What would change the answer</div>
+    <ul style="margin:0;padding-left:18px;font-size:11.5px;line-height:1.8;color:var(--t2)">${shown}</ul>
+    <div style="font-size:9.5px;color:var(--t3);margin-top:6px">Each is solved on its own with everything else as set above, judged at ${horizon}.</div></div>`;
+
+  // ── What is in it ──
+  h+=`<div style="font-size:10.5px;color:var(--t3);line-height:1.6;padding:0 4px">
+    <strong style="color:var(--t2)">Included:</strong> rent rising in both cases at the rate above (capped at ${fmtF(P.rentCap??D.rentCap)}/mo), mortgage, property tax, insurance and maintenance, closing costs, taxes on whatever is sold to fund the purchase, and the suburban move the model attaches to buying. Net worth counts the home after the cost to sell it.
+    <strong style="color:var(--t2)">Not included:</strong> the tax the renter would owe on gains if the portfolio were sold — they stay deferred, as they would in life — mortgage-interest deductions, and the value of living in a home you own. Your saved buy plan keeps flat rent before the purchase; this comparison raises it in both, so the two runs are like for like.
+  </div>`;
+  h+='</div>';
+  ca.innerHTML=h;
+
+  // ── Chart ──
+  if(typeof Chart==='undefined')return;
+  const rows=c.rows.filter(r=>r.yr<=horizon);
+  const o=chartOpts();
+  o.scales.y.ticks.callback=x=>fmt(x);delete o.scales.y.ticks.stepSize;
+  o.plugins.tooltip.callbacks={label:t=>'  '+t.dataset.label+': '+fmt(t.raw)};
+  const ds=cash?[
+    {label:'Renting',data:rows.map(r=>r.rentCum),borderColor:'#00d4aa',backgroundColor:'#00d4aa',borderWidth:2,pointRadius:0,tension:.25},
+    {label:'Buying',data:rows.map(r=>r.buyCum),borderColor:'#7a73ff',backgroundColor:'#7a73ff',borderWidth:2,pointRadius:0,tension:.25},
+  ]:[
+    {label:'Renting',data:rows.map(r=>r.rent),borderColor:'#00d4aa',backgroundColor:'#00d4aa',borderWidth:2,pointRadius:0,tension:.25},
+    {label:'Buying, after selling costs',data:rows.map(r=>r.buy),borderColor:'#7a73ff',backgroundColor:'#7a73ff',borderWidth:2,pointRadius:0,tension:.25},
+    {label:'Buying, on paper',data:rows.map(r=>r.buyPaper),borderColor:'rgba(122,115,255,.5)',backgroundColor:'rgba(122,115,255,.5)',borderWidth:1.5,borderDash:[5,4],pointRadius:0,tension:.25},
+  ];
+  charts.main=new Chart(document.getElementById('rbChart').getContext('2d'),{type:'line',data:{labels:rows.map(r=>r.yr),datasets:ds},options:o});
+}
+
 // ── Housing: an affordability tool, not a report ───────────────────────────
 // The tab answered "is my current plan sensible" across three charts, three tables and a
 // five-path comparison. The question actually being asked is "how much can I afford, and how
@@ -5293,7 +5506,7 @@ let cockpitExRet=true;
 let _homeView='explore';
 const SUB_VIEWS={
   home:{get:()=>_homeView,set:v=>{_homeView=v},
-    views:[['explore','spark','Explore'],['housing','home','Housing'],['levers','chart','Key levers'],['compare','diamond','Compare']]},
+    views:[['explore','spark','Explore'],['housing','home','Housing'],['rentbuy','arrow','Rent or buy'],['levers','chart','Key levers'],['compare','diamond','Compare']]},
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','chart','Net worth'],['income','circle','Income & tax'],['cashflow','arrow','Cash flow'],['table','doc','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},

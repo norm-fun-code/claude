@@ -572,7 +572,12 @@ function run(p,rets,compiledGrants){
     const ptax=sub?ptRate*homeVal:0;
     const rentGrowth=Math.max(0,Number(p.rentInflation??0.03)||0);
   const rentCap=Number(p.rentCap)>0?Number(p.rentCap):Infinity;
-  const monthlyRent=Math.min(rentCap,Number(p.nycRent||0)*(p.housingMode==='rent'?(1+rentGrowth)**(yr-sy):1));
+  // A buy plan deliberately keeps its legacy flat rent before the purchase. A rent-versus-buy
+  // comparison cannot: rent rises whether or not you buy later, and charging the buy side
+  // today's rent for the years it still rents hands buying money it never earned. The
+  // comparison sets this flag; the saved plan never does, so its projection is unchanged.
+  const inflateRent=p.housingMode==='rent'||p.rentInflatesBeforePurchase===true;
+  const monthlyRent=Math.min(rentCap,Number(p.nycRent||0)*(inflateRent?(1+rentGrowth)**(yr-sy):1));
   let h=sub?am+ptax+(p.maintBase+insuranceFor(p.homePrice,p))*1.02**(yr-p.homePurchaseYear):monthlyRent*12;
     const inf=(1+p.expenseInflation)**(yr-sy);
     let gr=p.baseGroceries*inf,di=p.baseDining*inf,sh=p.baseShopping*inf,va=(nk>0?p.postKidVacations:p.baseVacations)*inf;
