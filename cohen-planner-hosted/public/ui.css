@@ -1192,3 +1192,24 @@ body:has(.demo-banner) .bd-bar{top:46px}
 .bd-over-in{display:flex;flex-direction:column;gap:22px;margin-top:16px}
 .bd-over-in>.cp-card,.bd-over-in .cp-card{background:none;border:0;border-top:1px solid var(--bd);border-radius:0;box-shadow:none;padding:18px 0 0;margin:0}
 .bd-over-in>.cp-card:first-child{border-top:0;padding-top:0}
+
+/* The pinned bar: year, unit, what an edit does; tools beneath on a wide screen */
+.bd-scope{display:flex;align-items:center;gap:10px}
+.bd-scope-hint{font-size:12px;color:var(--t3);white-space:nowrap}
+/* On a wide screen the tools are simply more items in the bar, with the section chips on a second row */
+.bd-tools{display:contents}
+.bd-tools .bd-infl{margin-left:auto}
+.bd-tools-m{display:none}
+/* Undo, next to where you are working */
+.bd-snack{position:fixed;left:50%;bottom:28px;transform:translate(-50%,24px);opacity:0;pointer-events:none;z-index:200;display:flex;align-items:center;gap:12px;max-width:min(580px,calc(100vw - 28px));padding:11px 12px 11px 16px;border-radius:12px;border:1px solid var(--bd2);background:var(--s1);box-shadow:0 14px 40px rgba(0,0,0,.5);font-size:13px;line-height:1.45;color:var(--tx);transition:opacity .2s,transform .2s}
+.bd-snack.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.bd-snack button{flex:none;border:0;background:transparent;color:var(--accent);font:inherit;font-weight:700;cursor:pointer;padding:6px 10px;border-radius:7px}
+.bd-snack button:hover{background:var(--s3)}
+.bd-snack .x{color:var(--t3);font-weight:400;padding:6px 8px}
+@media(max-width:760px){
+  .bd-bar .bd-tools{display:none}
+  .bd-tools-m{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin:0 0 6px}
+  .bd-scope-hint{display:none}
+  .bd-snack{bottom:96px}
+}
+@media(prefers-reduced-motion:reduce){.bd-snack{transition:none}}

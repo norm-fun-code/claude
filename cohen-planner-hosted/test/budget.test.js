@@ -340,7 +340,8 @@ describe('the Budget control bar and the expense-inflation setting',()=>{
  };
  it('keeps the year, the unit and the inflation rate in one bar that stays in view',()=>{
   const bar=html.slice(html.indexOf('<div class="bd-bar"'),html.indexOf('</div>`;',html.indexOf('<div class="bd-bar"')));
-  for(const piece of ['Budget year','Show amounts per','expInflControl()'])expect(bar).toContain(piece);
+  for(const piece of ['Budget year','Show amounts per','Edits apply to','${toolsInner}'])expect(bar).toContain(piece);
+  expect(html).toContain('${expInflControl()}@@JUMP@@`;');         // the tools: share basis, inflation, section chips
   expect(css).toMatch(/\.bd-bar\{position:sticky;top:0;/);
   expect(css).toContain('body:has(.demo-banner) .bd-bar{top:46px}');     // clear of the demo banner
  });
@@ -377,8 +378,8 @@ describe('Budget sections you can see and move between',()=>{
  });
  it('puts a jump chip for each section in the pinned bar, with its share, and replaces the placeholder',()=>{
   const bar=ui.slice(ui.indexOf('<div class="bd-bar"'),ui.indexOf('</div>`;',ui.indexOf('<div class="bd-bar"')));
-  expect(bar).toContain('@@JUMP@@');
-  expect(ui).toContain("h=h.replace('@@JUMP@@',jumpHtml);");
+  expect(ui).toContain('@@JUMP@@');
+  expect(ui).toContain("h=h.split('@@JUMP@@').join(jumpHtml);");     // used in the bar and, on a phone, above the lines
   expect(ui).toContain("onclick=\"budgetJump('${b.key}')\"");expect(ui).toContain("onclick=\"budgetJump('oneoff')\"");
   expect(css).toContain('.bd-jump{flex:1 1 100%;display:flex');
  });
@@ -460,5 +461,35 @@ describe('Budget layout: the lines come first',()=>{
   const m=html.match(/const BD_COLOR=\{([^}]+)\}/)[1];
   const groups=html.match(/const RM_COLOR=\{([^}]+)\}/)[1];
   for(const k of ['cash','stock','savings','left']){const c=m.match(new RegExp(k+":'(#[0-9a-f]+)'"))[1];expect(groups.includes(c),k).toBe(false)}
+ });
+});
+
+describe('what an edit does, and feedback where you are working',()=>{
+ const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
+ const css=fs.readFileSync(new URL('../public/ui.css',import.meta.url),'utf8');
+ it('pins the scope toggle in the bar, and says in words which years an edit changes',()=>{
+  const bar=ui.slice(ui.indexOf('<div class="bd-bar"'),ui.indexOf('</div>`;',ui.indexOf('<div class="bd-bar"')));
+  expect(bar).toContain('aria-label="Edits apply to"');
+  expect(bar).toContain("budgetScope('onward')");expect(bar).toContain("budgetScope('year')");
+  expect(bar).toContain("`Changes ${yr}–${last}`:`Changes ${yr} only`");
+  // …and not in the lines card, where it scrolled out of sight.
+  const lines=ui.slice(ui.indexOf('<section class="cp-card bd-lines">'),ui.indexOf('${overTimeHtml}'));
+  expect(lines).not.toContain("budgetScope('");
+ });
+ it('keeps the pinned bar slim on a phone by moving the tools above the lines',()=>{
+  expect(css).toContain('.bd-tools{display:contents}');
+  expect(css).toMatch(/@media\(max-width:760px\)\{[^}]*\.bd-bar \.bd-tools\{display:none\}/);
+  expect(ui).toContain('<div class="bd-tools bd-tools-m">${toolsInner}</div>');
+ });
+ it('floats an undo snackbar next to the work, saying what changed and which later changes still apply',()=>{
+  expect(ui).toContain('function budgetSnack(text,notes)');
+  for(const fn of ['budgetApply','budgetChange'])expect(html.slice(html.indexOf('function '+fn+'('),html.indexOf('\n}\n',html.indexOf('function '+fn+'('))+3)).toContain('budgetSnack(');
+  expect(ui).toContain("still ${n.years.length>1?'apply':'applies'}");
+  expect(ui).not.toContain('class="bd-undo"');                   // the banner a screen away is gone
+  expect(css).toContain('.bd-snack{position:fixed');
+ });
+ it('dismisses itself, and undo hides it',()=>{
+  expect(ui).toContain('setTimeout(budgetSnackHide,12000)');
+  expect(html.slice(html.indexOf('function budgetUndoLast('),html.indexOf('\n}\n',html.indexOf('function budgetUndoLast('))+3)).toContain('budgetSnackHide()');
  });
 });

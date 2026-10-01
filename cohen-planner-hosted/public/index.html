@@ -3609,11 +3609,24 @@ function budgetYearStep(d,first,last){_budgetYear=Math.min(last,Math.max(first,(
 function budgetUnit(u){_budgetUnit=u;render()}
 function budgetScope(s){_budgetScope=s;render()}
 function budgetBasisKey(){return _planShareBasis==='gross'?'gross':'net'}
+// Feedback where you are working. The old undo banner sat at the top of the lines card, a screen away
+// from the field you had just edited. This floats at the bottom of the window, says what changed and
+// for which years, and offers Undo, then gets out of the way.
+let _snackTimer=null;
+function budgetSnack(text,notes){
+  let el=document.getElementById('bdSnack');
+  if(!el){el=document.createElement('div');el.id='bdSnack';el.className='bd-snack';el.setAttribute('role','status');document.body.appendChild(el)}
+  const extra=(notes||[]).map(n=>` · your ${n.years.join(', ')} ${n.kind==='later-rule'?'change':'pin'}${n.years.length>1?'s':''} still ${n.years.length>1?'apply':'applies'}`).join('');
+  el.innerHTML=`<span>${advEscape(text)}${advEscape(extra)}</span><button type="button" onclick="budgetUndoLast()">Undo</button><button type="button" class="x" onclick="budgetSnackHide()" aria-label="Dismiss">✕</button>`;
+  el.classList.add('on');clearTimeout(_snackTimer);_snackTimer=setTimeout(budgetSnackHide,12000);
+}
+function budgetSnackHide(){const el=document.getElementById('bdSnack');if(el)el.classList.remove('on');clearTimeout(_snackTimer)}
 function budgetApply(e,label){
   _budgetUndo={label,before:e.before,notes:e.notes||[]};
   P.budgetRules=e.budgetRules;
   for(const [k,v] of Object.entries(e.pins)){if(v===null||v===undefined)delete P[k];else P[k]=v}
   markDirty();buildControls();render();savePlannerState();
+  budgetSnack(label,e.notes);
 }
 function budgetUndoLast(){
   if(!_budgetUndo)return;
@@ -3623,7 +3636,7 @@ function budgetUndoLast(){
   if(b.planItems!==undefined)P.planItems=b.planItems;
   if(b.budgetDismissed!==undefined)P.budgetDismissed=b.budgetDismissed;
   for(const [k,v] of Object.entries(b.params||{})){if(v===undefined)delete P[k];else P[k]=v}
-  _budgetUndo=null;markDirty();buildControls();render();savePlannerState();
+  _budgetUndo=null;budgetSnackHide();markDirty();buildControls();render();savePlannerState();
 }
 // Items, dismissals and single-parameter changes share the same undo as rule edits: take a
 // snapshot of exactly what is about to change, change it, and keep the snapshot.
@@ -3631,6 +3644,7 @@ function budgetChange(label,before,mutate){
   _budgetUndo={label,before,notes:[]};
   mutate();
   markDirty();buildControls();render();savePlannerState();
+  budgetSnack(label,[]);
 }
 function budgetSuggestion(id){const yr=_budgetYear??PlannerTime.year();return PlannerSuggest.events(P,yr,40).find(e=>e.id===id)}
 function budgetAddItem(id){
@@ -3853,6 +3867,9 @@ function renderBudgetTab(R,P){
     const lbl='font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3)';
   const chip=(on,click,text,dis)=>`<button type="button" class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}"${dis?' disabled':''} onclick="${click}">${text}</button>`;
 
+  // Net/Gross, the inflation rate and the section chips. Built once and used twice: in the pinned bar on a
+  // wide screen, and above the lines on a phone, where the pinned bar has to stay slim.
+  const toolsInner=`<div class="spend-scope" role="group" aria-label="Share of">${chip(basis==='net',"planShareBasis('net')",'Net')}${chip(basis==='gross',"planShareBasis('gross')",'Gross')}</div>${expInflControl()}@@JUMP@@`;
   // ── Header ──
   const yrOptions=R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('');
   let h=`<div class="bd">
@@ -3863,8 +3880,10 @@ function renderBudgetTab(R,P){
           <label><span class="ui-sr">Year</span><select onchange="budgetYearSet(this.value)">${yrOptions}</select></label>
           <button type="button" onclick="budgetYearStep(1,${first},${last})" aria-label="Next year"${yr>=last?' disabled':''}>›</button></div>
         <div class="spend-scope" role="group" aria-label="Show amounts per">${chip(mo,"budgetUnit('month')",'Monthly')}${chip(!mo,"budgetUnit('year')",'Annual')}</div>
-        ${expInflControl()}
-        @@JUMP@@
+        <div class="bd-scope" role="group" aria-label="Edits apply to">
+          <div class="spend-scope">${chip(_budgetScope==='onward',"budgetScope('onward')",`From ${yr} on`)}${chip(_budgetScope==='year',"budgetScope('year')",`${yr} only`)}</div>
+          <span class="bd-scope-hint" aria-live="polite">${_budgetScope==='onward'?`Changes ${yr}–${last}`:`Changes ${yr} only`}</span></div>
+        <div class="bd-tools">${toolsInner}</div>
     </div>`;
 
   // ── The shape of the plan ──
@@ -4036,7 +4055,7 @@ function renderBudgetTab(R,P){
   // A way to move between the sections without scrolling for them: each chip is a section, with its
   // share, in its colour. It sits in the pinned bar, so it is there wherever you have scrolled to.
   const jumpHtml=`<nav class="bd-jump" aria-label="Jump to a section"><button type="button" onclick="budgetJump('income')" style="--tier:${RM_COLOR.income}"><i></i>Income<b>${amtShort(row.netTC)}</b></button>${B.BUCKETS.map(b=>`<button type="button" onclick="budgetJump('${b.key}')" style="--tier:${RM_COLOR[b.key]}"><i></i>${advEscape(b.label.replace(' costs',''))}<b>${_lensPct(den>0?groupTotal(b.key)/den:0)}</b></button>`).join('')}<button type="button" onclick="budgetJump('oneoff')" style="--tier:${RM_COLOR.oneoff}"><i></i>One-off</button></nav>`;
-  h=h.replace('@@JUMP@@',jumpHtml);
+  h=h.split('@@JUMP@@').join(jumpHtml);
   // One-off costs have a home here whether or not this year has one: a single year's cost, not
   // repeated and not inflated, set for any year of the first eleven.
   const oneOff=`<div class="cl-group bd-sec" id="bd-g-oneoff" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off costs</span><span class="cl-gtot">${row.eAdj?`${pct(Math.abs(row.eAdj))} <small>${row.eAdj<0?'−':''}${amtShort(Math.abs(row.eAdj))}${unitWord}</small>`:'<small>none in '+yr+'</small>'}</span></div>
@@ -4044,11 +4063,10 @@ function renderBudgetTab(R,P){
   const baselines=`<details class="polish-fold refine-fold" ${bdFold('baselines')}><summary>Baselines the model starts from</summary><div>
     <p class="spend-caption" style="margin:0 0 10px">The yearly figure each line starts from in the plan's first year, before children, inflation and any rule or pin above. Changing one moves the model's own figure and keeps its growth; a rule above replaces a line outright.</p>
     ${embedControls('baselines')}</div></details>`;
-  const undo=_budgetUndo?`<div class="bd-undo" role="status"><span>${advEscape(_budgetUndo.label)}${_budgetUndo.notes.map(n=>` · your ${n.years.join(', ')} ${n.kind==='later-rule'?'change':'pin'}${n.years.length>1?'s':''} still apply${n.years.length>1?'':'s'}`).join('')}</span><button type="button" onclick="budgetUndoLast()">Undo</button></div>`:'';
   h+=`<section class="cp-card bd-lines"><div class="ps-head"><div><h3>${yr} · line by line</h3><p>Type a dollar figure or a percentage over any line. A percentage is worked out against ${yr}'s ${basisWord} income and then held as dollars — or tie it to income and it follows income every year.</p></div>
-      <div class="ps-controls"><div class="spend-scope" role="group" aria-label="Edits apply to">${chip(_budgetScope==='onward',"budgetScope('onward')",`From ${yr} on`)}${chip(_budgetScope==='year',"budgetScope('year')",`${yr} only`)}</div>
-        <div class="spend-scope" role="group" aria-label="Share of">${chip(basis==='net',"planShareBasis('net')",'Net')}${chip(basis==='gross',"planShareBasis('gross')",'Gross')}</div></div></div>
-    ${undo}${groups}${oneOff}
+      </div>
+    <div class="bd-tools bd-tools-m">${toolsInner}</div>
+    ${groups}${oneOff}
     ${(P.planItems||[]).length?`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>Plan items you've added</span></div>
       ${(P.planItems||[]).map((it,i)=>`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
         <label class="bd-sug-amt"><span class="ui-sr">Amount</span><input type="text" inputmode="decimal" value="${fmtF(it.amount)}" aria-label="${advEscape(it.label)} amount" onfocus="this.select()" onchange="budgetItemAmount(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${it.from===it.to?'once':'/yr'}</small></label>
