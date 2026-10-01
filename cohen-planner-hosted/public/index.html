@@ -3591,7 +3591,13 @@ let _budgetYear=null,_budgetUnit='month',_budgetScope='onward',_budgetUndo=null,
 // Which folds you have open. The page redraws whenever a year or a figure changes, and a fold that
 // snapped shut each time would lose your place.
 const _bdFolds=new Set();
-function budgetFold(k,open){if(open)_bdFolds.add(k);else _bdFolds.delete(k)}
+function budgetFold(k,open){
+  const had=_bdFolds.has(k);
+  if(open)_bdFolds.add(k);else _bdFolds.delete(k);
+  // The year-by-year grid is only built once opened. The redraw that does it re-emits the fold open, which
+  // fires this again; the `had` check is what stops that from looping.
+  if(k==='grid'&&open&&!had)render();
+}
 const bdFold=k=>`data-fold="${k}" ontoggle="budgetFold('${k}',this.open)"${_bdFolds.has(k)?' open':''}`;
 function budgetJump(key){
   const el=document.getElementById('bd-g-'+key),bar=document.querySelector('.bd-bar');if(!el)return;
@@ -3628,6 +3634,48 @@ function budgetMapSet(name,line){
   const key=String(name).trim().toLowerCase(),m={...(P.monarchLineMap||{})};
   if(line)m[key]=line;else delete m[key];
   P.monarchLineMap=m;markDirty();render();savePlannerState();
+}
+// ── Every line, every year ───────────────────────────────────────────────────────────────────────
+// The Budget looks at one year at a time, which is the right size for editing and the wrong one for seeing
+// how a budget moves. This lays every line out across every year of the plan: figures per month or per
+// year as the switch says, a dot where a rule or a one-year figure of yours is in force, the year you are
+// on highlighted, and a click on any year heading takes the Budget to it.
+function budgetGridHtml(R,yr,allOv,series,mo){
+  const B=PlannerBudget,div=mo?12:1,cell=v=>fmtF(Math.round(v/div)),cur=PlannerTime.year();
+  const mark=new Map();
+  for(const o of allOv){
+    if(o.type==='item'||o.seg&&o.seg.kind==='model')continue;
+    for(let y=o.from;y<=o.to;y++){const k=o.category+'|'+y;if(o.type==='pin'||!mark.has(k))mark.set(k,o.type)}
+  }
+  const spendOf=(r,k)=>k==='housing'?r.hFull:k==='childcare'?r.ccFull:k==='tuition'?r.tuFull:((r.livFullParts||{})[k]||0);
+  const groupLines=key=>{
+    const g=B.BUCKETS.find(x=>x.key===key).lines;
+    const extra=key==='discretionary'?[...new Set(R.flatMap(r=>Object.keys(r.livFullParts||{})))].filter(k=>B.bucketOf(k)==='discretionary'&&!g.includes(k)):[];
+    return [...g,...extra];
+  };
+  const head=`<tr><th class="bd-g-name">${mo?'Per month':'Per year'}</th>${R.map(r=>`<th class="${r.yr===yr?'sel':''}${r.yr===cur?' now':''}"><button type="button" onclick="budgetYearSet(${r.yr})" title="Budget ${r.yr}">${r.yr}</button></th>`).join('')}</tr>`;
+  const row=(label,get,o)=>{
+    const opt=o||{};
+    return `<tr class="${opt.cls||''}"><th class="bd-g-name">${advEscape(label)}</th>${R.map((r,i)=>{
+      const v=get(r,i),m=opt.cat?mark.get(opt.cat+'|'+r.yr):'';
+      return `<td class="${r.yr===yr?'sel':''}${v<0?' neg':''}${v===0?' zero':''}">${v===0?'—':(v<0?'−':'')+cell(Math.abs(v))}${m?`<i class="bd-dot ${m}" title="${m==='pin'?'A figure you set for this year only':'A rule of yours is in force'}"></i>`:''}</td>`}).join('')}</tr>`;
+  };
+  const group=(key,label)=>{
+    const lines=groupLines(key);
+    return row(label,r=>lines.reduce((t,k)=>t+spendOf(r,k),0),{cls:'grp'})
+      +lines.map(k=>row(LIV_LABEL[k]||(k==='housing'?'Housing':k==='childcare'?'Childcare':k==='tuition'?'Tuition':k),r=>spendOf(r,k),{cat:k,cls:'ln'})).join('');
+  };
+  const hasOne=R.some(r=>r.eAdj);
+  return `<div class="bd-grid-wrap" tabindex="0" aria-label="Every budget line, every year"><table class="bd-grid"><thead>${head}</thead><tbody>
+    ${row('Net income',r=>r.netTC,{cls:'inc'})}
+    ${group('fixed','Fixed costs')}${group('discretionary','Discretionary')}
+    ${hasOne?row('One-off costs',r=>r.eAdj,{cls:'ln'}):''}
+    ${row('Total spending',r=>r.totEFull,{cls:'tot'})}
+    ${row('Left over (or drawn)',r=>r.flowFull,{cls:'tot'})}
+    ${row('Savings',(r,i)=>series[i].saving.total,{cls:'grp',cat:B.EMERGENCY})}
+    ${row('Investments',(r,i)=>series[i].investing.total,{cls:'grp'})}
+  </tbody></table></div>
+  <p class="spend-caption" style="margin:10px 0 0">Future dollars. A dot marks a rule of yours (purple) or a figure you set for one year (amber). Click a year to budget it.</p>`;
 }
 function budgetEdit(k){_budgetEdit=_budgetEdit===k?null:k;render()}
 const RM_COLOR={income:'#b8e986',fixed:'#8278ee',essential:'#8bdded',discretionary:'#ecc183',saving:'#6fa8ff',investing:'#7ae3c3',oneoff:'#b6a8ff',tax:'#6b7a90',pretax:'#8ebfff',short:'#ff9caf'};
@@ -4011,6 +4059,7 @@ function renderBudgetTab(R,P){
   const ledgerFold=allOv.length?`<details class="cp-card spend-details bd-over" ${bdFold('ledger')}><summary>Everything you've changed · ${allOv.length}</summary><div class="bd-over-in">
     <p class="spend-caption" style="margin:0">Every rule, one-year figure and plan item in this plan, by line, oldest first. A rule keeps applying until the next one starts, so this is where to check nothing is still running that you forgot about. Removing one can be undone.</p>
     <div class="bd-ledger">${[...ovByLine.entries()].map(([cat,list])=>`<div class="bd-led-group"><h4>${advEscape(cat==='oneoff'?'One-off costs':LIV_LABEL[cat]||cat)}</h4>${list.map(o=>`<div class="bd-led-row"><button type="button" class="bd-led-year" onclick="budgetYearSet(${o.from})" title="Go to ${o.from}">${o.type==='pin'?o.from:o.type==='item'?(o.from===o.to?o.from:o.from+'–'+o.to):(o.to>=(P.planEndYear||2058)?o.from+' on':o.from+'–'+o.to)}</button><span class="bd-led-kind ${o.type}">${o.type==='pin'?'One year':o.type==='item'?'Plan item':'Rule'}</span><span class="bd-led-text">${advEscape(B.overrideText(P,o,fmtF))}</span><button type="button" class="bd-link" onclick="budgetRemoveOverride('${o.type}','${o.category}','${String(o.ref).replace(/'/g,'')}')" aria-label="Remove: ${advEscape(B.overrideText(P,o,fmtF))}">Remove</button></div>`).join('')}</div>`).join('')}</div></div></details>`:'';
+  const gridFold=`<details class="cp-card spend-details bd-over" ${bdFold('grid')}><summary>Year by year · all years at a glance</summary>${_bdFolds.has('grid')?`<div class="bd-over-in">${budgetGridHtml(R,yr,allOv,series,mo)}</div>`:''}</details>`;
   const scenarioFold=`<details class="cp-card spend-details bd-over" ${bdFold('scenarios')}><summary>Scenarios · what stays the same across your cases</summary><div class="bd-over-in">${sharedHtml}</div></details>`;
 
   // ── The lines ──
@@ -4143,7 +4192,7 @@ function renderBudgetTab(R,P){
       ${(P.planItems||[]).map((it,i)=>`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
         <label class="bd-sug-amt"><span class="ui-sr">Amount</span><input type="text" inputmode="decimal" value="${fmtF(it.amount)}" aria-label="${advEscape(it.label)} amount" onfocus="this.select()" onchange="budgetItemAmount(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${it.from===it.to?'once':'/yr'}</small></label>
         <button type="button" class="bd-btn" onclick="budgetRemoveItem(${i})" aria-label="Remove ${advEscape(it.label)}">Remove</button></div>`).join('')}</div>`:''}
-    <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${overTimeHtml}${ledgerFold}${mapFold}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
+    <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${gridFold}${overTimeHtml}${ledgerFold}${mapFold}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
 }

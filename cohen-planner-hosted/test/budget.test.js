@@ -742,3 +742,16 @@ describe('clearer Budget: fewer repeats, honest bars, plain words',()=>{
   expect(ui).toContain('would mean selling Stripe shares you would otherwise keep');
  });
 });
+
+describe('year by year grid',()=>{
+ const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+ it('is a fold built only when opened, with year headings that go to that year',()=>{
+  expect(html).toContain('function budgetGridHtml(R,yr,allOv,series,mo)');
+  expect(html).toMatch(/bdFold\('grid'\)[\s\S]*_bdFolds\.has\('grid'\)\?/);
+  expect(html).toContain('onclick="budgetYearSet(${r.yr})"');
+  expect(html).toMatch(/\$\{gridFold\}\$\{overTimeHtml\}/);
+ });
+ it('opening it redraws once, not forever',()=>{
+  expect(html).toMatch(/const had=_bdFolds\.has\(k\)[\s\S]*k==='grid'&&open&&!had/);
+ });
+});

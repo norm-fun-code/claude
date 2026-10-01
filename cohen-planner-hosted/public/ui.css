@@ -1267,3 +1267,22 @@ body:has(.demo-banner) .bd-bar{top:46px}
 .bd-share-key{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px 22px;margin:14px 0 0;padding-top:12px;border-top:1px solid var(--bd)}
 .bd-share-key dt{font-size:12px;font-weight:700;color:var(--t2)}
 .bd-share-key dd{margin:2px 0 0;font-size:12px;line-height:1.5;color:var(--t3)}
+
+/* Budget: every line, every year */
+.bd-grid-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;max-width:100%}
+.bd-grid{border-collapse:separate;border-spacing:0;font-size:13px;font-variant-numeric:tabular-nums;min-width:100%}
+.bd-grid th,.bd-grid td{padding:7px 10px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--border)}
+.bd-grid .bd-g-name{position:sticky;left:0;z-index:1;text-align:left;background:var(--card,#fff);font-weight:500;min-width:150px}
+.bd-grid thead th{position:sticky;top:0;background:var(--card,#fff)}
+.bd-grid thead .bd-g-name{z-index:2;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)}
+.bd-grid thead button{all:unset;cursor:pointer;font-weight:700;padding:2px 4px;border-radius:5px}
+.bd-grid thead button:hover,.bd-grid thead button:focus-visible{background:var(--border)}
+.bd-grid th.sel,.bd-grid td.sel{background:rgba(99,102,241,.10)}
+.bd-grid th.now button{text-decoration:underline}
+.bd-grid tr.grp>*{font-weight:700;background-color:rgba(127,127,127,.06)}
+.bd-grid tr.grp .bd-g-name{background:var(--card,#fff)}
+.bd-grid tr.ln .bd-g-name{padding-left:22px;font-weight:400}
+.bd-grid tr.tot>*{font-weight:700;border-top:2px solid var(--border)}
+.bd-grid td.zero{color:var(--t3)}.bd-grid td.neg{color:#c0392b}
+.bd-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:4px;vertical-align:middle;background:#8b5cf6}
+.bd-dot.pin{background:#f59e0b}
