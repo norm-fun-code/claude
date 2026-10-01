@@ -171,6 +171,25 @@ function kidCost(a){
   if(a<13)return{g:3500,d:0,s:2500,m:1000,x:3000,e:500,v:1000};
   return{g:4500,d:500,s:3500,m:1000,x:4000,e:500,v:1000};
 }
+// NYC planning allowances in plan-start-year dollars; not observed household spending.
+// Clothing is separate from goods. Recurring costs exclude baby gear, camp, school and college.
+function nycKidCost(a){
+  if(a<0||a>=22)return {g:0,d:0,s:0,c:0,m:0,x:0,e:0,v:0};
+  const bands=[
+    [1,1800,0,1200,600,1800,600,0,0],
+    [3,2400,0,900,900,1200,600,600,750],
+    [6,3000,600,900,900,1200,900,1200,1500],
+    [13,3900,1200,1200,1200,1200,1200,1800,2000],
+    [18,5100,1800,1500,1500,1500,1200,2400,2500],
+    [22,2550,900,750,750,750,600,1200,1250]
+  ];
+  const b=bands.find(b=>a<b[0]);
+  return Object.fromEntries(['g','d','s','c','m','x','e','v'].map((k,i)=>[k,b[i+1]]));
+}
+function commonHousehold(p){
+  const g=p.sharedLines&&p.sharedLines.groups;
+  return !!(g&&['household','fixed','essential','childcare','tuition','choice'].every(k=>g[k]));
+}
 // A zero rate is a legitimate loan, not an absent one: it amortises in a straight line.
 // Returning 0 for the payment made a 0% mortgage look free, and the balance never fall.
 function mPmt(pr,r,y=30){if(pr<=0)return 0;if(r<=0)return pr/y;const m=r/12,n=y*12;return pr*(m*(1+m)**n)/((1+m)**n-1)*12}
@@ -344,7 +363,12 @@ function budgetValue(p,category,yr,income){
   const v=Number(seg.value);
   if(!Number.isFinite(v)||v<0)return null;
   if(seg.kind==='amount')return Math.round(v*(1+(Number(p.expenseInflation)||0))**(yr-Number(seg.from)));
-  const base=seg.basis==='gross'?income.gross:income.net;
+  const refs=p.sharedBudgetIncome||{};
+  const years=Object.keys(refs).map(Number).sort((a,b)=>a-b);
+  const reference=refs[yr]||refs[years.filter(y=>y<=yr).at(-1)??years[0]];
+  const shared=commonHousehold(p)&&reference;
+  const basis=shared||income;
+  const base=seg.basis==='gross'?basis.gross:basis.net;
   return Math.max(0,Math.round(v*(Number(base)||0)));
 }
 // ── Plan items ───────────────────────────────────────────────────────────────
@@ -565,11 +589,9 @@ function run(p,rets,compiledGrants){
   for(let yr=sy;yr<=ey;yr++){
     const nk=kids.filter(k=>yr>=k).length;
     const yIdx=yr-sy;
-    const {cash:normCash,stock:normStock}=normComp(p,yIdx,grantLedger);
-    const eqYear=grantLedger?(grantEngine.usesGrants(p,yr)?grantLedger.years[yr]:grantEngine.manualYear(p,yr,grantLedger.prices)):null;
+    let {cash:normCash,stock:normStock}=normComp(p,yIdx,grantLedger);
+    let eqYear=grantLedger?(grantEngine.usesGrants(p,yr)?grantLedger.years[yr]:grantEngine.manualYear(p,yr,grantLedger.prices)):null;
     const obs=yIdx===0?observedDay(p):null;
-    const futureEvents=eqYear?.events.filter(e=>{const m=Number(e.date.slice(5,7)),d=Number(e.date.slice(8,10));return !obs||m>obs.m||(m===obs.m&&d>obs.d);});
-    const normW2=normCash+normStock; // identical treatment for tax; split matters for cash
     let nancyGross,nancyIsSolo=false,nancySENet=0,nancyOH=0;
     if(yIdx<4&&yr<p.nancyRampYear){nancyGross=p['nancyW2Y'+yIdx]??100000}
     else{
@@ -579,6 +601,19 @@ function run(p,rets,compiledGrants){
       nancyGross=Math.round(cl*p.nancyHourlyRate*p.nancyWeeksPerYear);
       if(nancyIsSolo){nancyOH=p.nancyPracticeOverhead+(p.housingMode!=='rent'&&yr>=p.homePurchaseYear?p.nancyHomeOfficeDeduct:0);nancySENet=Math.max(0,nancyGross-nancyOH)}
     }
+    const uncappedGross=normCash+normStock+nancyGross;
+    const cap=Number(p.combinedIncomeCap)||0;
+    const incomeScale=cap>0&&uncappedGross>cap?cap/uncappedGross:1;
+    if(incomeScale<1){
+      normCash*=incomeScale;normStock*=incomeScale;nancyGross*=incomeScale;
+      if(nancyIsSolo)nancySENet=Math.max(0,nancyGross-nancyOH);
+      if(eqYear){
+        const scaled=o=>Object.fromEntries(Object.entries(o).map(([k,v])=>[k,['stock','cash','market','shares','arg','peg','qcaStock'].includes(k)&&typeof v==='number'?v*incomeScale:v]));
+        eqYear={...scaled(eqYear),events:eqYear.events.map(scaled),incomeCapScale:incomeScale};
+      }
+    }
+    const futureEvents=eqYear?.events.filter(e=>{const m=Number(e.date.slice(5,7)),d=Number(e.date.slice(8,10));return !obs||m>obs.m||(m===obs.m&&d>obs.d);});
+    const normW2=normCash+normStock;
     const grossIncome=normW2+nancyGross;
     // How much of this year is still ahead of the observation date. 1 for every year after
     // the first, and 1 in the first year too unless the plan says when it was observed.
@@ -647,8 +682,9 @@ function run(p,rets,compiledGrants){
     let gr=p.baseGroceries*inf,di=p.baseDining*inf,sh=p.baseShopping*inf,va=(nk>0?p.postKidVacations:p.baseVacations)*inf;
     let au=p.baseAuto*inf,ins=p.baseInsurance*inf,mi=p.baseMisc*inf,en=p.baseEntertainment*inf;
     let ch=p.baseCharity*inf,md=p.baseMedical*inf,tr=p.baseTransit*inf,ut=p.baseUtilsPhoneNet*inf;
-    if(sub){au+=p.suburbAutoBoost*inf;ins+=p.suburbInsBoost*inf;ut+=p.suburbUtilBoost*inf;tr*=.4}
-    for(const kb of kids){if(yr<kb)continue;const a=yr-kb,c=kidCost(a);gr+=c.g*inf;di+=c.d*inf;sh+=c.s*inf;md+=c.m*inf;mi+=c.x*inf;en+=c.e*inf;va+=c.v*inf}
+    if(sub&&!commonHousehold(p)){au+=p.suburbAutoBoost*inf;ins+=p.suburbInsBoost*inf;ut+=p.suburbUtilBoost*inf;tr*=.4}
+    let childClothing=0;
+    for(const kb of kids){if(yr<kb)continue;const a=yr-kb,c=p.nycFamilyBudget?nycKidCost(a):kidCost(a);childClothing+=(c.c||0)*inf;gr+=c.g*inf;di+=c.d*inf;sh+=c.s*inf;md+=c.m*inf;mi+=c.x*inf;en+=c.e*inf;va+=c.v*inf}
     // Living is twelve things, and reporting only their sum meant the largest line on the
     // expense side was the one nobody could see inside. Kept as parts from here on: each is
     // scaled and rounded on its own, and the total is their SUM — so the figures printed
@@ -658,7 +694,7 @@ function run(p,rets,compiledGrants){
     // the plan had before it existed. Each year takes its own share of that year's shopping.
     const clShare=Math.min(1,Math.max(0,Number(p.clothingShare??CLOTHING_SHARE)));
     // Whole dollars, so the two lines round to exactly what the one line did.
-    const cl=Math.round(sh*clShare);sh-=cl;
+    const cl=p.nycFamilyBudget?Math.round(p.baseShopping*inf*clShare+childClothing):Math.round(sh*clShare);sh-=p.nycFamilyBudget?p.baseShopping*inf*clShare:cl;
     const livRaw={groceries:gr,dining:di,shopping:sh,clothing:cl,vacations:va,auto:au,insurance:ins,
       misc:mi,entertainment:en,charity:ch,medical:md,transit:tr,utilities:ut};
     // Where each line's figure came from, so a screen can say so instead of implying the
@@ -700,7 +736,7 @@ function run(p,rets,compiledGrants){
       // none in the birth year and 6 in the next.
       if(a>=0&&a<startAge){
         const months=Math.max(0,Math.min(12,(a+1)*12-(Number(p.childcareStartMonths)||0)));
-        cc+=(p.childcareMonthly??2800)*months;
+        cc+=(p.childcareMonthly??2800)*months*(p.nycFamilyBudget?inf:1);
       }
     }
     // Spending already incurred this year is behind the observation date and is already
@@ -1155,7 +1191,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
-  module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
+  module.exports={nycKidCost,commonHousehold,bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
     normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,

@@ -548,7 +548,7 @@ function markDirty(){
 // next time; saving a CASE is a separate act, and until now the only button for it lived in a
 // panel that no screen showed. Edits to a case are never lost by switching away from it without
 // being asked: the menu says what is unsaved and offers to save or discard first.
-let _caseMenu=false,_caseNaming=false;
+let _caseMenu=false,_caseNaming=false,_archivedCases=[];
 function caseMenuToggle(e){if(e)e.stopPropagation();_caseMenu=!_caseMenu;_caseNaming=false;renderCaseControl();if(_caseMenu)setTimeout(()=>document.querySelector('.case-menu button')?.focus(),0)}
 function caseMenuClose(){if(!_caseMenu&&!_caseNaming)return;_caseMenu=false;_caseNaming=false;renderCaseControl()}
 document.addEventListener('click',e=>{if(_caseMenu&&!e.target.closest('.case-wrap'))caseMenuClose()});
@@ -585,15 +585,37 @@ function caseDelete(i){
   if(!scenarios[i]||!showConfirm(`Delete the case “${scenarios[i].name}”? This cannot be undone.`))return;
   caseMenuClose();deleteScenario(i);
 }
+async function caseArchive(i){
+  const s=scenarios[i];if(!s)return;
+  const params={...s.params,_archived:true};
+  try{
+    const r=await fetch('/api/scenarios/'+s.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({params})});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    _archivedCases.push({...s,params});
+    caseMenuClose();await deleteScenario(i,true);
+    showToast('Case removed; restore it from the case menu','green');
+  }catch(e){showToast('Could not archive case: '+e.message,'red')}
+}
+async function caseRestore(i){
+  const s=_archivedCases[i];if(!s)return;
+  const params={...s.params};delete params._archived;
+  try{
+    const r=await fetch('/api/scenarios/'+s.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({params})});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    scenarios.push({...s,params,results:run(scenarioPlan(params))});_archivedCases.splice(i,1);
+    renderCaseControl();savePlannerState();showToast('Case restored','green');
+  }catch(e){showToast('Could not restore case: '+e.message,'red')}
+}
 function renderCaseControl(){
   const el=document.getElementById('caseControl');if(!el)return;
   const a=activeScenarioIdx>=0?scenarios[activeScenarioIdx]:null,dirty=!!(a&&scenarioDirty);
   const name=a?advEscape(a.name):'Live plan';
-  const item=(i,s)=>`<div class="case-item${i===activeScenarioIdx?' on':''}"><button type="button" role="menuitem" class="case-pick" onclick="caseLoad(${i})"><i style="background:${s.color||'var(--accent)'}"></i><span>${advEscape(s.name)}</span>${i===activeScenarioIdx?`<b>${dirty?'edited':'✓'}</b>`:''}</button><button type="button" class="case-x" onclick="caseDelete(${i})" aria-label="Delete ${advEscape(s.name)}" title="Delete">✕</button></div>`;
+  const item=(i,s)=>`<div class="case-item${i===activeScenarioIdx?' on':''}"><button type="button" role="menuitem" class="case-pick" onclick="caseLoad(${i})"><i style="background:${s.color||'var(--accent)'}"></i><span>${advEscape(s.name)}</span>${i===activeScenarioIdx?`<b>${dirty?'edited':'✓'}</b>`:''}</button><button type="button" class="case-x" onclick="caseArchive(${i})" aria-label="Remove ${advEscape(s.name)}" title="Remove (can restore)">✕</button></div>`;
   const menu=!_caseMenu?'':`<div class="case-menu" role="menu" aria-label="Plan cases">
     <div class="case-sec">Cases</div>
     <div class="case-item${a?'':' on'}"><button type="button" role="menuitem" class="case-pick" onclick="caseLive()"><i style="background:var(--t3)"></i><span>Live plan</span>${a?'':'<b>✓</b>'}</button></div>
     ${scenarios.map((s,i)=>item(i,s)).join('')}
+    ${_archivedCases.map((s,i)=>`<button type="button" role="menuitem" class="case-act" onclick="caseRestore(${i})">Restore ${advEscape(s.name)}</button>`).join('')}
     <div class="case-rule"></div>
     ${dirty?`<button type="button" role="menuitem" class="case-act primary" onclick="caseSave()">Save to “${name}”</button><button type="button" role="menuitem" class="case-act" onclick="caseDiscard()">Discard edits</button>`:''}
     ${_caseNaming
@@ -629,7 +651,7 @@ function savePlannerState(){
   setSyncStatus('saving');
   const revision=++_saveRevision;
   const livePlanParams=typeof _livePlanParams!=='undefined'?_livePlanParams:null;
-  const payload=JSON.stringify({state:{P,livePlanParams,compareMode,activeTab,_projView,_todayView,_homeView,cockpitNwBasis:cockpitExRet?'exRetirement':'total',activeScenarioIdx,scenarioDirty,monarchSnapshot,experienceVersion:7}});
+  const payload=JSON.stringify({state:{P,livePlanParams,compareMode,activeTab,_projView,_todayView,_homeView,cockpitNwBasis:cockpitExRet?'exRetirement':'total',activeScenarioIdx,activeScenarioId:scenarios[activeScenarioIdx]?.id||null,scenarioDirty,monarchSnapshot,experienceVersion:7}});
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Serialize writes so a slower earlier request cannot overwrite newer state.
@@ -653,6 +675,7 @@ function migrateP(raw){return PlanMigrate.migrateP(raw)}
 
 async function loadFromServer(){
   try{
+    let loadedCaseId;
     const [stRes,scRes]=await Promise.all([
       fetch('/api/planner-state'),
       fetch('/api/scenarios')
@@ -669,6 +692,7 @@ async function loadFromServer(){
       if(s._homeView!==undefined)_homeView=s._homeView;
       if(s.cockpitNwBasis!==undefined)cockpitExRet=s.cockpitNwBasis!=='total';
       if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
+      loadedCaseId=s.activeScenarioId;
       if(s.livePlanParams)_livePlanParams={...D,...migrateP(s.livePlanParams)};
       else if(activeScenarioIdx<0)_livePlanParams={...P};
       if(s.scenarioDirty!==undefined)scenarioDirty=!!s.scenarioDirty;
@@ -678,13 +702,15 @@ async function loadFromServer(){
     }
     if(scRes.ok){
       const sc=await scRes.json();
-      scenarios=sc.map((s,i)=>{
+      _archivedCases=sc.filter(s=>s.params&&s.params._archived);
+      scenarios=sc.filter(s=>!s.params?true:!s.params._archived).map((s,i)=>{
         const params=keepAssumptions(migrateP(attachObserved(s.params||{})));
         let results;
         try{results=run(scenarioPlan(params));}
         catch(e){console.warn('scenario rehydrate failed:',s.name,e);results=run({...D});}
         return{id:s.id,name:s.name,color:s.color||COLORS[i%COLORS.length],params,results};
       });
+      if(loadedCaseId!==undefined)activeScenarioIdx=scenarios.findIndex(s=>s.id===loadedCaseId);
       console.log('Loaded',scenarios.length,'scenarios from server');
     }else{
       showToast('⚠️ Could not load scenarios (HTTP '+scRes.status+')','red');
@@ -1873,7 +1899,7 @@ async function updateScenario(i){
   }
 }
 
-async function deleteScenario(i){
+async function deleteScenario(i,archived=false){
   const s=scenarios[i];
   scenarios.splice(i,1);
   if(!scenarios.length)compareMode=false;
@@ -1890,7 +1916,7 @@ async function deleteScenario(i){
   if(_compareDiffIdx===i)_compareDiffIdx=-1;
   else if(_compareDiffIdx>i)_compareDiffIdx--;
   buildControls();render();savePlannerState();
-  if(s.id){
+  if(s.id&&!archived){
     try{
       const r=await fetch('/api/scenarios/'+s.id,{method:'DELETE'});
       if(!r.ok)throw new Error('HTTP '+r.status);
@@ -3611,6 +3637,7 @@ function budgetCommit(cat,text){
 // Tie a line to income (it then moves with income every year), or fix it in dollars (it then
 // grows only with inflation). Either way from the year in view, at what it is now.
 function budgetTie(cat,tied){
+  if(tied&&commonHousehold(P)){showToast('Shared budgets stay in dollars so cases have identical spending','green');return}
   const cur=budgetCurrent(cat),basis=budgetBasisKey(),base=basis==='gross'?cur.row.gross:cur.row.netTC;
   const input=tied?{kind:'pct',pct:cur.annual/base,tied:true}:{kind:'amount',annual:cur.annual};
   const e=PlannerBudget.edit(P,{category:cat,year:cur.yr,scope:'onward',input,basis,income:{net:cur.row.netTC,gross:cur.row.gross}});
@@ -3692,6 +3719,37 @@ function sharedRecommended(){
   sharedSetConfig(groups);
   showToast('Fixed and essential costs are now the same in every scenario','green');
 }
+function budgetNYCApply(){
+  const categories=['groceries','dining','shopping','clothing','vacations','misc','entertainment'];
+  const values={nycFamilyBudget:true,baseGroceries:14400,baseDining:14400,baseShopping:12000,clothingShare:.4,
+    baseVacations:18000,postKidVacations:18000,baseMisc:6000,baseEntertainment:375*12,expenseInflation:.03};
+  // Keep a stable reference for legacy income-linked rules. New shared edits are dollar budgets.
+  values.sharedBudgetIncome=Object.fromEntries(run(P).R.map(r=>[r.yr,{net:r.netTC,gross:r.gross}]));
+  values.sharedLines={groups:Object.fromEntries(PlannerShared.GROUPS.map(g=>[g.key,g.key!=='housing']))};
+  const pins={};
+  for(const k of Object.keys(P))if(categories.includes(PlannerShared.catOfPin(k)))pins[k]=P[k];
+  const before={params:Object.fromEntries(Object.keys(values).map(k=>[k,P[k]])),pins,budgetRules:JSON.parse(JSON.stringify(P.budgetRules||{}))};
+  budgetChange('NYC family budget shared across cases',before,()=>{
+    Object.assign(P,values);
+    P.budgetRules={...(P.budgetRules||{})};
+    categories.forEach(k=>delete P.budgetRules[k]);
+    Object.keys(pins).forEach(k=>delete P[k]);
+  });
+  rebuildScenarioResults();
+  showToast('NYC family budget applied to every case; housing stays separate','green');
+}
+function budgetNYCNotes(){
+  return `<details class="cp-card"><summary>NYC family budget assumptions${P.nycFamilyBudget?' · active':''}</summary>
+    <p>Planning allowances in ${P.planStartYear} dollars, inflated ${((P.expenseInflation||0)*100).toFixed(1)}% each year. These are comfortable NYC estimates, not measured spending or guaranteed costs.</p>
+    <p>Two adults: groceries $1,200/month; dining $1,200; shopping $600; clothing $400; miscellaneous household supplies and gifts $500; entertainment $375; vacations $18,000/year. Child additions are separate, so clothing is never counted twice.</p>
+    <table><thead><tr><th>Child age</th><th>Groceries /mo</th><th>Shopping /mo</th><th>Clothing /mo</th></tr></thead><tbody>
+      <tr><td>Under 1</td><td>$150</td><td>$100</td><td>$50</td></tr><tr><td>1–2</td><td>$200</td><td>$75</td><td>$75</td></tr><tr><td>3–5</td><td>$250</td><td>$75</td><td>$75</td></tr><tr><td>6–12</td><td>$325</td><td>$100</td><td>$100</td></tr><tr><td>13–17</td><td>$425</td><td>$125</td><td>$125</td></tr></tbody></table>
+    <p>Groceries include an allowance above national food-plan costs for NYC prices and convenience. Shopping covers goods and recurring baby supplies, not clothing. Dining, medical, activities, gifts and travel also grow by age. Ages 18–21 receive half the teen allowance; ongoing child allowances stop at 22. College, camp, paid babysitting and major baby gear require separate plan items; existing items are retained. Review these before relying on the full projection.</p>
+    <p>Childcare uses your current monthly rate and start age, now growing with spending inflation. Tuition keeps your school schedule and separate inflation. Insurance, medical, transport, utilities and giving keep your current baselines. With all non-housing groups shared, buying does not automatically add suburban car/utilities costs or reduce transit: every case uses the same NYC living budget.</p>
+    <p>Editing a category replaces its whole amount, including child allowances. Shared percentage entries are sized to dollars; existing income-linked rules use a fixed reference income schedule. Housing remains driven by each case’s housing inputs.</p>
+    <p>Combined gross income cap for this case (cash pay, Stripe vest income and Nancy gross receipts, before tax; 0 means no cap): <input aria-label="Combined annual income cap" type="number" min="0" step="10000" value="${P.combinedIncomeCap||0}" onchange="UTxt('combinedIncomeCap',this.value)">. When income exceeds it, all three streams scale proportionally; lower-income years stay lower. Asset appreciation is separate.</p><p>Benchmarks: <a href="https://www.fna.usda.gov/research/cnpp/usda-food-plans/cost-food-monthly-reports" target="_blank" rel="noopener">USDA age-based food plans</a> and <a href="https://www.bls.gov/regions/northeast/news-release/consumerexpenditures_newyork.htm" target="_blank" rel="noopener">BLS New York household spending</a>. Discretionary allowances and 3% inflation are planning judgments, not official estimates for your family.</p>
+    ${P.nycFamilyBudget?'':`<button type="button" class="bd-btn primary" onclick="budgetNYCApply()">Apply NYC family budget to all cases</button><p>Replaces groceries, dining, shopping, clothing, vacations, misc and entertainment rules/pins with the age-based model. Keeps named plan items and all housing settings. Undo is available after applying.</p>`}</details>`;
+}
 function sharedCard(){
   const cfg=PlannerShared.config(P),n=scenarios.length;
   const chips=PlannerShared.GROUPS.map(g=>`<button type="button" class="bd-share-chip${cfg.groups[g.key]?' on':''}" aria-pressed="${cfg.groups[g.key]}" title="${advEscape(g.note)}" onclick="sharedToggle('${g.key}',${!cfg.groups[g.key]})"><i></i>${advEscape(g.label)}</button>`).join('');
@@ -3701,7 +3759,7 @@ function sharedCard(){
     ?`${n?`${n} saved scenario${n===1?'':'s'} read`:'Saved scenarios will read'} the marked groups from your live plan — change one anywhere and it changes everywhere. Everything unmarked can differ by scenario.`
     :`Nothing is shared yet, so every scenario holds its own copy of every line and they can drift apart. ${n?'':'Once you save scenarios, '}Marking a group keeps it identical across all of them.`;
   return `<section class="cp-card bd-share"><div class="ps-head"><div><h3>Across your scenarios</h3><p>${status}</p></div>${allRec?'':`<button type="button" class="bd-btn primary" onclick="sharedRecommended()">Share the fixed and essential costs</button>`}</div>
-    <div class="bd-share-chips" role="group" aria-label="Groups shared across scenarios">${chips}</div></section>`;
+    <div class="bd-share-chips" role="group" aria-label="Groups shared across scenarios">${chips}</div></section>${budgetNYCNotes()}`;
 }
 
 // ── Why the plan draws down ──────────────────────────────────────────────────
@@ -3859,7 +3917,7 @@ function renderBudgetTab(R,P){
       :`<span class="bd-edit"><input class="bd-input" id="bd_${k}" type="text" inputmode="decimal" value="${amt(value)}" aria-label="${advEscape(label)}, ${yr}, ${mo?'per month':'per year'}" onfocus="this.select()" onchange="budgetCommit('${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${unitWord}</small></span>`;
     const open=o.readonly&&_budgetEdit===k;
     const actions=o.readonly?`<button type="button" class="bd-link" onclick="budgetEdit('${k}')" aria-expanded="${open}">${open?'Close':'Edit'}</button>${k==='housing'?`<button type="button" class="bd-link" onclick="budgetGo('housing')">Rent or buy →</button>`:''}`
-      :`${seg&&seg.kind==='pct'?`<button type="button" class="bd-link" onclick="budgetTie('${k}',false)">Fix in dollars</button>`:`<button type="button" class="bd-link" onclick="budgetTie('${k}',true)">Tie to income</button>`}${src!=='model'?`<button type="button" class="bd-link" onclick="budgetReset('${k}')">Reset</button>`:''}`;
+      :`${seg&&seg.kind==='pct'?`<button type="button" class="bd-link" onclick="budgetTie('${k}',false)">Fix in dollars</button>`:(commonHousehold(P)?'':`<button type="button" class="bd-link" onclick="budgetTie('${k}',true)">Tie to income</button>`)}${src!=='model'?`<button type="button" class="bd-link" onclick="budgetReset('${k}')">Reset</button>`:''}`;
     return `<div class="bd-row" style="--tier:${o.color}">
       <div class="cl-top"><span class="cl-name">${advEscape(label)}${tag}</span>${inputHtml}</div>
       <div class="cl-track"><i style="width:${Math.max(1.5,(o.max>0?value/o.max:0)*100).toFixed(1)}%"></i></div>

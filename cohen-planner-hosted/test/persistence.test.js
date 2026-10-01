@@ -9,7 +9,7 @@ function harness(fetch){
   // Everything savePlannerState() serialises has to exist here or the payload throws before
   // the status handling under test ever runs. Keep this in step with the payload's state
   // object — a missing view-state global surfaces as "X is not defined", not a save failure.
-  const planState={P:{homePrice:2000000},compareMode:false,activeTab:'home',
+  const planState={scenarios:[],P:{homePrice:2000000},compareMode:false,activeTab:'home',
     _projView:'nw',_todayView:'plan',_homeView:'explore',cockpitExRet:false,
     activeScenarioIdx:-1,scenarioDirty:false,monarchSnapshot:null};
   const ctx=vm.createContext({fetch,JSON,Promise,Error,...planState,

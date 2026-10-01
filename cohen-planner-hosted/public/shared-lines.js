@@ -18,6 +18,10 @@
   const catOfPin = k => { const m = PIN.exec(k); return m ? m[1][0].toLowerCase() + m[1].slice(1) : null; };
 
   const GROUPS = [
+    { key: 'household', label: 'Household & inflation', recommended: false,
+      note: 'Same family timeline, spending inflation and one-off costs. With all non-housing groups shared, living costs stay on the NYC budget regardless of housing.',
+      lines: ['oneoff'], params: ['planStartYear','numKids','kid1Birth','kid2Birth','kid3Birth','kid4Birth',
+        'expenseInflation','nycFamilyBudget','sharedBudgetIncome', ...Array.from({length:11},(_,i)=>'expenseAdjY'+i)] },
     { key: 'fixed', label: 'Fixed lines', recommended: true,
       note: 'Insurance, utilities & phone, transit, auto',
       lines: ['insurance', 'utilities', 'transit', 'auto'],

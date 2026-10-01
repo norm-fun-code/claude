@@ -14,7 +14,7 @@
   // In the browser model.js is a plain script: its functions are globals, but its `const`s live in
   // the shared global scope rather than on `window`, so they are named here rather than read off it.
   const M = typeof module !== 'undefined' && module.exports ? require('./model.js')
-    : { LIV_KEYS, LIV_OVERRIDE_MAX, livingCategoryKey, budgetSegment, budgetValue };
+    : { LIV_KEYS, LIV_OVERRIDE_MAX, livingCategoryKey, budgetSegment, budgetValue, commonHousehold };
   // Read when needed, not at load: script order in the page must not decide whether this works.
   const RB = () => (typeof module !== 'undefined' && module.exports ? require('./rent-buy.js') : root.PlannerRentBuy);
 
@@ -103,6 +103,8 @@
     const seg = M.budgetSegment(P, category, year);
     if (!seg || seg.kind === 'model') return null;
     const infl = ((Number(P.expenseInflation) || 0) * 100).toFixed(1).replace(/\.0$/, '');
+    if (seg.kind === 'pct' && M.commonHousehold(P))
+      return `${(seg.value * 100).toFixed(1)}% of the shared reference ${seg.basis === 'gross' ? 'gross' : 'net'} income schedule`;
     if (seg.kind === 'pct')
       return `${(seg.value * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.basis === 'gross' ? 'gross' : 'net'} income, every year`;
     const sized = seg.sized ? `${(seg.sized.pct * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.sized.basis === 'gross' ? 'gross' : 'net'} income in ${seg.from}, then ` : '';

@@ -60,7 +60,7 @@ describe('the case menu with saved cases in it',()=>{
  const draw=(extra)=>{
   const el={innerHTML:''};
   const scenarios=[{name:'Conservative',color:'#ecc183'},{name:"Ramit's Plan",color:'#845ef7'},{name:'<b>x</b>',color:'#fff'}];
-  const ctx={document:{getElementById:()=>el},scenarios,activeScenarioIdx:1,scenarioDirty:false,compareMode:false,_caseMenu:true,_caseNaming:false,advEscape:v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'),...extra};
+  const ctx={document:{getElementById:()=>el},scenarios,activeScenarioIdx:1,scenarioDirty:false,compareMode:false,_caseMenu:true,_caseNaming:false,_archivedCases:[],advEscape:v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'),...extra};
   new Function(...Object.keys(ctx),src+';renderCaseControl();')(...Object.values(ctx));
   return el.innerHTML;
  };
@@ -68,7 +68,7 @@ describe('the case menu with saved cases in it',()=>{
   const out=draw();
   for(const n of ['Conservative','Ramit&#39;s Plan'.replace('&#39;',"'"),'&lt;b&gt;x&lt;/b&gt;'])expect(out).toContain('<span>'+n+'</span>');
   expect(out).toContain('onclick="caseLoad(0)"');expect(out).toContain('onclick="caseLoad(1)"');expect(out).toContain('onclick="caseLoad(2)"');
-  expect(out).toContain('onclick="caseDelete(2)"');
+  expect(out).toContain('onclick="caseArchive(2)"');
   expect(out).not.toContain('[object Object]');expect(out).not.toContain('undefined');
  });
  it('marks the open case, escapes names, and offers Save only when edited',()=>{
@@ -77,5 +77,17 @@ describe('the case menu with saved cases in it',()=>{
   expect(draw()).not.toContain('class="case-save"');
   const edited=draw({scenarioDirty:true});
   expect(edited).toContain('<b>edited</b>');expect(edited).toContain('class="case-save"');
+ });
+});
+
+describe('recoverable case removal',()=>{
+ it('retains the case on a failed archive and restores the saved assumptions on success',async()=>{
+  const s={id:'case-a',name:'Old case',params:{combinedIncomeCap:750000}},scenarios=[s],archived=[];
+  let ok=false,removed=0,body;
+  const ctx={scenarios,_archivedCases:archived,fetch:async(_url,o)=>{body=JSON.parse(o.body);return{ok,status:503}},caseMenuClose:()=>{},deleteScenario:async(i,soft)=>{expect(soft).toBe(true);scenarios.splice(i,1);removed++},showToast:()=>{},run:x=>x,scenarioPlan:x=>x,renderCaseControl:()=>{},savePlannerState:()=>{}};
+  const funcs=new Function(...Object.keys(ctx),'async '+fn('caseArchive')+'async '+fn('caseRestore')+';return {caseArchive,caseRestore};')(...Object.values(ctx));
+  await funcs.caseArchive(0);expect(removed).toBe(0);expect(scenarios).toHaveLength(1);
+  ok=true;await funcs.caseArchive(0);expect(scenarios).toHaveLength(0);expect(body.params._archived).toBe(true);
+  await funcs.caseRestore(0);expect(scenarios[0].params).toEqual(s.params);expect(archived).toHaveLength(0);expect(body.params._archived).toBeUndefined();
  });
 });
