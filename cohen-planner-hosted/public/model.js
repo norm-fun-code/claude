@@ -366,7 +366,9 @@ function budgetValue(p,category,yr,income){
   const refs=p.sharedBudgetIncome||{};
   const years=Object.keys(refs).map(Number).sort((a,b)=>a-b);
   const reference=refs[yr]||refs[years.filter(y=>y<=yr).at(-1)??years[0]];
-  const shared=commonHousehold(p)&&reference;
+  // Shared spending lines are measured against one reference income so every case spends the same. The
+  // emergency fund is not spending: it is a share of this case's own income, whichever case it is.
+  const shared=category!=='emergency'&&commonHousehold(p)&&reference;
   const basis=shared||income;
   const base=seg.basis==='gross'?basis.gross:basis.net;
   return Math.max(0,Math.round(v*(Number(base)||0)));

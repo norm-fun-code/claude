@@ -3597,7 +3597,7 @@ function budgetJump(key){
   window.scrollTo({top:el.getBoundingClientRect().top+window.scrollY-stuck-12,behavior:calm?'auto':'smooth'});
 }
 function budgetEdit(k){_budgetEdit=_budgetEdit===k?null:k;render()}
-const RM_COLOR={fixed:'#8278ee',essential:'#8bdded',discretionary:'#ecc183',saving:'#6fa8ff',investing:'#7ae3c3',oneoff:'#b6a8ff',tax:'#6b7a90',pretax:'#8ebfff',short:'#ff9caf'};
+const RM_COLOR={income:'#b8e986',fixed:'#8278ee',essential:'#8bdded',discretionary:'#ecc183',saving:'#6fa8ff',investing:'#7ae3c3',oneoff:'#b6a8ff',tax:'#6b7a90',pretax:'#8ebfff',short:'#ff9caf'};
 const BD_COLOR={cash:'#7ae3c3',stock:'#8278ee',savings:'#ecc183',left:'#8bdded',save:'#7ae3c3',draw:'#ecc183'};
 function budgetYearSet(y){_budgetYear=Number(y);render()}
 function budgetYearStep(d,first,last){_budgetYear=Math.min(last,Math.max(first,(_budgetYear??PlannerTime.year())+d));render()}
@@ -3674,6 +3674,10 @@ function budgetCommit(cat,text){
   if(input===null){showToast('Enter a dollar figure (1650 or 24k) or a percentage (8%).','red');render();return}
   // Typing back the figure already shown is not an edit, and must not turn a model line into a rule.
   if(input.kind==='amount'&&Math.abs(input.annual-cur.annual)<=(_budgetUnit==='month'?6:0.5)){render();return}
+  if(input.kind==='pct'){
+    const base=budgetBasisKey()==='gross'?cur.row.gross:cur.row.netTC;
+    if(base>0&&Math.abs(input.pct-cur.annual/base)<0.0006){render();return}
+  }
   const e=PlannerBudget.edit(P,{category:cat,year:cur.yr,scope:_budgetScope,input,basis:budgetBasisKey(),income:{net:cur.row.netTC,gross:cur.row.gross}});
   if(!e.ok){showToast(e.error,'red');render();return}
   const word=input.kind==='clear'?'back to the model':input.kind==='pct'?`${(input.pct*100).toFixed(1).replace(/\.0$/,'')}% of ${budgetBasisKey()} income`:fmtF(_budgetUnit==='month'?Math.round(input.annual/12):input.annual)+(_budgetUnit==='month'?'/mo':'/yr');
@@ -3682,7 +3686,7 @@ function budgetCommit(cat,text){
 // Tie a line to income (it then moves with income every year), or fix it in dollars (it then
 // grows only with inflation). Either way from the year in view, at what it is now.
 function budgetTie(cat,tied){
-  if(tied&&commonHousehold(P)){showToast('Shared budgets stay in dollars so cases have identical spending','green');return}
+  if(tied&&commonHousehold(P)&&cat!==PlannerBudget.EMERGENCY){showToast('Shared budgets stay in dollars so cases have identical spending','green');return}
   const cur=budgetCurrent(cat),basis=budgetBasisKey(),base=basis==='gross'?cur.row.gross:cur.row.netTC;
   const input=tied?{kind:'pct',pct:cur.annual/base,tied:true}:{kind:'amount',annual:cur.annual};
   const e=PlannerBudget.edit(P,{category:cat,year:cur.yr,scope:'onward',input,basis,income:{net:cur.row.netTC,gross:cur.row.gross}});
@@ -3693,7 +3697,11 @@ function budgetReset(cat){
   const e=PlannerBudget.edit(P,{category:cat,year:cur.yr,scope:cur.src==='pin'?'year':'onward',input:{kind:'clear'},basis:budgetBasisKey(),income:{net:cur.row.netTC,gross:cur.row.gross}});
   if(e.ok)budgetApply(e,`${LIV_LABEL[cat]||cat} → back to the model${cur.src==='pin'?', '+cur.yr+' only':', from '+cur.yr}`);
 }
-function budgetGo(where){if(where==='housing'){_homeView='housing';setTab('home')}}
+function budgetGo(where){
+  if(where==='housing'){_homeView='housing';setTab('home')}
+  else if(where==='comp'){stripeWorkspaceSet('income');setTab('stripe')}
+  else if(where==='nancy')setTab('inputs');
+}
 // ── Same in every scenario ───────────────────────────────────────────────────
 // Some bills are not a choice and are the same in every future being compared. A group marked
 // shared lives in the live plan only; every saved case reads it from there. Turning one on can
@@ -3947,11 +3955,11 @@ function renderBudgetTab(R,P){
       :`<span class="bd-edit"><input class="bd-input" id="bd_${k}" type="text" inputmode="decimal" value="${amt(value)}" aria-label="${advEscape(label)}, ${yr}, ${mo?'per month':'per year'}" onfocus="this.select()" onchange="budgetCommit('${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${unitWord}</small></span>`;
     const open=o.readonly&&_budgetEdit===k;
     const actions=o.readonly?`<button type="button" class="bd-link" onclick="budgetEdit('${k}')" aria-expanded="${open}">${open?'Close':'Edit'}</button>${k==='housing'?`<button type="button" class="bd-link" onclick="budgetGo('housing')">Rent or buy →</button>`:''}`
-      :`${seg&&seg.kind==='pct'?`<button type="button" class="bd-link" onclick="budgetTie('${k}',false)">Fix in dollars</button>`:(commonHousehold(P)?'':`<button type="button" class="bd-link" onclick="budgetTie('${k}',true)">Tie to income</button>`)}${src!=='model'?`<button type="button" class="bd-link" onclick="budgetReset('${k}')">Reset</button>`:''}`;
+      :`${seg&&seg.kind==='pct'?`<button type="button" class="bd-link" onclick="budgetTie('${k}',false)">Fix in dollars</button>`:(commonHousehold(P)&&k!==PlannerBudget.EMERGENCY?'':`<button type="button" class="bd-link" onclick="budgetTie('${k}',true)">Tie to income</button>`)}${src!=='model'?`<button type="button" class="bd-link" onclick="budgetReset('${k}')">Reset</button>`:''}`;
     return `<div class="bd-row" style="--tier:${o.color}">
       <div class="cl-top"><span class="cl-name">${advEscape(label)}${tag}</span>${inputHtml}</div>
       <div class="cl-track"><i style="width:${Math.max(1.5,(o.max>0?value/o.max:0)*100).toFixed(1)}%"></i></div>
-      <div class="cl-sub"><span>${pct(value)} of ${basisWord} income</span>${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div></div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${embedControls(k==='housing'?'home':k)}</div>`:''}`;
+      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord} income</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord} income"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord} income" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord} income</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${chk?`<p class="bd-callout ${chk.status}"><b>${chk.status==='low'?'Looks light':'Looks high'}.</b> ${advEscape(chk.text)}</p>`:''}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${embedControls(k==='housing'?'home':k)}</div>`:''}`;
   };
   const living=row.livFullParts||{};
   const c=IS.compute(row,'net');
@@ -3993,16 +4001,28 @@ function renderBudgetTab(R,P){
   const groupTotal=key=>key==='saving'?alloc.saving.total:key==='investing'?alloc.investing.total
     :B.BUCKETS.find(x=>x.key===key).lines.reduce((t,k)=>t+(k==='housing'?row.hFull:k==='childcare'?row.ccFull:k==='tuition'?row.tuFull:(living[k]||0)),0)
       +(key==='discretionary'?Object.keys(living).filter(k=>B.bucketOf(k)==='discretionary'&&!B.BUCKETS.find(x=>x.key==='discretionary').lines.includes(k)).reduce((t,k)=>t+living[k],0):0);
-  const bucketGroups=B.BUCKETS.map(b=>{
+  const bucketParts=B.BUCKETS.map(b=>{
     const spent=groupTotal(b.key),share=den>0?spent/den:0;
     const rows=b.key==='investing'?investRows():b.key==='saving'?savingRows():bucketRows(b.key);
     return `<div class="cl-group bd-sec" id="bd-g-${b.key}" style="--tier:${RM_COLOR[b.key]}"><div class="cl-ghead"><span><i></i>${advEscape(b.label)}</span><span class="cl-gtot">${_lensPct(share)} <small>${amtShort(spent)}${unitWord}</small></span></div>
       <p class="cl-gnote">${advEscape(b.note)}</p><div class="cl-list">${rows}</div></div>`;
-  }).join('');
-  const groups=bucketGroups;
+  });
+  // ── The top of the page, the way a P&L starts: what comes in, what comes off, what is left to
+  // allocate. Read-only here because income is set where it is earned (Stripe compensation, Nancy).
+  const gross=row.gross,taxes=Math.round(row.tax),pretaxCosts=Math.round(row.gross-row.tax-row.netTC),net=row.netTC;
+  const inRow=(label,v,go,goLabel,sub)=>`<div class="bd-row" style="--tier:${RM_COLOR.income}"><div class="cl-top"><span class="cl-name">${label}</span><strong class="bd-fixed">${amt(v)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span>${gross>0?_lensPct(v/gross):'—'} of gross income</span>${sub?`<span class="bd-why">${sub}</span>`:''}${go?`<span class="bd-actions show"><button type="button" class="bd-link" onclick="budgetGo('${go}')">${goLabel} →</button></span>`:''}</div></div>`;
+  const subRow=(label,v,sign,strong)=>`<div class="bd-pl${strong?' strong':''}"><span>${label}</span><span>${sign}${amt(Math.abs(v))}<small>${unitWord}</small></span></div>`;
+  const incomeSec=`<div class="cl-group bd-sec" id="bd-g-income" style="--tier:${RM_COLOR.income}"><div class="cl-ghead"><span><i></i>Income</span><span class="cl-gtot">${amtShort(net)}<small>${unitWord} net</small></span></div>
+      <p class="cl-gnote">What ${yr} brings in, and what comes off before you can spend it. Net income is what the groups below divide up.</p>
+      <div class="cl-list">${inRow('Norm — cash pay',row.normCash,'comp','Compensation')}${inRow('Norm — Stripe stock at vest',row.normStock,'comp','Compensation','Counted at its vest value; you cannot spend it until you sell it')}${inRow('Nancy',row.nancyG,'nancy','Inputs')}</div>
+      <div class="bd-pls">${subRow('Gross income',gross,'',true)}${subRow('Taxes',taxes,'−')}${subRow('401(k), benefits & practice costs',pretaxCosts,'−')}${subRow('Net income',net,'',true)}</div></div>`;
+  const spendTotal=Math.round(row.totEFull),left=net-spendTotal;
+  const bottomLine=`<div class="bd-bottom"><div><span>Net income</span><strong>${amt(net)}<small>${unitWord}</small></strong></div><b>−</b><div><span>Spending</span><strong>${amt(spendTotal)}<small>${unitWord}</small></strong></div><b>=</b><div class="${left<0?'neg':'pos'}"><span>${left<0?'Drawn from savings & Stripe':'Left over'}</span><strong>${left<0?'−':''}${amt(Math.abs(left))}<small>${unitWord}</small></strong></div><p>${left<0?'That is the shortfall the plan covers by selling Stripe shares and drawing on the brokerage.':'Savings and investments below divide this.'}</p></div>`;
+  // Income, then the spending groups, then what is left, then what is done with it.
+  const groups=incomeSec+bucketParts[0]+bucketParts[1]+bottomLine+bucketParts[2]+bucketParts[3];
   // A way to move between the sections without scrolling for them: each chip is a section, with its
   // share, in its colour. It sits in the pinned bar, so it is there wherever you have scrolled to.
-  const jumpHtml=`<nav class="bd-jump" aria-label="Jump to a section">${B.BUCKETS.map(b=>`<button type="button" onclick="budgetJump('${b.key}')" style="--tier:${RM_COLOR[b.key]}"><i></i>${advEscape(b.label.replace(' costs',''))}<b>${_lensPct(den>0?groupTotal(b.key)/den:0)}</b></button>`).join('')}<button type="button" onclick="budgetJump('oneoff')" style="--tier:${RM_COLOR.oneoff}"><i></i>One-off</button></nav>`;
+  const jumpHtml=`<nav class="bd-jump" aria-label="Jump to a section"><button type="button" onclick="budgetJump('income')" style="--tier:${RM_COLOR.income}"><i></i>Income<b>${amtShort(row.netTC)}</b></button>${B.BUCKETS.map(b=>`<button type="button" onclick="budgetJump('${b.key}')" style="--tier:${RM_COLOR[b.key]}"><i></i>${advEscape(b.label.replace(' costs',''))}<b>${_lensPct(den>0?groupTotal(b.key)/den:0)}</b></button>`).join('')}<button type="button" onclick="budgetJump('oneoff')" style="--tier:${RM_COLOR.oneoff}"><i></i>One-off</button></nav>`;
   h=h.replace('@@JUMP@@',jumpHtml);
   // One-off costs have a home here whether or not this year has one: a single year's cost, not
   // repeated and not inflated, set for any year of the first eleven.

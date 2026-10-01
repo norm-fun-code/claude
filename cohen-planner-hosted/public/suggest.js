@@ -16,6 +16,10 @@
     groceries: { per: [3500, 8000], noun: 'groceries' },
     clothing: { per: [900, 3000], noun: 'clothing' },
     medical: { per: [1200, 5000], noun: 'out-of-pocket medical' },
+    dining: { per: [1500, 6500], noun: 'dining out' },
+    shopping: { per: [1200, 5500], noun: 'shopping' },
+    entertainment: { per: [500, 2800], noun: 'entertainment' },
+    vacations: { per: [2500, 12000], noun: 'vacations' },
   };
   // Home upkeep, as a share of the home's value each year. 1–2% is the usual rule of thumb.
   const UPKEEP = [0.01, 0.02];

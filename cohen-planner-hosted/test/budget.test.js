@@ -388,3 +388,49 @@ describe('Budget sections you can see and move between',()=>{
   expect(fn).toContain('prefers-reduced-motion');
  });
 });
+
+describe('the Budget reads like a P&L, and every line can be set as a share of income',()=>{
+ const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
+ it('starts with income: each source, gross, what comes off, and net — read from the projection',()=>{
+  expect(ui).toContain('const incomeSec=');
+  for(const piece of ["inRow('Norm — cash pay',row.normCash","inRow('Norm — Stripe stock at vest',row.normStock","inRow('Nancy',row.nancyG","subRow('Gross income'","subRow('Taxes'","subRow('Net income'"])expect(ui).toContain(piece);
+  const r=at(M.run(plan()).R,2031);
+  expect(r.normCash+r.normStock+r.nancyG).toBe(r.gross);                       // the three rows add to the gross shown
+  expect(r.gross-r.tax-(r.gross-r.tax-r.netTC)).toBe(r.netTC);
+ });
+ it('orders it income, fixed, discretionary, the bottom line, savings, investments',()=>{
+  expect(ui).toContain('const groups=incomeSec+bucketParts[0]+bucketParts[1]+bottomLine+bucketParts[2]+bucketParts[3];');
+  expect(ui).toContain("<span>Net income</span>");expect(ui).toContain('Left over');
+  expect(ui).toContain("budgetJump('income')");
+ });
+ it('sends income edits to where income is set',()=>{
+  const go=html.slice(html.indexOf('function budgetGo('),html.indexOf('\n}\n',html.indexOf('function budgetGo('))+3);
+  expect(go.length).toBeGreaterThan(60);
+  expect(go).toContain("stripeWorkspaceSet('income');setTab('stripe')");expect(go).toContain("setTab('inputs')");
+ });
+ it('puts an editable percentage of income on every line, always visible, and ignores a repeat',()=>{
+  expect(ui).toContain('class="bd-pct"');
+  expect(ui).toContain("onchange=\"budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')\"");
+  expect(ui).toMatch(/Math\.abs\(input\.pct-cur\.annual\/base\)<0\.0006/);
+  const css=fs.readFileSync(new URL('../public/ui.css',import.meta.url),'utf8');
+  expect(css).toContain('.bd-actions{opacity:1!important}');
+ });
+ it('lets the emergency fund be tied to income even when spending budgets are shared across cases',()=>{
+  expect(ui).toContain('commonHousehold(P)&&k!==PlannerBudget.EMERGENCY?');
+  expect(ui).toContain('commonHousehold(P)&&cat!==PlannerBudget.EMERGENCY');
+ });
+ it('measures the emergency fund against this case\'s income, not the shared reference schedule',()=>{
+  const income={net:300000,gross:500000};
+  const shared={...plan({sharedLines:{groups:Object.fromEntries(['household','fixed','essential','childcare','tuition','choice'].map(k=>[k,true]))},
+    sharedBudgetIncome:{2026:{net:1000000,gross:2000000}},budgetRules:{emergency:[{from:2026,kind:'pct',value:.04,basis:'net'}],dining:[{from:2026,kind:'pct',value:.04,basis:'net'}]}})};
+  expect(M.commonHousehold(shared)).toBe(true);
+  expect(M.budgetValue(shared,'emergency',2030,income)).toBe(12000);        // 4% of THIS case's net
+  expect(M.budgetValue(shared,'dining',2030,income)).toBe(40000);           // spending still uses the shared reference
+  expect(B.describe(shared,'emergency',2030,v=>'$'+v)).toBe('4% of net income, every year');
+ });
+ it('shows the call-outs, in words, under the lines they are about',()=>{
+  expect(ui).toContain('class="bd-callout ${chk.status}"');expect(ui).toContain("chk.status==='low'?'Looks light':'Looks high'");
+  const S=require('../public/suggest.js');
+  for(const line of ['dining','shopping','entertainment','vacations'])expect(S.BANDS[line]).toBeTruthy();
+ });
+});

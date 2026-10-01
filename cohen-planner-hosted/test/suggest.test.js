@@ -84,7 +84,8 @@ describe('suggestions',()=>{
   const lean=plan({budgetRules:{groceries:[{from:2026,kind:'amount',value:4000}]}});
   const c=S.checks(lean,M.run(lean).R,2030).find(c=>c.line==='groceries');
   expect(c.status).toBe('low');expect(c.text).toContain('2 adults and 2 children');
-  const inRange=plan({budgetRules:{groceries:[{from:2026,kind:'amount',value:16000}],clothing:[{from:2026,kind:'amount',value:6000}],medical:[{from:2026,kind:'amount',value:9000}]}});
+  const mid=Object.fromEntries(Object.entries(S.BANDS).map(([line,b])=>[line,[{from:2026,kind:'amount',value:Math.round((b.per[0]+b.per[1])/2*3.1)}]]));
+  const inRange=plan({budgetRules:mid});
   expect(S.checks(inRange,M.run(inRange).R,2030)).toEqual([]);
  });
  it('counts a child as part of a person by age, and never counts one before they are born',()=>{
