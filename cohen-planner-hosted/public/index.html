@@ -31,6 +31,7 @@
 <script src="/income-share.js"></script>
 <script src="/budget.js"></script>
 <script src="/suggest.js"></script>
+<script src="/shared-lines.js"></script>
 <script src="/rent-buy.js"></script>
 <script src="/decision-room.js"></script>
 <style>
@@ -532,7 +533,18 @@ let P={...D};let scenarios=[];let compareMode=false;let _demoMode=false;let _liv
 let activeScenarioIdx=-1;let scenarioDirty=false;
 // Called by every input handler. Cheap on the hot path: only touches the DOM on the first
 // edit after a clean load, since slider drags fire this continuously.
+// Saved cases keep their results, and a shared figure moves all of them at once — so when one
+// does, the results are rebuilt shortly after the last change. Only a view that is showing them
+// is redrawn, so typing in an input is never interrupted.
+let _sharedRebuildTimer=null;
 function markDirty(){
+  if(window.PlannerShared&&typeof scenarios!=='undefined'&&scenarios.length&&PlannerShared.config(P).any){
+    clearTimeout(_sharedRebuildTimer);
+    _sharedRebuildTimer=setTimeout(()=>{
+      rebuildScenarioResults();
+      if(compareMode||(activeTab==='home'&&_homeView==='compare'))render();
+    },400);
+  }
   if(activeScenarioIdx<0||scenarioDirty)return;
   scenarioDirty=true;
   paintUpdateButton();
@@ -1752,11 +1764,15 @@ function openingFromLivePlan(){
 // prices). Both are the same in every case; only the assumptions around them differ.
 function keepAssumptions(params){
   let out=window.PlannerOpening?PlannerOpening.stripObserved(params):params;
-  return window.StripeGrants?StripeGrants.stripFacts(out):out;
+  out=window.StripeGrants?StripeGrants.stripFacts(out):out;
+  // A third kind of fact: expense groups the household has said are the same in every case. They
+  // live in the live plan only, so a saved case cannot drift from them.
+  return window.PlannerShared?PlannerShared.strip(out):out;
 }
 function attachObserved(params){
   let out=window.PlannerOpening?PlannerOpening.withObserved(params,openingFromLivePlan()):params;
-  return window.StripeGrants?StripeGrants.withFacts(out,P&&P.stripeGrants):out;
+  out=window.StripeGrants?StripeGrants.withFacts(out,P&&P.stripeGrants):out;
+  return window.PlannerShared&&P?PlannerShared.attach(out,P):out;
 }
 // A case's assumptions, made runnable against today's balance sheet. Every place that
 // projects a saved case goes through here, so a comparison compares futures rather than
@@ -3616,6 +3632,82 @@ function budgetHeadroom(yr){
   if(!_budgetHead||_budgetHead.key!==key)_budgetHead={key,val:PlannerBudget.headroom(P,run,yr)};
   return _budgetHead.val;
 }
+// ── Same in every scenario ───────────────────────────────────────────────────
+// Some bills are not a choice and are the same in every future being compared. A group marked
+// shared lives in the live plan only; every saved case reads it from there. Turning one on can
+// overwrite what a case holds, so it says exactly what would change and asks first. Turning one off
+// freezes the current figures into every case, so no projection moves because a switch did.
+async function persistScenarioParams(s){
+  if(_demoMode||!s.id)return;
+  try{
+    const r=await fetch('/api/scenarios/'+s.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:s.params,results:s.results})});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+  }catch(e){console.error('persist scenario failed:',e);setSyncStatus('error')}
+}
+// A figure as it should read in the confirmation: dollars as dollars, rates as percentages.
+function sharedFmt(key,v){
+  if(typeof v!=='number')return String(v);
+  if(/^(base|childcareMonthly|nycRent|homePrice|maintBase|propTaxBase|rentCap|moving|closing)/.test(key))return fmtF(v);
+  if(/Inflation|Rate|Share|Appreciation/.test(key)&&Math.abs(v)<1)return (v*100).toFixed(1).replace(/\.0$/,'')+'%';
+  return String(v);
+}
+function sharedDiffText(d){
+  const head=d.slice(0,4).map(x=>x.kind==='value'?`${x.label} ${sharedFmt(x.key,x.scenario)} → ${sharedFmt(x.key,x.live)}`:x.kind==='rules'?`${x.label} rule`:x.label);
+  return head.join(', ')+(d.length>4?` and ${d.length-4} more`:'');
+}
+function sharedSetConfig(groups){
+  P.sharedLines={groups};
+  markDirty();rebuildScenarioResults();buildControls();render();savePlannerState();
+}
+function sharedToggle(key,on){
+  const cfg=PlannerShared.config(P),groups={...cfg.groups};
+  const g=PlannerShared.GROUPS.find(x=>x.key===key);
+  if(on){
+    // What each saved case holds that would be replaced by the live plan's figures.
+    const lines=[];
+    for(const s of scenarios){
+      const d=PlannerShared.differences(s.params,P,[key],D);
+      if(d.length)lines.push(`${s.name}: ${sharedDiffText(d)}`);
+    }
+    if(lines.length&&!showConfirm(`Share ${g.label.toLowerCase()} across every scenario?\n\nThese saved cases hold different figures, and would use your current plan's instead:\n\n${lines.join('\n')}`))return;
+    groups[key]=true;
+    sharedSetConfig(groups);
+    showToast(`${g.label} now the same in every scenario`,'green');
+  }else{
+    // Freeze this group's figures into each case before it stops being shared.
+    for(const s of scenarios){s.params=PlannerShared.attach(s.params,P,[key]);persistScenarioParams(s)}
+    groups[key]=false;
+    sharedSetConfig(groups);
+    for(const s of scenarios)persistScenarioParams(s);
+    showToast(`${g.label} can differ by scenario again — each keeps today's figures`,'green');
+  }
+}
+function sharedRecommended(){
+  const cfg=PlannerShared.config(P),groups={...cfg.groups};
+  const keys=PlannerShared.GROUPS.filter(g=>g.recommended&&!groups[g.key]).map(g=>g.key);
+  if(!keys.length)return;
+  const lines=[];
+  for(const s of scenarios){
+    const d=PlannerShared.differences(s.params,P,keys,D);
+    if(d.length)lines.push(`${s.name}: ${sharedDiffText(d)}`);
+  }
+  if(lines.length&&!showConfirm(`Share fixed lines, essentials, childcare and tuition across every scenario?\n\nThese saved cases hold different figures, and would use your current plan's instead:\n\n${lines.join('\n')}`))return;
+  keys.forEach(k=>groups[k]=true);
+  sharedSetConfig(groups);
+  showToast('Fixed and essential costs are now the same in every scenario','green');
+}
+function sharedCard(){
+  const cfg=PlannerShared.config(P),n=scenarios.length;
+  const chips=PlannerShared.GROUPS.map(g=>`<button type="button" class="bd-share-chip${cfg.groups[g.key]?' on':''}" aria-pressed="${cfg.groups[g.key]}" title="${advEscape(g.note)}" onclick="sharedToggle('${g.key}',${!cfg.groups[g.key]})"><i></i>${advEscape(g.label)}</button>`).join('');
+  const rec=PlannerShared.GROUPS.filter(g=>g.recommended);
+  const allRec=rec.every(g=>cfg.groups[g.key]);
+  const status=cfg.any
+    ?`${n?`${n} saved scenario${n===1?'':'s'} read`:'Saved scenarios will read'} the marked groups from your live plan — change one anywhere and it changes everywhere. Everything unmarked can differ by scenario.`
+    :`Nothing is shared yet, so every scenario holds its own copy of every line and they can drift apart. ${n?'':'Once you save scenarios, '}Marking a group keeps it identical across all of them.`;
+  return `<section class="cp-card bd-share"><div class="ps-head"><div><h3>Across your scenarios</h3><p>${status}</p></div>${allRec?'':`<button type="button" class="bd-btn primary" onclick="sharedRecommended()">Share the fixed and essential costs</button>`}</div>
+    <div class="bd-share-chips" role="group" aria-label="Groups shared across scenarios">${chips}</div></section>`;
+}
+
 function renderBudgetTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
@@ -3673,6 +3765,8 @@ function renderBudgetTab(R,P){
     ${stat('Tightest year',String(tight.yr),`liquid ${fmt(tight.liq)}`)}
   </div></section>`;
 
+  h+=sharedCard();
+
   // ── Where this year's money comes from ──
   const seg=[['cash','Cash pay',f.fromCash],['stock','Stripe stock',f.fromStock],['savings','Savings',f.fromSavings],['left','Left over',f.leftover]].filter(s=>s[2]>0);
   const ftot=seg.reduce((t,s)=>t+s[2],0)||1;
@@ -3702,8 +3796,10 @@ function renderBudgetTab(R,P){
   const line=(k,label,value,src,opts)=>{
     const o=opts||{};
     const chk=checkByLine[k];
+    const shareKey=o.shareKey||PlannerShared.groupOf(k);
+    const shared=shareKey&&PlannerShared.config(P).groups[shareKey];
     const tag=(src==='rule'?'<span class="bd-tag rule">Rule</span>':src==='pin'?'<span class="bd-tag pin">Pinned</span>':'')
-      +(chk?`<span class="bd-tag chk ${chk.status}" title="${advEscape(chk.text)}">${chk.status==='low'?'Light':'High'} for the household</span>`:'');
+       +(shared?'<span class="bd-tag shared" title="The same in every scenario">Shared</span>':'')+(chk?`<span class="bd-tag chk ${chk.status}" title="${advEscape(chk.text)}">${chk.status==='low'?'Light':'High'} for the household</span>`:'');
     const added=(row.livAdds||{})[k]||0;
     const m=modelParts[k],differs=(src==='rule'||src==='pin')&&m!=null&&Math.abs(m-value)>=1;
     const seg=src==='rule'?budgetSegment(P,k,yr):null;
@@ -3732,7 +3828,7 @@ function renderBudgetTab(R,P){
     const keys=Object.keys(living).filter(k=>IS.tierOfLiving(k)===t.key);
     const ro=t.key==='fixed'?fixedExtra.filter(x=>x[2]>0||x[0]==='housing'):[];
     const total=keys.reduce((s,k)=>s+living[k],0)+ro.reduce((s,x)=>s+x[2],0);
-    const rows=[...ro.map(x=>line(x[0],x[1],x[2],'model',{readonly:true,go:x[3].go,goLabel:x[3].goLabel,color:PS_COLOR[t.key],max:maxLine})),
+    const rows=[...ro.map(x=>line(x[0],x[1],x[2],'model',{readonly:true,shareKey:x[0],go:x[3].go,goLabel:x[3].goLabel,color:PS_COLOR[t.key],max:maxLine})),
       ...keys.sort((a,b)=>living[b]-living[a]).map(k=>line(k,LIV_LABEL[k]||k,living[k],(row.livSrc||{})[k]||'model',{color:PS_COLOR[t.key],max:maxLine}))].join('');
     return `<div class="cl-group" style="--tier:${PS_COLOR[t.key]}"><div class="cl-ghead"><span><i></i>${advEscape(t.label)}</span><span class="cl-gtot">${pct(total)} <small>${amtShort(total)}${unitWord}</small></span></div>
       <p class="cl-gnote">${advEscape(t.note)}</p><div class="cl-list">${rows}</div></div>`;
@@ -5649,7 +5745,8 @@ function renderCompareTab(R,P){
     const target=m.b===1?Math.min(...v):Math.max(...v);
     return v.map(x=>x===target?'worst':'');
   });
-  let h=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10.5px">
+  const _sh=PlannerShared.config(P);
+  let h=(_sh.any?`<p class="spend-caption" style="margin:0 0 10px">The same in every case: ${PlannerShared.GROUPS.filter(g=>_sh.groups[g.key]).map(g=>g.label.toLowerCase()).join(', ')}. Only the rest can differ, so the gaps below come from choices — not from drift. <a href="#" onclick="event.preventDefault();_todayView='budget';setTab('today')">Change</a></p>`:'')+`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10.5px">
   <thead><tr>
     <th style="text-align:left;padding:8px 10px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);border-bottom:2px solid var(--bd);position:sticky;left:0;background:var(--s2);min-width:160px;z-index:2">Metric</th>`;
   cols.forEach(c=>{
@@ -7104,7 +7201,7 @@ async function advAcceptProposals(name){
 async function advUpdateExistingScenario(i){
   if(!advPendingProposals||!scenarios[i])return;
   const delta={};advPendingProposals.changes.forEach(c=>{delta[c.key]=c.value});
-  const aiP={...D,...migrateP({...scenarios[i].params,...delta})};
+  const aiP={...D,...migrateP(window.PlannerShared?PlannerShared.attach({...scenarios[i].params,...delta},P):{...scenarios[i].params,...delta})};
   scenarios[i].params=aiP;
   scenarios[i].results=run(aiP);
   const s=scenarios[i];

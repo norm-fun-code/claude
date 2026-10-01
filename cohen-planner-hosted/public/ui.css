@@ -1032,3 +1032,13 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .bd-item strong{font-size:13px;color:var(--tx)}.bd-item small{font-size:11px;color:var(--t3)}
 .bd-tag.chk{color:var(--a);background:rgba(236,193,131,.1);border-color:rgba(236,193,131,.28);text-transform:none;letter-spacing:0;font-weight:600;cursor:help}
 @media(max-width:760px){.bd-sug{flex-direction:column;gap:4px}.bd-sug-year{width:auto}}
+
+/* Budget: shared across scenarios */
+.bd-share .ps-head{align-items:center}
+.bd-share-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.bd-share-chip{display:inline-flex;align-items:center;gap:8px;padding:7px 13px;border-radius:999px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.bd-share-chip i{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--t3);box-sizing:border-box}
+.bd-share-chip:hover{background:var(--s3)}
+.bd-share-chip.on{color:var(--tx);border-color:rgba(130,120,238,.55);background:rgba(130,120,238,.14)}
+.bd-share-chip.on i{background:var(--accent);border-color:var(--accent)}
+.bd-tag.shared{color:var(--c);background:rgba(139,221,237,.1);border-color:rgba(139,221,237,.28);text-transform:none;letter-spacing:0;font-weight:600}
