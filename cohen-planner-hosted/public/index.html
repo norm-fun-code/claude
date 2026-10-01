@@ -1024,6 +1024,17 @@ function _updateChart(datasets,labels){
 // apart by 2058 — purely because one chart was in real dollars and the other in nominal.
 function deflate(v,yr){if(!inflationView)return v;const sy=P.planStartYear||2026;return v/Math.pow(1+(P.expenseInflation||.03),yr-sy)}
 function deflK(v,yr){return Math.round(deflate(v,yr)/1000)}
+// A whole projection row in today's purchasing power: every dollar figure scaled by the same factor,
+// rates and counts left alone. The table and its expense breakdown read this when Real $ is on, so the
+// parts still add to the total — they were all scaled by one factor and rounded the same way.
+const _REAL_KEYS=['normCash','normStock','normG','nancyG','gross','tax','netTC','inc','incFull','totE','totEFull','h','hFull','liv','cc','ccFull','tu','tuFull','eAdj','ptax','flow','flowFull','surp','gap','gapFull','incGap','need','sNew','sSold','sRet','sHold','sGainTax','sAppr','sEnd','sold','txS','liq','eq','nw','netWorth','k401'];
+function deflateRow(r){
+  if(!inflationView)return r;
+  const o={...r},f=1/Math.pow(1+(P.expenseInflation||.03),r.yr-(P.planStartYear||2026));
+  for(const k of _REAL_KEYS)if(typeof o[k]==='number')o[k]=Math.round(o[k]*f);
+  for(const k of ['livFullParts','livParts']){if(o[k]){o[k]={...o[k]};for(const c of Object.keys(o[k]))o[k][c]=Math.round(o[k][c]*f)}}
+  return o;
+}
 function toggleInflation(){inflationView=!inflationView;render();savePlannerState()}
 
 // ═══ CSV EXPORT ═══
@@ -1710,12 +1721,15 @@ function expCatApply(yr,cat,n){
 function expCatSet(yr,cat,val){
   const raw=String(val).replace(/[^0-9.-]/g,'');
   if(raw===''){expCatReset(yr,cat);return}
-  const n=Math.max(0,Math.round(parseFloat(raw)));
-  if(!Number.isFinite(n))return;
+  const typed=Math.max(0,Math.round(parseFloat(raw)));
+  if(!Number.isFinite(typed))return;
+  // With Real $ on, the figure on screen is in today's dollars, so the figure typed over it is too.
+  // The plan stores each year's amount in that year's dollars, so convert before it is written.
+  const n=inflationView?Math.round(typed*Math.pow(1+(P.expenseInflation||.03),yr-(P.planStartYear||2026))):typed;
   const out=expCatApply(yr,cat,n);
   markDirty();buildControls();render();savePlannerState();
   const label=LIV_LABEL[cat]||cat;
-  showToast(`${label} set to ${fmtF(n)} for ${yr}`+(out.last>yr?`, and the change carried through ${out.last} at ${(out.infl*100).toFixed(1).replace(/\.0$/,'')}% a year`:''),'green');
+  showToast(`${label} set to ${fmtF(typed)}${inflationView?' (today\'s dollars)':''} for ${yr}`+(out.last>yr?`, and the change carried through ${out.last} at ${(out.infl*100).toFixed(1).replace(/\.0$/,'')}% a year`:''),'green');
 }
 function expCatReset(yr,cat){
   const out=expCatApply(yr,cat,null);
@@ -1731,7 +1745,8 @@ function expDetailRow(r,span,stub){
   const gross=_planShareBasis==='gross',den=gross?r.gross:r.netTC;
   const basisWord=gross?'gross income':'net income';
   const share=v=>den>0&&v?`${(v/den*100).toFixed(1)}%`:'';
-  const part=(label,v,note,cls)=>`<div class="exp-part${cls?' '+cls:''}"><span${note?` title="${advEscape(note)}"`:''}>${label}</span><strong${v?'':' class="exp-zero"'}>${v?fmt(v):'—'}</strong>${share(v)?`<small class="exp-share" title="Share of ${basisWord}">${share(v)}</small>`:''}</div>`;
+  const mo=v=>v?`${fmtF(Math.round(v/12))}/mo`:'';
+  const part=(label,v,note,cls)=>`<div class="exp-part${cls?' '+cls:''}"><span${note?` title="${advEscape(note)}"`:''}>${label}</span><strong${v?'':' class="exp-zero"'}>${v?fmt(v):'—'}</strong>${share(v)?`<small class="exp-share" title="Share of ${basisWord}">${share(v)}</small>`:''}${v?`<small class="exp-mo">${mo(v)}</small>`:''}</div>`;
   const signed=v=>(v>0?'+':'−')+fmt(Math.abs(v));
   const keys=typeof LIV_KEYS!=='undefined'?LIV_KEYS:Object.keys(r.livParts||{});
   // Whole-year throughout, because that is the figure this opened from. The modelled
@@ -1750,11 +1765,12 @@ function expDetailRow(r,span,stub){
     const pinned=editable&&P[expCatKeyFor(r.yr,k)]!==undefined&&P[expCatKeyFor(r.yr,k)]!==null&&P[expCatKeyFor(r.yr,k)]!=='';
     const lbl=advEscape(LIV_LABEL[k]||k);
     const pc=share(lp[k]||0);
-    if(!editable)return `<div><span>${lbl}</span><strong>${fmt(lp[k]||0)}</strong>${pc?`<small class="exp-pct">${pc}</small>`:''}</div>`;
+    const pm=lp[k]?`<small class="exp-mo" title="Per month">${mo(lp[k])}</small>`:'<small class="exp-mo"></small>';
+    if(!editable)return `<div><span>${lbl}</span><strong>${fmt(lp[k]||0)}</strong>${pm}${pc?`<small class="exp-pct">${pc}</small>`:''}</div>`;
     return `<div class="exp-edit-row${pinned?' pinned':''}"><label for="exp_${r.yr}_${k}">${lbl}${pinned?`<i title="Set by you for ${r.yr}" aria-label="Set by you"></i>`:''}</label>
       <input id="exp_${r.yr}_${k}" class="exp-edit" type="text" inputmode="numeric" value="${fmtF(lp[k]||0)}" aria-label="${lbl}, ${r.yr}"
         onfocus="this.select()" onchange="expCatSet(${r.yr},'${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()">
-      <small class="exp-pct" title="Share of ${basisWord}">${pc}</small>
+      ${pm}<small class="exp-pct" title="Share of ${basisWord}">${pc}</small>
       ${pinned?`<button type="button" class="exp-reset" title="Back to the model's figure" aria-label="Reset ${lbl} for ${r.yr}" onclick="expCatReset(${r.yr},'${k}')">↺</button>`:''}</div>`;
   };
   const basisChip=(b,l)=>{const on=b==='gross'?gross:!gross;return `<button type="button" class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}" onclick="planShareBasis('${b}')">${l}</button>`};
@@ -1765,7 +1781,7 @@ function expDetailRow(r,span,stub){
       ${part('Living',livTotal,'Everyday spending — opened out below, including each child\'s share')}
       ${part('Childcare',r.ccFull,'A flat monthly rate per child, from birth until school starts')}
       ${part('Tuition',r.tuFull,r.kiy?`${r.kiy} ${r.kiy===1?'kid':'kids'} in school`:'No child is in school this year')}
-      ${r.eAdj?`<div class="exp-part"><span title="A one-off for this year alone — not inflated, not repeated">One-off</span><strong style="color:var(--a)">${signed(r.eAdj)}</strong>${den>0?`<small class="exp-share">${(r.eAdj/den*100).toFixed(1)}%</small>`:''}</div>`:''}
+      ${r.eAdj?`<div class="exp-part"><span title="A one-off for this year alone — not inflated, not repeated">One-off</span><strong style="color:var(--a)">${signed(r.eAdj)}</strong>${den>0?`<small class="exp-share">${(r.eAdj/den*100).toFixed(1)}%</small>`:''}<small class="exp-mo">${fmtF(Math.round(Math.abs(r.eAdj)/12))}/mo</small></div>`:''}
       ${part('Total',r.totEFull,'','exp-part-total')}
     </div>
     ${keys.length?`<div class="exp-liv">
@@ -2127,7 +2143,7 @@ function render(){
     // them rather than in the global nav where they read as navigation.
     const opt=(id,lbl,fn,on,title)=>`<button id="${id}" title="${title}" aria-pressed="${on}" onclick="${fn}" style="font-size:9.5px;padding:4px 9px;border-radius:5px;border:1px solid ${on?'transparent':'var(--bd)'};cursor:pointer;font-family:inherit;background:${on?'var(--accent)':'var(--s2)'};color:${on?'#fff':'var(--t2)'}">${lbl}</button>`;
     let chartOpts='';
-    if(activeTab==='projection'&&_projView!=='table'){
+    if(activeTab==='projection'){
       chartOpts=opt('inflBtn',inflationView?'Real $':'Nominal $','toggleInflation()',inflationView,'Show future dollars in today\u2019s purchasing power');
       if(_projView==='nw')chartOpts+=opt('stressBtn','Range','toggleStressMode()',_stressMode,'Overlay a bear and bull path')
         +opt('bandBtn','Bands','toggleBandMode()',_bandMode,'Overlay the Monte Carlo confidence band');
@@ -2184,7 +2200,8 @@ function render(){
     const stubPct=stubRow?Math.round(stubRow.stubFrac*100):0;
     const openNote=' · click any Expenses figure to see what makes it up';
     const stubNote=stubRow?` · <strong>${stubRow.yr} is shown as a full year</strong>, like every row. Your plan opened ${advEscape(String(P.observedOn||'').slice(0,10)||'partway through it')}, so that year's closing balances grow from only the ${stubPct}% after that date — the months before it are already inside your opening balances.`:'';
-    ca.innerHTML=`<div class="polish-table-note">Year-end projections · scroll for all columns · net worth excludes retirement${openNote}${stubNote}</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r=>{
+    ca.innerHTML=`<div class="polish-table-note">Year-end projections · ${inflationView?`<strong>today's dollars</strong> (${P.planStartYear||2026} purchasing power)`:'future dollars'} · scroll for all columns · net worth excludes retirement${openNote}${stubNote}</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r0=>{
+      const r=deflateRow(r0);
       const bg=P.housingMode!=='rent'&&r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
       const dash=v=>v>0?fmt(v):'—';
       const stub=r.stubFrac!=null&&r.stubFrac<1;
