@@ -570,7 +570,10 @@ function run(p,rets,compiledGrants){
     const ptRate=p.propTaxRate??(p.propTaxBase&&p.homePrice?p.propTaxBase/p.homePrice:0.012);
     const homeVal=sub?p.homePrice*(1+p.homeAppreciation)**(yr-p.homePurchaseYear):0;
     const ptax=sub?ptRate*homeVal:0;
-    let h=sub?am+ptax+(p.maintBase+insuranceFor(p.homePrice,p))*1.02**(yr-p.homePurchaseYear):p.nycRent*12*(p.housingMode==='rent'?(1+(p.rentInflation??0.03))**(yr-sy):1);
+    const rentGrowth=Math.max(0,Number(p.rentInflation??0.03)||0);
+  const rentCap=Number(p.rentCap)>0?Number(p.rentCap):Infinity;
+  const monthlyRent=Math.min(rentCap,Number(p.nycRent||0)*(p.housingMode==='rent'?(1+rentGrowth)**(yr-sy):1));
+  let h=sub?am+ptax+(p.maintBase+insuranceFor(p.homePrice,p))*1.02**(yr-p.homePurchaseYear):monthlyRent*12;
     const inf=(1+p.expenseInflation)**(yr-sy);
     let gr=p.baseGroceries*inf,di=p.baseDining*inf,sh=p.baseShopping*inf,va=(nk>0?p.postKidVacations:p.baseVacations)*inf;
     let au=p.baseAuto*inf,ins=p.baseInsurance*inf,mi=p.baseMisc*inf,en=p.baseEntertainment*inf;

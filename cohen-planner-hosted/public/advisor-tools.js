@@ -28,7 +28,7 @@
   // Bounds are sanity rails, not opinions: they catch a decimal-point slip or a percentage
   // entered as 6 instead of 0.06, which would otherwise produce a confident, absurd answer.
   const LIMITS={
-    rentInflation:[0,1],homePrice:[0,5e7],downPctg:[0,100],mortgageRate:[0,25],homePurchaseYear:[2020,2100],
+    rentInflation:[0,1],rentCap:[0,1e6],homePrice:[0,5e7],downPctg:[0,100],mortgageRate:[0,25],homePurchaseYear:[2020,2100],
     homeAppreciation:[-0.5,0.5],propTaxRate:[0,0.1],
     investReturn:[-0.5,0.5],expenseInflation:[-0.2,0.5],tuitionInflation:[-0.2,0.5],
     taxInflation:[-0.2,0.2],capGainsTaxRate:[0,0.7],costBasisPct:[0,1],
@@ -39,7 +39,7 @@
     pretax401k:[0,1e6],pretaxBenefits:[0,1e6],
     nycRent:[0,1e6],baseGroceries:[0,1e6],baseDining:[0,1e6],baseShopping:[0,1e6],
     baseVacations:[0,1e6],postKidVacations:[0,1e6],baseMisc:[0,1e6],baseCharity:[0,1e7],
-    baseMedical:[0,1e6],childcareMonthly:[0,1e5],
+    baseMedical:[0,1e6],baseInsurance:[0,1e6],childcareMonthly:[0,1e5],
     // The child's age in MONTHS when childcare begins — leave covers what comes before it.
     childcareStartMonths:[0,60],
     numKids:[0,12],yeshivaStartAge:[0,22],kid1YeshivaStartAge:[0,22],

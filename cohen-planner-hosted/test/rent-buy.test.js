@@ -51,3 +51,10 @@ it('renders rental housing controls and projected rent without purchase charts',
  expect(elements.chartArea.innerHTML).toContain('2045');
  expect(elements.chartArea.innerHTML).not.toContain('NaN');
 });
+it('caps monthly rent after inflation reaches the ceiling',()=>{
+ const p={...plan,planEndYear:2058,housingMode:'rent',nycRent:5900,rentInflation:.03,rentCap:15000};
+ const {R}=M.run(p);
+ expect(R.find(r=>r.yr===2058).hFull).toBe(180000);
+ expect(R.find(r=>r.yr===2058).hFull/12).toBe(15000);
+ expect(R.find(r=>r.yr===2050).hFull/12).toBeLessThan(15000);
+});

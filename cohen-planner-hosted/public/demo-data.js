@@ -23,7 +23,7 @@
   // ── The default plan, with every money figure replaced ───────────────────
   const DEMO_OVERRIDES = {
     startingLiquid: 725000, k401Start: 285000, liquidReserveFloor: 150000,
-    homePrice: 1850000, nycRent: 4800, propTaxBase: 16000, maintBase: 9000,
+    homePrice: 1850000, nycRent: 4800, rentCap: 12000, propTaxBase: 16000, maintBase: 9000,
     // Every year of pay set explicitly, rising smoothly. Left to the scrub, years four onward
     // came out at about two thirds of year three — a pay cut off a cliff that turned the demo
     // household into one drawing on savings for thirty years.

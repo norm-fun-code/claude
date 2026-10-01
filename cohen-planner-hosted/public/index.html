@@ -469,7 +469,7 @@ const D={
   kid1Birth:2027,kid2Birth:2030,kid3Birth:2034,kid4Birth:2037,numKids:3,
   childcareMonthly:2800,childcareStartMonths:0,
   tuitionInflation:.035,yeshivaStartAge:2,yeshivaEndAge:17,kid1YeshivaStartAge:3,
-  housingMode:'buy',rentInflation:0.03,startingLiquid:1100000,nycRent:5500,
+  housingMode:'buy',rentInflation:0.03,rentCap:15000,startingLiquid:1100000,nycRent:5500,
   // Norm — compensation, split into the two streams that behave differently AFTER tax.
   // Both are ordinary W2 income at vest (identical tax), but cash is spendable while stock
   // arrives as a Stripe asset that only becomes spendable if sold. 11 explicit years,
@@ -1434,7 +1434,7 @@ function buildControls(){
   h+=ST('📦 Expenses (couple, 2026)','expenses',expBody);
 
   // Home
-  const homeBody=housingModeControl()+s('Monthly rent','nycRent',0,20000,100,v=>'$'+v.toLocaleString()+'/mo')+(P.housingMode==='rent'?s('Annual rent inflation','rentInflation',0,.10,.005,v=>(v*100).toFixed(1)+'%')+`<p>Rent grows from ${P.planStartYear}. No purchase or suburban move is modeled.</p>`:s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%'));
+  const homeBody=housingModeControl()+s('Monthly rent','nycRent',0,20000,100,v=>'$'+v.toLocaleString()+'/mo')+(P.housingMode==='rent'?s('Annual rent inflation','rentInflation',0,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Monthly rent cap','rentCap',0,50000,500,v=>v?'$'+v.toLocaleString()+'/mo':'No cap')+`<p>Rent grows from ${P.planStartYear}. The cap is a maximum monthly rent; no purchase or suburban move is modeled.</p>`:s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%'));
   h+=ST('🏠 Home','home',homeBody);
 
   // Returns (cap gains hardcoded for NYC)
@@ -1507,7 +1507,7 @@ async function confirmRollForward(overlay,curYear,nextYear){
   showToast(`✓ Rolled forward to ${nextYear}`,'green');
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),childcareStartMonths:v=>v?v+' mo old':'birth',yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,liquidReserveFloor:v=>v>0?fmtF(v):'None',stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),childcareStartMonths:v=>v?v+' mo old':'birth',yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,liquidReserveFloor:v=>v>0?fmtF(v):'None',stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',rentCap:v=>v?'$'+v.toLocaleString()+'/mo':'No cap'};
 for(let i=0;i<11;i++){SF['normCashY'+i]=fmtF;SF['normStockY'+i]=fmtF}
 for(let i=0;i<10;i++)SF['stripeRetY'+i]=v=>(v*100).toFixed(0)+'%';
 
@@ -4026,6 +4026,7 @@ function renderHousingTab(R,P){
     ca.innerHTML=`<div class="ui-head"><div><h2>Rent your home</h2><p>Rent is modeled for the full plan, with annual increases.</p></div></div>${housingModeControl()}
       <label>Monthly rent in ${P.planStartYear} <input type="number" min="0" step="100" value="${P.nycRent}" onchange="U('nycRent',this.value)"></label>
       <label>Annual rent inflation (%) <input type="number" min="0" max="100" step="0.5" value="${((P.rentInflation??.03)*100).toFixed(1)}" onchange="U('rentInflation',Math.max(0,Number(this.value))/100)"></label>
+      <label>Monthly rent cap <input type="number" min="0" step="500" value="${P.rentCap??0}" onchange="U('rentCap',Math.max(0,Number(this.value)))"></label>
       <p>Rent assumes you remain in your current location. The purchase, closing costs, mortgage, property tax, home maintenance, home equity and suburban expense increases are excluded. Money retained stays in the investment projection.</p>
       <table><thead><tr><th>Year</th><th>Annual rent</th><th>Monthly rent</th></tr></thead><tbody>${R.map(r=>`<tr><td>${r.yr}</td><td>${fmtF(r.hFull??r.h)}</td><td>${fmtF(Math.round((r.hFull??r.h)/12))}</td></tr>`).join('')}</tbody></table>`;
     return;
@@ -5034,8 +5035,8 @@ function renderCompareTab(R,P){
   });
   h+=`</tbody></table></div>`;
   // Parameter diffs
-  const PKEYS=['housingMode','nycRent','rentInflation','homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normCashY0','normStockY0','startingStripeEquity','stripePolicy','stripeLongTermReturn','normGrowth','pretax401k','numKids'];
-  const PLABELS={housingMode:'Housing choice',nycRent:'Monthly rent',rentInflation:'Rent inflation',childcareMonthly:'Childcare / month',homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normCashY0:'Norm Cash (Y0)',normStockY0:'Stripe Grant (Y0)',startingStripeEquity:'Starting Stripe',stripePolicy:'Stripe Policy',stripeLongTermReturn:'Stripe LT Return',normGrowth:'Cash Growth',pretax401k:'401k Contrib',numKids:'# Kids'};
+  const PKEYS=['housingMode','nycRent','rentInflation','rentCap','homePrice','downPctg','mortgageRate','homePurchaseYear','investReturn','startingLiquid','expenseInflation','nancyHourlyRate','nancyMaxClients','normCashY0','normStockY0','startingStripeEquity','stripePolicy','stripeLongTermReturn','normGrowth','pretax401k','numKids'];
+  const PLABELS={housingMode:'Housing choice',nycRent:'Monthly rent',rentInflation:'Rent inflation',rentCap:'Rent cap',childcareMonthly:'Childcare / month',homePrice:'Home Price',downPctg:'Down %',mortgageRate:'Mortgage Rate',homePurchaseYear:'Purchase Year',investReturn:'Return %',startingLiquid:'Starting Liquid',expenseInflation:'Exp Inflation',nancyHourlyRate:'Nancy $/hr',nancyMaxClients:'Nancy Max Clients',normCashY0:'Norm Cash (Y0)',normStockY0:'Stripe Grant (Y0)',startingStripeEquity:'Starting Stripe',stripePolicy:'Stripe Policy',stripeLongTermReturn:'Stripe LT Return',normGrowth:'Cash Growth',pretax401k:'401k Contrib',numKids:'# Kids'};
   const fmtPv=(k,v)=>{if(['investReturn','expenseInflation','normGrowth','rentInflation'].includes(k))return(v*100).toFixed(1)+'%';if(['homePrice','startingLiquid','normCashY0','normStockY0','startingStripeEquity','pretax401k'].includes(k))return fmt(v);
   if(k==='stripeLongTermReturn')return(v*100).toFixed(0)+'%';
   if(k==='stripePolicy')return String(v);if(k==='downPctg')return v+'%';if(k==='mortgageRate')return v+'%';return String(v)};
