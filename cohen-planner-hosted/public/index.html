@@ -1035,6 +1035,21 @@ function deflateRow(r){
   for(const k of ['livFullParts','livParts']){if(o[k]){o[k]={...o[k]};for(const c of Object.keys(o[k]))o[k][c]=Math.round(o[k][c]*f)}}
   return o;
 }
+// Annual expense inflation: how fast every spending line grows, year on year. It is also the rate the
+// Real $ view deflates by, so changing it moves both. Editable here and beside the Real $ button, not
+// only in Inputs; one function, one rule.
+function expInflSet(v){
+  const n=parseFloat(String(v).replace(/[^0-9.]/g,''));
+  if(!Number.isFinite(n)){render();return}
+  const pct=Math.min(15,Math.max(0,n));
+  if(Math.abs(pct/100-(P.expenseInflation||0))<1e-9){render();return}
+  P.expenseInflation=pct/100;
+  markDirty();buildControls();render();savePlannerState();
+  showToast(`Expense inflation set to ${pct.toFixed(1).replace(/\.0$/,'')}% a year — every spending line, every year`,'green');
+}
+function expInflControl(cls){
+  return `<label class="bd-infl${cls?' '+cls:''}" title="How fast every spending line grows each year. Also the rate Real $ deflates by."><span>Expense inflation</span><input type="text" inputmode="decimal" value="${((P.expenseInflation||0)*100).toFixed(1)}" aria-label="Annual expense inflation, percent" onfocus="this.select()" onchange="expInflSet(this.value)" onkeydown="if(event.key==='Enter')this.blur()"><span>% a year</span></label>`;
+}
 function toggleInflation(){inflationView=!inflationView;render();savePlannerState()}
 
 // ═══ CSV EXPORT ═══
@@ -2144,7 +2159,7 @@ function render(){
     const opt=(id,lbl,fn,on,title)=>`<button id="${id}" title="${title}" aria-pressed="${on}" onclick="${fn}" style="font-size:9.5px;padding:4px 9px;border-radius:5px;border:1px solid ${on?'transparent':'var(--bd)'};cursor:pointer;font-family:inherit;background:${on?'var(--accent)':'var(--s2)'};color:${on?'#fff':'var(--t2)'}">${lbl}</button>`;
     let chartOpts='';
     if(activeTab==='projection'){
-      chartOpts=opt('inflBtn',inflationView?'Real $':'Nominal $','toggleInflation()',inflationView,'Show future dollars in today\u2019s purchasing power');
+      chartOpts=opt('inflBtn',inflationView?'Real $':'Nominal $','toggleInflation()',inflationView,'Show future dollars in today\u2019s purchasing power')+expInflControl('bd-infl-sm');
       if(_projView==='nw')chartOpts+=opt('stressBtn','Range','toggleStressMode()',_stressMode,'Overlay a bear and bull path')
         +opt('bandBtn','Bands','toggleBandMode()',_bandMode,'Overlay the Monte Carlo confidence band');
     }
@@ -3815,14 +3830,15 @@ function renderBudgetTab(R,P){
   // ── Header ──
   const yrOptions=R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('');
   let h=`<div class="bd">
-    <div class="bd-head"><div><div class="hero-eyebrow">Budget</div><h2>What each line gets, and whether the plan can afford it</h2></div>
-      <div class="ps-controls">
+    <div class="bd-head"><div><div class="hero-eyebrow">Budget</div><h2>What each line gets, and whether the plan can afford it</h2></div></div>
+    <div class="bd-bar" role="toolbar" aria-label="Budget controls">
         <div class="ps-year" role="group" aria-label="Budget year">
           <button type="button" onclick="budgetYearStep(-1,${first},${last})" aria-label="Previous year"${yr<=first?' disabled':''}>‹</button>
           <label><span class="ui-sr">Year</span><select onchange="budgetYearSet(this.value)">${yrOptions}</select></label>
           <button type="button" onclick="budgetYearStep(1,${first},${last})" aria-label="Next year"${yr>=last?' disabled':''}>›</button></div>
         <div class="spend-scope" role="group" aria-label="Show amounts per">${chip(mo,"budgetUnit('month')",'Monthly')}${chip(!mo,"budgetUnit('year')",'Annual')}</div>
-      </div></div>`;
+        ${expInflControl()}
+    </div>`;
 
   // ── The shape of the plan ──
   const years=R.length,tot=ph.reduce((t,p)=>t+p.years,0)||1;

@@ -283,3 +283,40 @@ describe('the groups on the Budget screen',()=>{
   expect(lens).toContain('IS.compute(row,basis)');expect(lens).not.toContain('B.BUCKETS');
  });
 });
+
+describe('the Budget control bar and the expense-inflation setting',()=>{
+ const fnSrc=name=>html.slice(html.indexOf('function '+name+'('),html.indexOf('\n}\n',html.indexOf('function '+name+'('))+3);
+ const css=fs.readFileSync(new URL('../public/ui.css',import.meta.url),'utf8');
+ const run2=(P0,val)=>{
+  const P={...P0},calls=[];
+  new Function('P','markDirty','buildControls','render','savePlannerState','showToast',fnSrc('expInflSet')+';expInflSet('+JSON.stringify(val)+');')(P,()=>calls.push('dirty'),()=>calls.push('controls'),()=>calls.push('render'),()=>calls.push('save'),m=>calls.push('toast:'+m));
+  return {P,calls};
+ };
+ it('keeps the year, the unit and the inflation rate in one bar that stays in view',()=>{
+  const bar=html.slice(html.indexOf('<div class="bd-bar"'),html.indexOf('</div>`;',html.indexOf('<div class="bd-bar"')));
+  for(const piece of ['Budget year','Show amounts per','expInflControl()'])expect(bar).toContain(piece);
+  expect(css).toMatch(/\.bd-bar\{position:sticky;top:0;/);
+  expect(css).toContain('body:has(.demo-banner) .bd-bar{top:46px}');     // clear of the demo banner
+ });
+ it('sets annual expense inflation from a percentage, saves it, and says what it changes',()=>{
+  const {P,calls}=run2(plan(),'4.5');
+  expect(P.expenseInflation).toBeCloseTo(.045,9);
+  expect(calls).toEqual(expect.arrayContaining(['dirty','controls','render','save']));
+  expect(calls.find(c=>c.startsWith('toast:'))).toContain('every spending line, every year');
+ });
+ it('clamps to 0–15%, ignores junk, and does nothing when the rate is unchanged',()=>{
+  expect(run2(plan(),'99').P.expenseInflation).toBeCloseTo(.15,9);
+  expect(run2(plan(),'-3').P.expenseInflation).toBeCloseTo(.03,9);       // the minus sign is stripped: 3%, not negative
+  const junk=run2(plan(),'abc');expect(junk.P.expenseInflation).toBe(plan().expenseInflation);expect(junk.calls).toEqual(['render']);
+  const same=run2(plan({expenseInflation:.03}),'3.0');expect(same.calls).toEqual(['render']);
+ });
+ it('moves every projected year, and is the rate Real $ deflates by',()=>{
+  const lo=M.run(plan({expenseInflation:.02})).R,hi=M.run(plan({expenseInflation:.05})).R;
+  expect(at(hi,2040).livFullParts.groceries).toBeGreaterThan(at(lo,2040).livFullParts.groceries);
+  expect(at(hi,2026).livFullParts.groceries).toBe(at(lo,2026).livFullParts.groceries);
+  expect(html).toContain('function deflate(v,yr){if(!inflationView)return v;const sy=P.planStartYear||2026;return v/Math.pow(1+(P.expenseInflation||.03),yr-sy)}');
+ });
+ it('is also beside the Real $ button on the Trajectory views',()=>{
+  expect(html).toContain("'Show future dollars in today\\u2019s purchasing power')+expInflControl('bd-infl-sm');");
+ });
+});
