@@ -66,7 +66,7 @@ describe('where a year\'s income goes',()=>{
  it('is on the Spending tab, served, and its plan side reads the projection rather than the ledger',()=>{
   expect(html).toContain('<script src="/income-share.js"></script>');
   expect(server).toContain("'income-share.js'");
-  expect(html).toContain('h+=renderIncomeLens(R,{rows,complete,cov,closedTotal});');
+  expect(html).toContain('h+=renderIncomeLens(R,{rows,complete,cov,closedTotal,scopeControl,scopeNote,detailsHtml});');
   const fn=html.slice(html.indexOf('function renderIncomeLens('),html.indexOf('function renderSpendingTab('));
   const planSide=fn.slice(fn.indexOf("}else{\n    const yr="));
   expect(planSide).not.toMatch(/_spend\b|loadSpending|complete\b/);
@@ -108,8 +108,9 @@ describe('categories against income',()=>{
   expect(html).toContain("_planShareBasis='net',_lensMode='actual'");
   // Once in the main flow, and in the two early returns so the plan side shows without imports.
   expect(spend.match(/h\+=renderIncomeLens\(/g).length).toBe(3);
-  expect(spend.lastIndexOf('h+=renderIncomeLens(')).toBeGreaterThan(spend.indexOf('class="spend-visuals"'));
-  expect(spend.lastIndexOf('h+=renderIncomeLens(')).toBeLessThan(spend.indexOf('Category details'));
+  // The lead card: the categories come before the two charts, and the data fold closes the page.
+  expect(spend.lastIndexOf('h+=renderIncomeLens(')).toBeLessThan(spend.indexOf('class="spend-visuals"'));
+  expect(spend.indexOf('class="spend-visuals"')).toBeLessThan(spend.indexOf('Data &amp; import'));
   const lens=html.slice(html.indexOf('function renderIncomeLens('),html.indexOf('function renderSpendingTab('));
   expect(lens).toContain("const basis=haveIncome?basisWanted:'spend';");
   expect(lens).toContain("const mode=actual?_lensMode:'plan';");

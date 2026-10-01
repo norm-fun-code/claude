@@ -836,7 +836,7 @@ async function loadMonarchInvestments(period){
     monarchInvestments=data;
   }catch(e){monarchInvestments=false;_investError=e.message;}
   _investLoading=false;
-  if(activeTab==='today'&&_todayView==='holdings')render();
+  if(activeTab==='today'&&(_todayView==='holdings'||_todayView==='watch'))render();
 }
 
 async function syncMonarch({quiet=false}={}){
@@ -2812,6 +2812,26 @@ function askAboutAlert(key){
   }
 }
 
+// ── Tax-loss harvesting: a signal to act on, so it lives with the other signals ────────────────
+// It used to sit under Holdings, where nothing about it was urgent. A position below its cost basis
+// is a thing to be told about, with what acting on it is worth — which is what the Watchlist is for.
+function taxLossHtml(){
+  const inv=monarchInvestments;
+  if(inv===null){if(!_investLoading&&!_demoMode)loadMonarchInvestments();return ''}
+  if(!inv||inv===false)return '';
+  const holdings=inv.holdings||[];
+  // allTimeChange is the unrealised gain or loss against cost basis.
+  const losing=holdings.filter(h=>h.securityType!=='cash'&&(h.allTimeChange||0)<0).sort((a,b)=>a.allTimeChange-b.allTimeChange);
+  if(!losing.length)return '';
+  const rate=P.capGainsTaxRate??.345,total=losing.reduce((t,h)=>t+h.allTimeChange,0),save=Math.abs(total)*rate;
+  const totalVal=Number(inv.totalValue)>0?Number(inv.totalValue):holdings.reduce((a,h)=>a+(Number(h.value)||0),0);
+  return `<section class="wl-tax"><span class="ui-eyebrow">Tax-loss harvesting</span>
+    <p class="ps-headline" style="margin:6px 0 10px">${losing.length} position${losing.length===1?' is':'s are'} below cost basis. Realising ${losing.length===1?'it':'them'} would book <strong>${fmt(Math.abs(total))}</strong> of losses and save about <strong style="color:var(--g)">${fmt(save)}</strong> at your ${(rate*100).toFixed(1)}% capital-gains rate.</p>
+    <div class="bd-items">${losing.map(h=>`<div class="bd-item"><div><strong>${advEscape(h.ticker||'')}</strong><small>${totalVal>0?(h.value/totalVal*100).toFixed(1)+'% of the portfolio':''}</small></div>
+      <div style="text-align:right"><strong style="color:var(--r)">${fmt(h.allTimeChange)}</strong><small>about ${fmt(Math.abs(h.allTimeChange)*rate)} saved</small></div></div>`).join('')}</div>
+    <p class="spend-caption" style="margin-top:8px">Unrealised loss against cost basis, all-time. A loss only helps when it offsets gains elsewhere, and the wash-sale rule disallows it if you buy the same or a substantially identical security within 30 days either side of the sale.</p></section>`;
+}
+
 function renderWatchTab(R,P){
   const money=v=>fmt(Math.round(v||0));
   const ca=document.getElementById('chartArea');
@@ -2894,6 +2914,8 @@ function renderWatchTab(R,P){
       <div style="font-size:8.5px;color:var(--t3);margin-top:7px">Safe harbour per ${advEscape(t.safeHarbour.citation)}${t.safeHarbour.priorAGIAssumed?' · prior-year AGI unknown, so the stricter 110% test is assumed':''}</div>
     </div>`;
   }
+
+  h+=taxLossHtml();
 
   if(d.opportunities&&d.opportunities.length){
     h+=`<details class="wl-fold"><summary>${d.opportunities.length} tax item${d.opportunities.length===1?'':'s'} screened</summary>
@@ -3431,10 +3453,11 @@ function renderIncomeLens(R,actual){
   const IS=PlannerIncomeShare,first=R[0].yr,last=R[R.length-1].yr;
   const mode=actual?_lensMode:'plan';
   const basisWanted=_planShareBasis;
-  let body='',headline='',foot='',haveIncome=true,ctl='';
+  let body='',headline='',foot='',haveIncome=true,ctl='',actualExtra=null;
 
   if(mode==='actual'){
     const {rows,complete,cov,closedTotal}=actual;
+    actualExtra={scopeControl:actual.scopeControl||'',scopeNote:actual.scopeNote||'',detailsHtml:actual.detailsHtml||''};
     const inc=IS.periodIncome(complete,R,{partial:cov.partial,fraction:cov.fractionElapsed});
     haveIncome=inc.ok;
     const basis=haveIncome?basisWanted:'spend';
@@ -3447,7 +3470,7 @@ function renderIncomeLens(R,actual){
       ?`Over this period you spent <strong>${fmt(closedTotal)}</strong> — <strong>${_lensPct(closedTotal/inc.net)}</strong> of net income, <strong>${_lensPct(closedTotal/inc.gross)}</strong> of gross.`
       :`Over this period you spent <strong>${fmt(closedTotal)}</strong>. Income shares need the plan to cover these months.`;
     foot=haveIncome
-      ?'Same period as the chart above, net of refunds. Income is the plan\'s figure for the same months, not your deposits — the ledger records what landed in accounts, not gross pay or Stripe vests. Net is after tax, 401(k) and benefits.'
+      ?'Net of refunds. Income is the plan\'s figure for the same months, not your deposits — the ledger records what landed in accounts, not gross pay or Stripe vests. Net is after tax, 401(k) and benefits.'
       :'The plan does not cover every month in this period, so income-based shares are hidden rather than guessed.';
   }else{
     const yr=Math.min(last,Math.max(first,_planShareYear??(PlannerTime.year()+1)));
@@ -3499,12 +3522,14 @@ function renderIncomeLens(R,actual){
   const chip=(b,l)=>`<button type="button" class="spend-scope-chip${eff===b?' is-on':''}" aria-pressed="${eff===b}"${mode==='actual'&&!haveIncome&&b!=='spend'?' disabled':''} onclick="planShareBasis('${b}')">${l}</button>`;
   const modeChip=(m,l)=>`<button type="button" class="spend-scope-chip${mode===m?' is-on':''}" aria-pressed="${mode===m}"${m==='actual'&&!actual?' disabled title="Import transactions to see actuals"':''} onclick="lensMode('${m}')">${l}</button>`;
   return `<section class="cp-card cl-card">
-    <div class="ps-head"><div><h3>Categories against your income</h3><p>${mode==='actual'?'What your records show, over the period above':'What the plan says a year will cost'}</p></div>
+    <div class="ps-head"><div><h3>Categories against your income</h3><p>${mode==='actual'?(actualExtra.scopeNote||'What your records show'):'What the plan says a year will cost'}</p></div>
       <div class="ps-controls"><div class="spend-scope" role="group" aria-label="Actual or plan">${modeChip('actual','Actual')}${modeChip('plan','Plan')}</div>${ctl}</div></div>
     <div class="cl-measure"><span>Measured against</span><div class="spend-scope" role="group" aria-label="Measure each line as a share of">${chip('net','Net income')}${chip('gross','Gross income')}${chip('spend','Spending')}</div></div>
+    ${mode==='actual'&&actualExtra.scopeControl?`<div class="cl-measure"><span>Period</span>${actualExtra.scopeControl}</div>`:''}
     <p class="ps-headline">${headline}</p>
     ${body}
     <p class="spend-caption">${foot}</p>
+    ${mode==='actual'?actualExtra.detailsHtml:''}
   </section>`;
 }
 
@@ -3879,7 +3904,7 @@ function renderSpendingTab(R,P){
 
   // ── Freshness and coverage, before any number that depends on them ──
   const nTx=st.transactions||0;
-  h+=`<div class="glass-card" style="padding:14px 16px">
+  const syncCard=`<div class="glass-card" style="padding:14px 16px">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <div>
         <div style="font-size:11px;font-weight:700;color:var(--tx)">💳 Spending & cash flow</div>
@@ -3897,6 +3922,9 @@ function renderSpendingTab(R,P){
     </div>
     ${st.lastError?`<div style="margin-top:9px;font-size:10px;color:var(--r);background:rgba(205,61,100,.06);border-radius:6px;padding:7px 9px">Last import stopped at ${advEscape(st.lastError.window||'')}: ${advEscape(st.lastError.message||'')}. Everything imported before that point was kept.</div>`:''}
   </div>`;
+  // Plumbing, not insight: with history imported it sits in the Data fold at the bottom. Until then
+  // it leads, because it is the thing to do.
+  if(!(st.transactions||0)||d.error)h+=syncCard;
 
   if(d.error){
     h+=`<div class="glass-card" style="padding:18px;text-align:center">
@@ -4041,16 +4069,10 @@ function renderSpendingTab(R,P){
     const driftToggle=`<div class="spend-scope spend-drift-scope" role="group" aria-label="Averaging window for run-rate drift">
       ${[3,6,12].map(n=>`<button class="spend-scope-chip${_spendDriftWindow===n?' is-on':''}" aria-pressed="${_spendDriftWindow===n}" onclick="setSpendDriftWindow(${n})">${n}M</button>`).join('')}
     </div>`;
-    h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${advEscape(spendScopeLabel(completeAll,asOf,months))}${singleMonth?'':partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}</p>${scopeControl}<div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
-    <div class="spend-stack">
-    <section class="cp-card"><div class="spend-drift-head"><div><h3>Run-rate drift</h3><p>The last twelve closed months · each point is the ${driftWord}-month average ending there</p></div>${driftToggle}</div><div class="spend-ltm-wrap"><canvas id="spendLtmChart" role="img" aria-label="Rolling ${driftWord}-month average income and spending"></canvas></div><p class="spend-caption" id="spendLtmNote">${driftCaption} Flat is a steady run rate; a rising or falling line is drift. The series breaks across gaps in the records.</p></section>
-    <section class="cp-card"><h3>Income & spending</h3><p>Every imported month · current and unverified months are labeled${_spendScope.kind!=='all'?' · not narrowed by the period above':''}</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Month by month, as recorded. Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section>
-    </div></div>`;
+    const scopeNote=`Imported records for ${advEscape(spendScopeLabel(completeAll,asOf,months))}${singleMonth?'':partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}`;
 
-    h+=renderIncomeLens(R,{rows,complete,cov,closedTotal});
 
-    h+=`<div class="glass-card" style="padding:16px 18px">
-      <details class="spend-details"><summary>Category details · exact amounts & refunds</summary>
+    const detailsHtml=`<details class="spend-details"><summary>Exact amounts & refunds</summary>
       <div style="font-size:10px;color:var(--t2);margin-bottom:10px">${singleMonth?`${advEscape(monthLabel(complete[0].month))} alone, net of refunds${partialInScope?` — still running, ${Math.round((Number(cov.fractionElapsed)||1)*100)}% elapsed, so these are the totals so far rather than a whole month`:''}.`:`${closedScoped.length} past month${closedScoped.length===1?'':'s'} with imported records, net of refunds${partialInScope?` · plus ${advEscape(monthLabel(cov.partial||asOf.slice(0,7)))} in progress, counted as ${Math.round((Number(cov.fractionElapsed)||1)*100)}% of a month`:cov.partial?` · ${cov.partial} excluded as partial`:''}.`} ${canTrend?'Trend compares the last 3 months with the 3 before; unverified coverage can affect the comparison.':'Six consecutive months of records are needed for a trend.'}</div>
       ${rows.length?`<div class="tw" style="max-height:none"><table style="font-size:11px">
         <thead><tr><th style="text-align:left">Category</th><th>Per month</th><th>Total</th><th>Share</th>${canTrend?'<th>Trend</th>':''}<th>Rows</th></tr></thead>
@@ -4072,11 +4094,18 @@ function renderSpendingTab(R,P){
         </tbody></table></div>
         <div style="font-size:9.5px;color:var(--t3);margin-top:8px;line-height:1.5">Trend is a change in monthly average, not a verdict — a move can be seasonal, a one-off, or a category that simply had a busy quarter. Nothing here is flagged as waste.</div>`
       :`<div style="font-size:10.5px;color:var(--t2)">No categorised spending in the window. If transactions imported but categories did not, run Catch up — categories sync separately and the classification depends on them.</div>`}
-    </details></div>`;
+    </details>`;
+    h+=renderIncomeLens(R,{rows,complete,cov,closedTotal,scopeControl,scopeNote,detailsHtml});
+
+    h+=`<div class="spend-visuals">
+    <div class="spend-stack">
+    <section class="cp-card"><div class="spend-drift-head"><div><h3>Run-rate drift</h3><p>The last twelve closed months · each point is the ${driftWord}-month average ending there</p></div>${driftToggle}</div><div class="spend-ltm-wrap"><canvas id="spendLtmChart" role="img" aria-label="Rolling ${driftWord}-month average income and spending"></canvas></div><p class="spend-caption" id="spendLtmNote">${driftCaption} Flat is a steady run rate; a rising or falling line is drift. The series breaks across gaps in the records.</p></section>
+    <section class="cp-card"><h3>Income & spending</h3><p>Every imported month · current and unverified months are labeled${_spendScope.kind!=='all'?' · not narrowed by the period above':''}</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Month by month, as recorded. Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section>
+    </div></div>`;
   }
 
   // ── Month by month ──
-  h+=`<details class="cp-card spend-details"><summary>Monthly ledger · inspect the numbers</summary><div class="tw" style="max-height:none"><table style="font-size:11px">
+  const ledgerHtml=`<details class="spend-details" style="margin-top:12px"><summary>Monthly ledger · inspect the numbers</summary><div class="tw" style="max-height:none"><table style="font-size:11px">
     <thead><tr><th style="text-align:left">Month</th><th>Spending</th><th>Income</th><th>Net</th><th>Transfers</th><th>Card pmts</th><th>Invested</th><th>Rows</th></tr></thead>
     <tbody>${months.map(m=>{
       const partial=m.month===cov.partial;
@@ -4092,7 +4121,10 @@ function renderSpendingTab(R,P){
         <td style="color:var(--t3)">${m.count}${m.pending?` <span style="color:var(--a)">+${m.pending}p</span>`:''}</td>
       </tr>`}).join('')}</tbody></table></div></details>`;
 
-  h+=classificationDetails;
+
+  // Everything about where the numbers came from, in one place that is out of the way.
+  h+=`<details class="cp-card spend-details spend-data"><summary>Data &amp; import · ${nTx.toLocaleString()} transactions${st.lastSyncAt?` · synced ${PlannerTime.formatTime(st.lastSyncAt)}`:''}</summary>
+    <div style="margin-top:12px">${syncCard}</div>${classificationDetails}${ledgerHtml}</details>`;
 
   h+=`</div>`;
   ca.innerHTML=h;
@@ -4357,37 +4389,6 @@ function renderPortfolioTab(R,P){
     </div></details>`;
   })()}
 
-  ${(()=>{
-    // ── Tax-loss harvesting scanner ─────────────────────────────────────────
-    // allTimeChange = unrealized gain/loss vs. cost basis (Monarch's variation_dollars).
-    const lossHoldings=holdings.filter(h=>h.securityType!=='cash'&&(h.allTimeChange||0)<0).sort((a,b)=>a.allTimeChange-b.allTimeChange);
-    if(lossHoldings.length===0)return'';
-    const totalLoss=lossHoldings.reduce((s,h)=>s+h.allTimeChange,0); // negative
-    const taxRate=P.capGainsTaxRate??.345;
-    const estSavings=Math.abs(totalLoss)*taxRate;
-    return`<div class="glass-card" style="padding:14px;margin-bottom:10px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3)">🧾 Tax-Loss Harvesting Opportunities</div>
-        <div style="font-size:10px;color:var(--t2)">Est. tax savings if harvested: <strong style="color:var(--g)">${fmt(estSavings)}</strong></div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px">
-        ${lossHoldings.map(h=>{
-          const pct=totalVal>0?(h.value/totalVal*100):0;
-          return`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:rgba(205,61,100,.05);border-radius:7px;border-left:2px solid var(--r)">
-            <div>
-              <span style="font-size:11px;font-weight:600;color:var(--tx);font-family:'SF Mono',monospace">${advEscape(h.ticker||'')}</span>
-              <span style="font-size:8.5px;color:var(--t3);margin-left:5px">${typeLabel[h.securityType]||''} · ${pct.toFixed(1)}% of portfolio</span>
-            </div>
-            <div style="text-align:right">
-              <div style="font-size:10.5px;font-weight:700;color:var(--r);font-family:'SF Mono',monospace">${fmt(h.allTimeChange)}</div>
-              <div style="font-size:8.5px;color:var(--t3)">~${fmt(Math.abs(h.allTimeChange)*taxRate)} tax savings</div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-      <div style="font-size:9px;color:var(--t3);line-height:1.5">Unrealized loss vs. cost basis (all-time), at your ${(taxRate*100).toFixed(1)}% capital-gains rate. Harvesting realizes the loss to offset gains elsewhere — but the IRS wash-sale rule disallows the deduction if you buy the same or a "substantially identical" security within 30 days before or after the sale. Consider a similar (not identical) fund if you want to stay invested.</div>
-    </div>`;
-  })()}
 
   <div class="refine-links"><button class="ui-btn" onclick="setSubView('overview')">Manage accounts & classifications →</button></div>
   </div>`;
