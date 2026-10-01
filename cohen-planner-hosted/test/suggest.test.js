@@ -113,6 +113,6 @@ describe('suggestions on the Budget screen',()=>{
  it('says what a check is and is not',()=>{
   const src=fs.readFileSync(new URL('../public/suggest.js',import.meta.url),'utf8');
   expect(src).toContain('rule of thumb');
-  expect(src).toContain('never to answer one');
+  expect(src.replace(/\s*\n\/\/\s*/g,' ')).toContain('never to answer one');
  });
 });
