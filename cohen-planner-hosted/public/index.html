@@ -2115,8 +2115,7 @@ function render(){
   }
   if(activeTab==='cockpit'){renderCockpit(R);return;}
   if(activeTab==='home'){
-    if(_homeView==='housing'){renderHousingTab(R,P);return}
-    if(_homeView==='rentbuy'){renderRentBuyTab(R,P);return}
+    if(_homeView==='housing'||_homeView==='rentbuy'){renderHomeTab(R,P);return}
     if(_homeView==='levers'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
     if(_homeView==='compare'){renderCompareTab(R,P);return}
     renderDecisionRoom(R);return;
@@ -4530,15 +4529,16 @@ function rbApply(){
   const keys=Object.keys(_rbOv).filter(k=>k!=='stripeShift'&&k!=='sellCost');
   if(!keys.length)return;
   const names=keys.map(k=>{const L=RB_LEVERS.find(x=>x[0]===k);return `${L[1].toLowerCase()} ${L[5](_rbOv[k])}`});
-  if(!showConfirm(`Set your plan's ${names.join(', ')}?`))return;
+  const moves=keys.includes('homePurchaseYear')?'\n\nMoving the purchase year shifts the down payment, and every year of the plan after it.':'';
+  if(!showConfirm(`Set your plan's ${names.join(', ')}?${moves}`))return;
   for(const k of keys){P[k]=_rbOv[k];delete _rbOv[k]}
   markDirty();buildControls();render();savePlannerState();
   showToast('Applied to your plan','green');
 }
 
-function renderRentBuyTab(R,P){
-  const ca=document.getElementById('chartArea');
-  destroyCharts();
+function renderRentBuyTab(R,P,host){
+  const ca=document.getElementById(host||'chartArea');
+  if(!host)destroyCharts();
   if(typeof PlannerRentBuy==='undefined'){ca.innerHTML='<p>The rent-or-buy comparison did not load. Refresh to try again.</p>';return}
   const q=rbParams(),first=R[0].yr,last=R[R.length-1].yr;
   const py=q.homePurchaseYear;
@@ -4697,33 +4697,21 @@ function renderRentBuyTab(R,P){
 //
 // Levers here are exploratory: they do not touch the plan until explicitly applied, so you
 // can test a rate you have been quoted without disturbing your saved assumptions.
-let _afRate=null,_afDown=null,_afShare=0.28,_afYear=null;
+// One set of levers drives the whole Home screen. Rate, down payment and purchase year are the
+// rent-or-buy overrides (_rbOv), so the verdict, the affordable price, the rates grid and the monthly
+// cost all answer for the same assumptions, and one Apply puts them in the plan. Only the comfort
+// share — how much of income housing may take — is the affordability screen's own.
+let _afShare=0.28;
 let _afQuarter=null,_afTenderCap=null,_afPauseMonths=0;
 function afSet2(k,v){if(k==='q')_afQuarter=parseInt(v,10);else if(k==='cap')_afTenderCap=v===''||v==='none'?null:Number(v);else _afPauseMonths=Number(v);render()}
 function afSet(k,v){
-  if(k==='rate')_afRate=parseFloat(v);
-  else if(k==='down')_afDown=parseFloat(v);
-  else if(k==='year')_afYear=parseInt(v,10);
-  else _afShare=parseFloat(v);
-  render();
+  if(k==='rate')rbSet('mortgageRate',v);
+  else if(k==='down')rbSet('downPctg',v);
+  else if(k==='year')rbSet('homePurchaseYear',v);
+  else{_afShare=parseFloat(v);render()}
 }
-function afReset(){_afRate=null;_afDown=null;_afYear=null;_afShare=0.28;render()}
-function afApply(){
-  const q=afParams();
-  // Moving the purchase year is a bigger change than a rate tweak — it shifts a down
-  // payment, and every year of the plan after it — so it is named in the confirmation
-  // rather than folded in silently with the other two.
-  const moves=q.homePurchaseYear!==P.homePurchaseYear;
-  if(!showConfirm(`Set your plan's mortgage rate to ${q.mortgageRate}% and down payment to ${q.downPctg}%${moves?`, and move your purchase to ${q.homePurchaseYear}`:''}?`))return;
-  P.mortgageRate=q.mortgageRate;P.downPctg=q.downPctg;P.homePurchaseYear=q.homePurchaseYear;
-  _afRate=null;_afDown=null;_afYear=null;
-  markDirty();buildControls();render();savePlannerState();
-  showToast('Applied to your plan','green');
-}
-function afParams(){
-  return{...P,mortgageRate:_afRate??P.mortgageRate,downPctg:_afDown??P.downPctg,
-    homePurchaseYear:_afYear??P.homePurchaseYear};
-}
+function afReset(){_afShare=0.28;rbReset()}
+function afParams(){return rbParams()}
 
 // ── Down payment readiness and the mortgage's whole life (these lived on the Goals tab) ──────────
 // Both answer questions about the home, so they sit with the home. Readiness asks whether the cash
@@ -4778,11 +4766,27 @@ function mortgagePayoffHtml(R,P){
   </div></details>`;
 }
 
-function renderHousingTab(R,P){
+// ── Home: one screen for the whole decision ──────────────────────────────────
+// Rent or buy comes first, because it is the question; if buying, how much and when follows, then what
+// it costs, whether the cash is there, and what it looks like over thirty years. Every part answers for
+// the same levers (see _afShare / rbParams), so nothing on the page disagrees with anything else on it.
+function renderHomeTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
+  const renting=P.housingMode==='rent';
+  ca.innerHTML=`<div id="homeRB"></div>
+    <div class="home-sec"><div class="hero-eyebrow">${renting?'If you keep renting':'If you buy'}</div><h2>${renting?'Your rent, year by year':'How much house, and when'}</h2></div>
+    <div id="homeHS"></div>`;
+  renderRentBuyTab(R,P,'homeRB');
+  renderHousingTab(R,P,'homeHS');
+  document.getElementById('summaries').innerHTML='';
+}
+
+function renderHousingTab(R,P,host){
+  const ca=document.getElementById(host||'chartArea');
+  if(!host)destroyCharts();
   if(P.housingMode==='rent'){
-    ca.innerHTML=`<div class="ui-head"><div><h2>Rent your home</h2><p>Rent is modeled for the full plan, with annual increases.</p></div></div>${housingModeControl()}
+    ca.innerHTML=`<div class="ui-head"><div><h2>Rent your home</h2><p>Rent is modeled for the full plan, with annual increases.</p></div></div>${host?'':housingModeControl()}
       <label>Monthly rent in ${P.planStartYear} <input type="number" min="0" step="100" value="${P.nycRent}" onchange="U('nycRent',this.value)"></label>
       <label>Annual rent inflation (%) <input type="number" min="0" max="100" step="0.5" value="${((P.rentInflation??.03)*100).toFixed(1)}" onchange="U('rentInflation',Math.max(0,Number(this.value))/100)"></label>
       <label>Monthly rent cap <input type="number" min="0" step="500" value="${P.rentCap??0}" onchange="U('rentCap',Math.max(0,Number(this.value)))"></label>
@@ -4791,7 +4795,6 @@ function renderHousingTab(R,P){
     return;
   }
   const q=afParams();
-  const dirty=(_afRate!==null&&_afRate!==P.mortgageRate)||(_afDown!==null&&_afDown!==P.downPctg)||(_afYear!==null&&_afYear!==P.homePurchaseYear);
   const a=affordability(q,_afShare);
   const py=q.homePurchaseYear;
   const perDollar=housingCostPerDollar(q);
@@ -4823,11 +4826,6 @@ function renderHousingTab(R,P){
         ? `Limited by <strong>carrying cost</strong>: above this, housing eats more than ${(_afShare*100).toFixed(0)}% of your after-tax income in ${py}. Your balance sheet could actually fund up to ${money(a.plan)}.`
         : `Limited by your <strong>balance sheet</strong>: above this, funding the purchase would break your ${fmt(q.liquidReserveFloor??D.liquidReserveFloor)} reserve floor. Cash flow alone could carry up to ${money(a.comfort)}.`}
     </div>
-    ${dirty?`<div style="margin-top:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-      <span style="font-size:9.5px;color:var(--a)">● Exploring — your plan still says ${P.mortgageRate}% / ${P.downPctg}% down, buying in ${P.homePurchaseYear}</span>
-      <button onclick="afApply()" style="font-size:9.5px;padding:4px 10px;border-radius:5px;border:none;background:var(--accent);color:#fff;font-family:inherit;cursor:pointer">Apply to my plan</button>
-      <button onclick="afReset()" style="font-size:9.5px;padding:4px 10px;border-radius:5px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">Reset</button>
-    </div>`:''}
   </div>`;
 
   // ── The two limits vs. where you are ──
@@ -4854,14 +4852,10 @@ function renderHousingTab(R,P){
   </div>`;
   const lastYr=R[R.length-1].yr;
   h+=`<div class="glass-card" style="padding:16px 18px">
-    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:12px">Move a lever — the number above updates</div>
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:12px">How much of income housing may take — the number above updates (rate, down payment and year are set under Rent or buy)</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px">
-      ${lever('afRate','Mortgage rate',q.mortgageRate,3,9,.125,q.mortgageRate+'%','rate')}
-      ${lever('afDown','Down payment',q.downPctg,10,80,5,q.downPctg+'%','down')}
       ${lever('afShare','Max share of income',_afShare,.15,.45,.01,(_afShare*100).toFixed(0)+'%','share',
         `<strong style="color:var(--t2)">${fmtF(Math.round(shareBudget/12))}/mo</strong> · ${fmt(Math.round(shareBudget))}/yr — ${(_afShare*100).toFixed(0)}% of ${fmt(buyRow.netTC)} after-tax income in ${py}`)}
-      ${lever('afYear','Purchase year',py,R[0].yr,lastYr,1,String(py),'year',
-        py===P.homePurchaseYear?`Your plan buys in ${P.homePurchaseYear}`:`Your plan says ${P.homePurchaseYear}`)}
     </div>
   </div>`;
 
@@ -5068,7 +5062,7 @@ function renderHousingTab(R,P){
   </div>`;
 
   h+=`</div>`;
-  ca.innerHTML=housingModeControl()+h;
+  ca.innerHTML=(host?'':housingModeControl())+h;
   updateRefiCalc();
   document.getElementById('summaries').innerHTML='';
 }
@@ -5580,7 +5574,7 @@ function setTab(t){
   // command palette and any in-app link can keep using the old names.
   if(t==='nw'||t==='income'||t==='cashflow'||t==='table'){_projView=t;t='projection';}
   if(t==='goals'){_todayView='budget';t='today';}
-  if(t==='housing'||t==='sensitivity'||t==='compare'){_homeView=(t==='sensitivity'?'levers':t);t='home';}
+  if(t==='housing'||t==='rentbuy'||t==='sensitivity'||t==='compare'){_homeView=(t==='sensitivity'?'levers':t==='rentbuy'?'housing':t);t='home';}
   if(t==='portfolio'){_todayView='holdings';t='today';}
   activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();if(!_reduceMotion())requestAnimationFrame(()=>{['chartArea','summaries'].forEach(id=>{const e=document.getElementById(id);if(e){e.classList.remove('tab-fade');void e.offsetWidth;e.classList.add('tab-fade')}})});savePlannerState()}
 
@@ -5692,8 +5686,8 @@ let cockpitExRet=true;
 // levers matter, save and diff. One tab, four depths — not four destinations.
 let _homeView='explore';
 const SUB_VIEWS={
-  home:{get:()=>_homeView,set:v=>{_homeView=v},
-    views:[['explore','spark','Explore'],['housing','home','Housing'],['rentbuy','arrow','Rent or buy'],['levers','chart','Key levers'],['compare','diamond','Compare']]},
+  home:{get:()=>_homeView==='rentbuy'?'housing':_homeView,set:v=>{_homeView=v},
+    views:[['explore','spark','Explore'],['housing','home','Home'],['levers','chart','Key levers'],['compare','diamond','Compare']]},
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','chart','Net worth'],['income','circle','Income & tax'],['cashflow','arrow','Cash flow'],['table','doc','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
@@ -5757,7 +5751,7 @@ function _paletteCommands(){
     {icon:'💸',label:'Cash flow',hint:'Projection',run:()=>setTab('cashflow')},
     {icon:'📋',label:'Table',hint:'Projection',run:()=>setTab('table')},
     {icon:'🎯',label:'Budget',hint:'Today',run:()=>{_todayView='budget';setTab('today')}},
-    {icon:'🏠',label:'Housing',hint:'Decisions',run:()=>setTab('housing')},
+    {icon:'🏠',label:'Home: rent or buy',hint:'Decisions',run:()=>setTab('housing')},
     {icon:'🎚️',label:'Key levers',hint:'Decisions',run:()=>setTab('sensitivity')},
     {icon:'⚖',label:'Compare',hint:'Decisions',run:()=>setTab('compare')},
     {icon:'📊',label:'Holdings',hint:'Today',run:()=>setTab('portfolio')},

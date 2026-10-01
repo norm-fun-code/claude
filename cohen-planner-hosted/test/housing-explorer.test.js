@@ -10,25 +10,28 @@ const tab = html.slice(html.indexOf('function renderHousingTab'), html.indexOf('
 
 // "How much house can I afford" and "what if I buy later" are the same question asked
 // twice. Both now live on the Housing tab, where the first one already was.
-describe('purchase year is a housing lever', () => {
+describe('purchase year is a Home lever, shared with rent-or-buy', () => {
   it('carries the explored year through the same params as rate and down payment', () => {
-    expect(html).toContain('let _afRate=null,_afDown=null,_afShare=0.28,_afYear=null;');
-    expect(html).toMatch(/homePurchaseYear:_afYear\?\?P\.homePurchaseYear/);
-    expect(html).toMatch(/else if\(k==='year'\)_afYear=parseInt\(v,10\)/);
+    // One set of levers: the affordability screen reads the rent-or-buy overrides, so the verdict,
+    // the affordable price and the rates grid cannot answer for different assumptions.
+    expect(html).toContain('let _afShare=0.28;');
+    expect(html).toContain('function afParams(){return rbParams()}');
+    expect(html).toContain("if(k==='year')rbSet('homePurchaseYear',v)");
+    expect(html).toContain("if(k==='rate')rbSet('mortgageRate',v)");
+    expect(html).toContain("else if(k==='down')rbSet('downPctg',v)");
   });
 
   it('counts an explored year as exploring, so the plan is not silently ahead of the page', () => {
-    const dirty = html.match(/const dirty=\(_afRate[^;]+;/)[0];
-    expect(dirty).toContain('_afYear');
+    expect(html).toContain('const exploring=Object.keys(_rbOv).length>0;');
   });
 
-  it('names the year move in the confirmation, and resets it like the others', () => {
-    // Moving the purchase year shifts a down payment and every year after it. That is a
-    // bigger change than a rate tweak and should not ride along unmentioned.
-    expect(html).toContain('move your purchase to ${q.homePurchaseYear}');
-    expect(html).toContain('P.homePurchaseYear=q.homePurchaseYear;');
-    expect(html).toContain('_afRate=null;_afDown=null;_afYear=null;');
-    expect(html).toContain("function afReset(){_afRate=null;_afDown=null;_afYear=null;_afShare=0.28;render()}");
+  it('names the year move in the confirmation, and resets together', () => {
+    // Moving the purchase year shifts a down payment and every year after it. That is a bigger
+    // change than a rate tweak and should not ride along unmentioned.
+    const apply = html.slice(html.indexOf('function rbApply('), html.indexOf('function renderHomeTab('));
+    expect(apply).toContain('showConfirm(');
+    expect(apply).toContain('purchase year');
+    expect(html).toContain('function afReset(){_afShare=0.28;rbReset()}');
   });
 });
 

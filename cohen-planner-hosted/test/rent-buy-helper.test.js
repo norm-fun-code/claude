@@ -67,8 +67,10 @@ describe('rent-or-buy helper',()=>{
   expect(RB.breakevenYear(rows,1,3)).toBe(null);
  });
  it('is a Decisions view, served to the page, and explores without saving',()=>{
-  expect(html).toContain("['rentbuy','arrow','Rent or buy']");
-  expect(html).toContain("if(_homeView==='rentbuy'){renderRentBuyTab(R,P);return}");
+  // Rent or buy is the top of the merged Home screen, and the old view key still lands there.
+  expect(html).toContain("['housing','home','Home']");
+  expect(html).toContain("if(_homeView==='housing'||_homeView==='rentbuy'){renderHomeTab(R,P);return}");
+  expect(html).toContain("renderRentBuyTab(R,P,'homeRB');");
   expect(html).toContain('<script src="/rent-buy.js"></script>');
   expect(server).toContain("'rent-buy.js'");
   const fn=html.slice(html.indexOf('function rbSet('),html.indexOf('function rbApply('));
