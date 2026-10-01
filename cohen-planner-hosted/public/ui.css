@@ -1145,3 +1145,20 @@ body:has(.demo-banner) .bd-bar{top:46px}
 .bd-infl-sm{margin-left:6px}
 @media(max-width:760px){.bd-bar{padding:8px 10px;gap:8px 12px}.bd-infl{margin-left:0}}
 .bd-ef-note{grid-column:1/-1;margin:2px 0 0!important}
+
+/* Budget sections: each group its own panel, easy to find and to jump to */
+.bd-lines{gap:18px}
+.bd-lines .cl-group.bd-sec{gap:12px;padding:16px 18px 18px;border:1px solid color-mix(in srgb,var(--tier) 30%,var(--bd));border-left:4px solid var(--tier);border-radius:14px;background:color-mix(in srgb,var(--tier) 5%,var(--s1));scroll-margin-top:150px}
+.bd-lines .cl-group.bd-sec .cl-ghead{border-bottom:0;padding-bottom:0;align-items:center}
+.bd-lines .cl-group.bd-sec .cl-ghead>span:first-child{font-size:13px;letter-spacing:.7px;color:var(--tx)}
+.bd-lines .cl-group.bd-sec .cl-ghead i{width:11px;height:11px}
+.bd-lines .cl-group.bd-sec .cl-gtot{font-size:24px;letter-spacing:-.5px}
+.bd-lines .cl-group.bd-sec .cl-gtot small{font-size:12px}
+.bd-lines .cl-group.bd-sec .cl-gnote{margin:0 0 4px;padding-bottom:12px;border-bottom:1px solid color-mix(in srgb,var(--tier) 22%,var(--bd))}
+.bd-jump{flex:1 1 100%;display:flex;gap:8px;overflow-x:auto;padding-top:2px;scrollbar-width:none}
+.bd-jump::-webkit-scrollbar{display:none}
+.bd-jump button{flex:none;display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;border:1px solid color-mix(in srgb,var(--tier) 40%,var(--bd));background:color-mix(in srgb,var(--tier) 8%,var(--s2));color:var(--t2);font:inherit;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}
+.bd-jump button:hover{color:var(--tx);background:color-mix(in srgb,var(--tier) 16%,var(--s2))}
+.bd-jump button i{width:8px;height:8px;border-radius:50%;background:var(--tier)}
+.bd-jump button b{font-weight:600;color:var(--tx);font-variant-numeric:tabular-nums}
+@media(max-width:760px){.bd-lines .cl-group.bd-sec{padding:14px 12px 16px}.bd-lines .cl-group.bd-sec .cl-gtot{font-size:20px}.bd-lines .cl-group.bd-sec{scroll-margin-top:170px}}

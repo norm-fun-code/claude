@@ -3588,6 +3588,14 @@ function renderIncomeLens(R,actual){
 // later — tuition makes that the plan, not a failure — so the measure of a budget is HEADROOM:
 // how much more could be spent with liquid assets never below the reserve floor in any year.
 let _budgetYear=null,_budgetUnit='month',_budgetScope='onward',_budgetUndo=null,_budgetEdit=null;
+function budgetJump(key){
+  const el=document.getElementById('bd-g-'+key),bar=document.querySelector('.bd-bar');if(!el)return;
+  const calm=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Land just below the pinned bar, whatever its height and wherever it sticks (it sits lower under the
+  // demo banner, and taller on a phone), rather than trusting a fixed margin.
+  const stuck=bar?(parseFloat(getComputedStyle(bar).top)||0)+bar.offsetHeight:0;
+  window.scrollTo({top:el.getBoundingClientRect().top+window.scrollY-stuck-12,behavior:calm?'auto':'smooth'});
+}
 function budgetEdit(k){_budgetEdit=_budgetEdit===k?null:k;render()}
 const RM_COLOR={fixed:'#8278ee',essential:'#8bdded',discretionary:'#ecc183',saving:'#6fa8ff',investing:'#7ae3c3',oneoff:'#b6a8ff',tax:'#6b7a90',pretax:'#8ebfff',short:'#ff9caf'};
 const BD_COLOR={cash:'#7ae3c3',stock:'#8278ee',savings:'#ecc183',left:'#8bdded',save:'#7ae3c3',draw:'#ecc183'};
@@ -3843,6 +3851,7 @@ function renderBudgetTab(R,P){
           <button type="button" onclick="budgetYearStep(1,${first},${last})" aria-label="Next year"${yr>=last?' disabled':''}>›</button></div>
         <div class="spend-scope" role="group" aria-label="Show amounts per">${chip(mo,"budgetUnit('month')",'Monthly')}${chip(!mo,"budgetUnit('year')",'Annual')}</div>
         ${expInflControl()}
+        @@JUMP@@
     </div>`;
 
   // ── The shape of the plan ──
@@ -3987,13 +3996,17 @@ function renderBudgetTab(R,P){
   const bucketGroups=B.BUCKETS.map(b=>{
     const spent=groupTotal(b.key),share=den>0?spent/den:0;
     const rows=b.key==='investing'?investRows():b.key==='saving'?savingRows():bucketRows(b.key);
-    return `<div class="cl-group" style="--tier:${RM_COLOR[b.key]}"><div class="cl-ghead"><span><i></i>${advEscape(b.label)}</span><span class="cl-gtot">${_lensPct(share)} <small>${amtShort(spent)}${unitWord}</small></span></div>
+    return `<div class="cl-group bd-sec" id="bd-g-${b.key}" style="--tier:${RM_COLOR[b.key]}"><div class="cl-ghead"><span><i></i>${advEscape(b.label)}</span><span class="cl-gtot">${_lensPct(share)} <small>${amtShort(spent)}${unitWord}</small></span></div>
       <p class="cl-gnote">${advEscape(b.note)}</p><div class="cl-list">${rows}</div></div>`;
   }).join('');
   const groups=bucketGroups;
+  // A way to move between the sections without scrolling for them: each chip is a section, with its
+  // share, in its colour. It sits in the pinned bar, so it is there wherever you have scrolled to.
+  const jumpHtml=`<nav class="bd-jump" aria-label="Jump to a section">${B.BUCKETS.map(b=>`<button type="button" onclick="budgetJump('${b.key}')" style="--tier:${RM_COLOR[b.key]}"><i></i>${advEscape(b.label.replace(' costs',''))}<b>${_lensPct(den>0?groupTotal(b.key)/den:0)}</b></button>`).join('')}<button type="button" onclick="budgetJump('oneoff')" style="--tier:${RM_COLOR.oneoff}"><i></i>One-off</button></nav>`;
+  h=h.replace('@@JUMP@@',jumpHtml);
   // One-off costs have a home here whether or not this year has one: a single year's cost, not
   // repeated and not inflated, set for any year of the first eleven.
-  const oneOff=`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off costs</span><span class="cl-gtot">${row.eAdj?`${pct(Math.abs(row.eAdj))} <small>${row.eAdj<0?'−':''}${amtShort(Math.abs(row.eAdj))}${unitWord}</small>`:'<small>none in '+yr+'</small>'}</span></div>
+  const oneOff=`<div class="cl-group bd-sec" id="bd-g-oneoff" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off costs</span><span class="cl-gtot">${row.eAdj?`${pct(Math.abs(row.eAdj))} <small>${row.eAdj<0?'−':''}${amtShort(Math.abs(row.eAdj))}${unitWord}</small>`:'<small>none in '+yr+'</small>'}</span></div>
     <div class="bd-oneoff">${embedControls('oneOff')}</div></div>`;
   const baselines=`<details class="polish-fold refine-fold"><summary>Baselines the model starts from</summary><div>
     <p class="spend-caption" style="margin:0 0 10px">The yearly figure each line starts from in the plan's first year, before children, inflation and any rule or pin above. Changing one moves the model's own figure and keeps its growth; a rule above replaces a line outright.</p>

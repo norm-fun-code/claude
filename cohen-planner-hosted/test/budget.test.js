@@ -366,3 +366,25 @@ describe('the Budget control bar and the expense-inflation setting',()=>{
   expect(html).toContain("'Show future dollars in today\\u2019s purchasing power')+expInflControl('bd-infl-sm');");
  });
 });
+
+describe('Budget sections you can see and move between',()=>{
+ const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
+ const css=fs.readFileSync(new URL('../public/ui.css',import.meta.url),'utf8');
+ it('makes every group, and the one-off costs, its own anchored panel',()=>{
+  expect(ui).toContain('class="cl-group bd-sec" id="bd-g-${b.key}"');
+  expect(ui).toContain('class="cl-group bd-sec" id="bd-g-oneoff"');
+  expect(css).toMatch(/\.bd-lines \.cl-group\.bd-sec\{[^}]*border-left:4px solid var\(--tier\)/);
+ });
+ it('puts a jump chip for each section in the pinned bar, with its share, and replaces the placeholder',()=>{
+  const bar=ui.slice(ui.indexOf('<div class="bd-bar"'),ui.indexOf('</div>`;',ui.indexOf('<div class="bd-bar"')));
+  expect(bar).toContain('@@JUMP@@');
+  expect(ui).toContain("h=h.replace('@@JUMP@@',jumpHtml);");
+  expect(ui).toContain("onclick=\"budgetJump('${b.key}')\"");expect(ui).toContain("onclick=\"budgetJump('oneoff')\"");
+  expect(css).toContain('.bd-jump{flex:1 1 100%;display:flex');
+ });
+ it('lands below the pinned bar by measuring it, not by trusting a fixed margin',()=>{
+  const fn=html.slice(html.indexOf('function budgetJump('),html.indexOf('function budgetEdit('));
+  expect(fn).toContain("getComputedStyle(bar).top");expect(fn).toContain('bar.offsetHeight');
+  expect(fn).toContain('prefers-reduced-motion');
+ });
+});
