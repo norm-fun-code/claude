@@ -37,7 +37,7 @@
     stripeVestWithholdingRate:[0,0.9],stripeObservedMonth:[1,12],
     concentrationThreshold:[0,1],
     pretax401k:[0,1e6],pretaxBenefits:[0,1e6],
-    nycRent:[0,1e6],baseGroceries:[0,1e6],baseDining:[0,1e6],baseShopping:[0,1e6],
+    nycRent:[0,1e6],baseGroceries:[0,1e6],baseDining:[0,1e6],baseShopping:[0,1e6],clothingShare:[0,1],
     baseVacations:[0,1e6],postKidVacations:[0,1e6],baseMisc:[0,1e6],baseCharity:[0,1e7],
     baseMedical:[0,1e6],baseInsurance:[0,1e6],childcareMonthly:[0,1e5],
     // The child's age in MONTHS when childcare begins — leave covers what comes before it.
@@ -65,7 +65,7 @@
     {prefix:'stripeRetY',max:9,range:[-0.9,3]},
     {prefix:'nancyW2Y',max:3,range:[0,1e7]},
   ];
-  const LIVING_CATEGORIES=(model&&model.LIV_KEYS)||['groceries','dining','shopping','vacations','auto','insurance','misc','entertainment','charity','medical','transit','utilities'];
+  const LIVING_CATEGORIES=(model&&model.LIV_KEYS)||['groceries','dining','shopping','clothing','vacations','auto','insurance','misc','entertainment','charity','medical','transit','utilities'];
 
   function validateOverride(key,value){
     if(ENUMS[key]){
@@ -195,7 +195,7 @@
         // The four components and the one-off, which SUM to total — exactly, because the
         // engine sums the rounded parts rather than rounding the raw sum.
         expenses:{housing:r.h,living:r.liv,
-          // Living is twelve lines and it is usually the largest of the four. Handing over
+          // Living is thirteen lines and it is usually the largest of the four. Handing over
           // only its sum is the same defect one level down: a total nobody can see inside.
           livingBreakdown:r.livParts||undefined,
           childcare:r.cc,tuition:r.tu,
@@ -208,7 +208,7 @@
         stripe:{soldForCash:r.sSold,retained:r.sRet,shareOfNetWorth:r.sPct},
       })),
       notes:{
-        expenses:'housing + living + childcare + tuition + oneOffAdjustment = total, exactly, and livingBreakdown sums to living the same way. Housing is rent, or mortgage + property tax + insurance + maintenance once the home is bought. Living is opened out in livingBreakdown — groceries, dining, shopping, vacations, auto, insurance, misc, entertainment, charity, medical, transit and utilities — each already including that year\'s share for every child.',
+        expenses:'housing + living + childcare + tuition + oneOffAdjustment = total, exactly, and livingBreakdown sums to living the same way. Housing is rent, or mortgage + property tax + insurance + maintenance once the home is bought. Living is opened out in livingBreakdown — groceries, dining, shopping, clothing, vacations, auto, insurance, misc, entertainment, charity, medical, transit and utilities — each already including that year\'s share for every child.',
         oneOffAdjustment:'A signed dollar amount for that single year (expenseAdjY0…Y10), for a one-time cost like a baby\'s first year or a renovation. It is not inflated and not spread across the year.',
         fullYearTotal:'What the whole calendar year costs. It differs from total only in a stub year, where total covers just the months the plan models.',
         cashGap:'Shortfall against CASH pay alone — how much of that year\'s vest must be sold. Closing it consumes no accumulated wealth. Never call it a deficit.',

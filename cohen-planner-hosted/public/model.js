@@ -293,7 +293,7 @@ function yearRemaining(p){
 // The twelve lines inside "living", in the order they are read. Named here rather than at
 // each call site, because a surface that invented its own order would put charity beside
 // groceries in one place and not another.
-const LIV_KEYS=['groceries','dining','shopping','vacations','auto','insurance',
+const LIV_KEYS=['groceries','dining','shopping','clothing','vacations','auto','insurance',
   'misc','entertainment','charity','medical','transit','utilities'];
 
 // An exact, named living-category value for one plan year. These overrides are intentionally
@@ -305,6 +305,7 @@ const livingCategoryKey=(category,yearIndex)=>`living${category[0].toUpperCase()
 // edited, and carrying an edit forward means writing every later year it covers. One-off
 // adjustments keep their own, shorter limit.
 const LIV_OVERRIDE_MAX=40;
+const CLOTHING_SHARE=0.30;
 function livingCategoryOverride(p,category,yr,sy){
   if(!LIV_KEYS.includes(category))return null;
   const i=yr-(sy||p.planStartYear||2026);
@@ -593,13 +594,24 @@ function run(p,rets,compiledGrants){
     // expense side was the one nobody could see inside. Kept as parts from here on: each is
     // scaled and rounded on its own, and the total is their SUM — so the figures printed
     // beneath the heading add up to the heading, which is the rule everywhere else here.
-    const livRaw={groceries:gr,dining:di,shopping:sh,vacations:va,auto:au,insurance:ins,
+    // Clothing is carved out of shopping, not added to it: it is a share of the same figure,
+    // children's costs included, so splitting the line moves no money and the total is the one
+    // the plan had before it existed. Each year takes its own share of that year's shopping.
+    const clShare=Math.min(1,Math.max(0,Number(p.clothingShare??CLOTHING_SHARE)));
+    // Whole dollars, so the two lines round to exactly what the one line did.
+    const cl=Math.round(sh*clShare);sh-=cl;
+    const livRaw={groceries:gr,dining:di,shopping:sh,clothing:cl,vacations:va,auto:au,insurance:ins,
       misc:mi,entertainment:en,charity:ch,medical:md,transit:tr,utilities:ut};
     for(const category of LIV_KEYS){
       const exact=livingCategoryOverride(p,category,yr,sy);
       if(exact!==null)livRaw[category]=exact;
     }
-    const roundParts=(o,f)=>{const out={};for(const k of LIV_KEYS)out[k]=Math.round(o[k]*f);return out};
+    const roundParts=(o,f)=>{
+      const out={};for(const k of LIV_KEYS)out[k]=Math.round(o[k]*f);
+      // Shopping and clothing are one figure in two lines; round the pair together so scaling a
+      // part-year cannot make them disagree by a dollar with what the single line used to say.
+      out.shopping=Math.round((o.shopping+o.clothing)*f)-out.clothing;
+      return out};
     const sumParts=o=>LIV_KEYS.reduce((t,k)=>t+o[k],0);
     let liv=sumParts(roundParts(livRaw,1));
     // Childcare — a single flat monthly rate from birth through the year before yeshiva
@@ -1078,7 +1090,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

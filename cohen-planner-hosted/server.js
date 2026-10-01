@@ -64,7 +64,7 @@ const ADVISOR_TOOLS = [
       type: 'object',
       properties: {
         year: { type: 'integer', description: 'Calendar year to update' },
-        category: { type: 'string', enum: ['groceries','dining','shopping','vacations','auto','insurance','misc','entertainment','charity','medical','transit','utilities'] },
+        category: { type: 'string', enum: ['groceries','dining','shopping','clothing','vacations','auto','insurance','misc','entertainment','charity','medical','transit','utilities'] },
         operation: { type: 'string', enum: ['set','increase','decrease'], description: 'Whether amount is the exact new total, an increase to the current total, or a decrease from it' },
         amount: { type: 'number', description: 'Dollar amount. For set, the exact annual category total; for increase/decrease, the change from the current annual total.' },
         reason: { type: 'string', description: 'One sentence explaining the change' },
@@ -1967,7 +1967,7 @@ You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, 
             // bad string reach the model, where the switch would silently fall back to the
             // default and the user would see a proposal that doesn't do what it claims.
             const STRIPE_POLICIES = ['deficit', 'floor', 'pct', 'retain', 'sell'];
-            const namedCategory=/\b(grocer(?:y|ies)|dining|shopping|vacation(?:s)?|auto|insurance|misc(?:ellaneous)?|entertainment|charity|medical|transit|utilities?|phone)\b/i.test(`${message||''} ${reason||''}`);
+            const namedCategory=/\b(grocer(?:y|ies)|dining|shopping|vacation(?:s)?|clothing|clothes|auto|insurance|misc(?:ellaneous)?|entertainment|charity|medical|transit|utilities?|phone)\b/i.test(`${message||''} ${reason||''}`);
             if(/^expenseAdjY\d+$/.test(key)&&namedCategory){
               result={error:'A named living category was requested. Do not use expenseAdjY. Call set_expense_category so the change appears inside that category for the requested year only.'};
             } else if(aiParams.stripeGrants?.enabled&&/^normCashY\d+$/.test(key)&&(aiParams.planStartYear||2026)+Number(key.slice(9))>(aiParams.stripeGrants.throughYear??Infinity)){

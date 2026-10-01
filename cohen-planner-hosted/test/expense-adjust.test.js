@@ -287,7 +287,7 @@ describe('living opens out into its twelve lines', () => {
   });
 
   it('covers every line the engine actually adds up', () => {
-    expect(M.LIV_KEYS).toEqual(['groceries', 'dining', 'shopping', 'vacations', 'auto',
+    expect(M.LIV_KEYS).toEqual(['groceries', 'dining', 'shopping', 'clothing', 'vacations', 'auto',
       'insurance', 'misc', 'entertainment', 'charity', 'medical', 'transit', 'utilities']);
     expect(Object.keys(yr(P, 2027).livParts).sort()).toEqual([...M.LIV_KEYS].sort());
   });
@@ -381,5 +381,42 @@ describe('editing a year\'s living lines in place', () => {
     expect(html).toContain('onchange="expCarrySet(this.checked)"');
     const set = html.slice(html.indexOf('function expCatSet('), html.indexOf('function expCatReset('));
     expect(set).toMatch(/markDirty\(\);buildControls\(\);render\(\);savePlannerState\(\)/);
+  });
+});
+
+describe('clothing, carved out of shopping', () => {
+  const yrs = [2026, 2027, 2030, 2042, 2058];
+  const rows = (over) => M.run(plan({ observedOn: null, ...over })).R;
+  it('is 30% of what shopping was, each year, and moves no money', () => {
+    const was = rows({ clothingShare: 0 });          // every dollar left in shopping
+    const now = rows({});
+    for (const y of yrs) {
+      const a = was.find(r => r.yr === y), b = now.find(r => r.yr === y);
+      expect(b.livFullParts.clothing).toBe(Math.round(a.livFullParts.shopping * 0.3));
+      expect(b.livFullParts.clothing + b.livFullParts.shopping).toBe(a.livFullParts.shopping);
+      expect(b.liv).toBe(a.liv);
+      expect(b.totE).toBe(a.totE);
+      expect(b.netWorth).toBe(a.netWorth);
+    }
+  });
+  it('changes nothing in a part-year either', () => {
+    const a = M.run(plan({ observedOn: '2026-09-16', clothingShare: 0 })).R, b = M.run(plan({ observedOn: '2026-09-16' })).R;
+    expect(b.map(r => r.liv)).toEqual(a.map(r => r.liv));
+    const r = b[0];
+    expect(Object.values(r.livParts).reduce((t, v) => t + v, 0)).toBe(r.liv);
+  });
+  it('follows the share, and each line can be set on its own', () => {
+    const half = rows({ clothingShare: 0.5 }).find(r => r.yr === 2030).livFullParts;
+    expect(Math.abs(half.clothing - half.shopping)).toBeLessThanOrEqual(1);
+    const set = rows({ livingClothingY4: 9000 }).find(r => r.yr === 2030);
+    expect(set.livFullParts.clothing).toBe(9000);
+    expect(set.livFullParts.shopping).toBe(rows({}).find(r => r.yr === 2030).livFullParts.shopping);
+  });
+  it('is known to the advisor and labelled in the page', () => {
+    const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+    const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+    expect(html).toContain("clothing:'Clothing'");
+    expect(server).toContain("'shopping','clothing','vacations'");
+    expect(require('../public/advisor-tools.js').validateOverride('livingClothingY3', 4000)).toEqual({ ok: true, value: 4000 });
   });
 });

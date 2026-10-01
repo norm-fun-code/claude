@@ -506,7 +506,7 @@ const D={
   nancyW2Y0:130000,nancyW2Y1:80000,nancyW2Y2:100000,nancyW2Y3:75000,
   nancyHourlyRate:300,nancyRampYear:2030,nancyRampClients:5,nancyMaxClients:18,nancyRampYears:6,nancyWeeksPerYear:46,
   nancySoloPractice:1,nancyPracticeOverhead:15000,nancyQBIRate:.20,nancyHomeOfficeDeduct:8000,
-  baseGroceries:7000,baseDining:14000,baseShopping:22000,baseVacations:20000,
+  baseGroceries:7000,baseDining:14000,baseShopping:22000,clothingShare:0.30,baseVacations:20000,
   baseAuto:3500,baseInsurance:1500,baseMisc:10000,baseEntertainment:4500,
   baseCharity:8500,baseMedical:4500,baseTransit:4000,baseUtilsPhoneNet:5500,
   expenseInflation:.03,postKidVacations:10000,
@@ -1414,7 +1414,7 @@ function buildControls(){
   h+=ST('👩‍⚕️ Nancy — Gross Income','nancy-income',nancyBody);
 
   // Expenses
-  let expBody=s('Groceries','baseGroceries',4000,15000,500,fmtF)+s('Dining','baseDining',5000,25000,500,fmtF)+s('Shopping','baseShopping',10000,40000,1000,fmtF)+s('Vacations (no kids)','baseVacations',5000,30000,1000,fmtF)+s('Vacations (w/ kids)','postKidVacations',5000,25000,1000,fmtF)+s('Misc','baseMisc',5000,20000,1000,fmtF)+s('Charity','baseCharity',0,20000,500,fmtF)+s('Medical','baseMedical',2000,10000,500,fmtF)+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%');
+  let expBody=s('Groceries','baseGroceries',4000,15000,500,fmtF)+s('Dining','baseDining',5000,25000,500,fmtF)+s('Shopping (incl. clothing)','baseShopping',10000,40000,1000,fmtF)+s('Clothing, share of shopping','clothingShare',0,.6,.05,v=>(v*100).toFixed(0)+'%')+s('Vacations (no kids)','baseVacations',5000,30000,1000,fmtF)+s('Vacations (w/ kids)','postKidVacations',5000,25000,1000,fmtF)+s('Misc','baseMisc',5000,20000,1000,fmtF)+s('Charity','baseCharity',0,20000,500,fmtF)+s('Medical','baseMedical',2000,10000,500,fmtF)+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%');
   {
     const sy0=P.planStartYear||2026;
     const set=Array.from({length:11},(_,i)=>[sy0+i,Number(P['expenseAdjY'+i])||0]).filter(([,v])=>v);
@@ -1508,7 +1508,7 @@ async function confirmRollForward(overlay,curYear,nextYear){
   showToast(`✓ Rolled forward to ${nextYear}`,'green');
 }
 
-const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),childcareStartMonths:v=>v?v+' mo old':'birth',yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,liquidReserveFloor:v=>v>0?fmtF(v):'None',stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',rentCap:v=>v?'$'+v.toLocaleString()+'/mo':'No cap'};
+const SF={planStartYear:null,numKids:null,kid1Birth:null,kid2Birth:null,kid3Birth:null,kid4Birth:null,childcareMonthly:v=>'$'+v.toLocaleString(),childcareStartMonths:v=>v?v+' mo old':'birth',yeshivaStartAge:null,kid1YeshivaStartAge:null,tuitionInflation:v=>(v*100).toFixed(1)+'%',normGrowth:v=>(v*100).toFixed(1)+'%',normStockGrowth:v=>(v*100).toFixed(1)+'%',startingStripeEquity:fmtF,liquidReserveFloor:v=>v>0?fmtF(v):'None',stripeSellPct:v=>(v*100).toFixed(0)+'%',stripeLongTermReturn:v=>(v*100).toFixed(0)+'%',pretax401k:fmtF,pretaxBenefits:fmtF,nancyW2Y0:fmtF,nancyW2Y1:fmtF,nancyW2Y2:fmtF,nancyW2Y3:fmtF,nancyHourlyRate:v=>'$'+v+'/hr',nancyRampYear:null,nancyRampClients:null,nancyMaxClients:null,nancyRampYears:null,nancyWeeksPerYear:null,nancySoloPractice:v=>v?'YES ✓':'No (W2)',nancyPracticeOverhead:fmtF,nancyHomeOfficeDeduct:fmtF,nancyQBIRate:v=>(v*100).toFixed(0)+'%',baseGroceries:fmtF,baseDining:fmtF,baseShopping:fmtF,clothingShare:v=>(v*100).toFixed(0)+'%',baseVacations:fmtF,postKidVacations:fmtF,baseMisc:fmtF,baseCharity:fmtF,baseMedical:fmtF,expenseInflation:v=>(v*100).toFixed(1)+'%',homePurchaseYear:null,homePrice:v=>'$'+(v/1e6).toFixed(2)+'M',downPctg:v=>v+'%',mortgageRate:v=>v+'%',propTaxBase:fmtF,investReturn:v=>(v*100).toFixed(1)+'%',homeAppreciation:v=>(v*100).toFixed(1)+'%',taxInflation:v=>(v*100).toFixed(1)+'%',startingLiquid:fmtF,k401Start:fmtF,nycRent:v=>'$'+v.toLocaleString()+'/mo',rentCap:v=>v?'$'+v.toLocaleString()+'/mo':'No cap'};
 for(let i=0;i<11;i++){SF['normCashY'+i]=fmtF;SF['normStockY'+i]=fmtF}
 for(let i=0;i<10;i++)SF['stripeRetY'+i]=v=>(v*100).toFixed(0)+'%';
 
@@ -1561,7 +1561,7 @@ function expActualYTD(year){
 // one reads. A key with no label here would still render — as its own key — rather than
 // vanishing, because a line silently missing from a breakdown is how a total stops adding up.
 const LIV_LABEL={groceries:'Groceries',dining:'Dining',shopping:'Shopping',vacations:'Vacations',
-  auto:'Auto',insurance:'Insurance',misc:'Misc',entertainment:'Entertainment',charity:'Charity',
+  clothing:'Clothing',auto:'Auto',insurance:'Insurance',misc:'Misc',entertainment:'Entertainment',charity:'Charity',
   medical:'Medical',transit:'Transit',utilities:'Utilities & phone'};
 function expActualBlock(r){
   const a=expActualYTD(r.yr);
@@ -5966,7 +5966,7 @@ EXPENSES (${planSY}${y26.stubFrac<1?`, part year — only the ${Math.round(y26.s
 • Childcare runs from ${Number(P.childcareStartMonths)||0?`each child's age of ${P.childcareStartMonths} months — leave covers what comes before, so a child's first year is charged ${Math.max(0,12-(Number(P.childcareStartMonths)||0))} months of care`:'birth'} until the year they start yeshiva, at ${fmtF(P.childcareMonthly)}/month per eligible child. [keys: childcareMonthly, childcareStartMonths]
 • Housing is rent, or mortgage + property tax + insurance + maintenance once the home is bought. Living is groceries, dining, shopping, vacations, transit, utilities, charity, medical and misc, including each child's share.
 • For ANY other year's breakdown call get_projection — it returns every year with the same composition. Never say you can see a total but not what is inside it.
-• NAMED CATEGORY CHANGES: you CAN change groceries, dining, shopping, vacations, auto, insurance, misc, entertainment, charity, medical, transit, or utilities for one named year without affecting later years. Use set_expense_category—never baseMisc/baseGroceries and never expenseAdjY. "Add $20K to 2027 Misc" means increase the model's existing 2027 Misc by $20K; "set 2027 Misc to $20K" means replace it with exactly $20K. The result stays inside that year's Living breakdown, and the normal inflation path resumes the next year. Any earlier chat message claiming this is unsupported is stale and must be corrected.
+• NAMED CATEGORY CHANGES: you CAN change groceries, dining, shopping, clothing, vacations, auto, insurance, misc, entertainment, charity, medical, transit, or utilities for one named year without affecting later years. Use set_expense_category—never baseMisc/baseGroceries and never expenseAdjY. "Add $20K to 2027 Misc" means increase the model's existing 2027 Misc by $20K; "set 2027 Misc to $20K" means replace it with exactly $20K. The result stays inside that year's Living breakdown, and the normal inflation path resumes the next year. Any earlier chat message claiming this is unsupported is stale and must be corrected.
 • UNCLASSIFIED ONE-OFF COSTS: expenseAdjY0…expenseAdjY10 adjust a SINGLE year (indexed from ${planSY}), signed, not inflated. Use these only when no living category was named—for example a standalone renovation or wedding that should remain visibly separate. ${Array.from({length:11},(_,i)=>P['expenseAdjY'+i]).some(v=>Number(v))?`Currently set: ${Array.from({length:11},(_,i)=>[planSY+i,Number(P['expenseAdjY'+i])||0]).filter(([,v])=>v).map(([y,v])=>`${y} ${fmt(v)}`).join(' · ')}`:''}
 
 SAVED SCENARIOS (${scenarios.length}) — reference these by name if he asks to update one
