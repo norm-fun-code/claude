@@ -257,7 +257,8 @@ describe("Ramit's buckets on the Budget screen",()=>{
   expect(ui).toContain('Drawing down');
  });
  it('leaves the Spending Plan mode on its own grouping',()=>{
-  const lens=html.slice(html.indexOf('function renderIncomeLens('),html.indexOf('function renderSpendingTab('));
+  const lens=html.slice(html.indexOf('function renderIncomeLens('),html.indexOf('let _budgetYear='));
+  expect(lens.length).toBeGreaterThan(1000);
   expect(lens).toContain('IS.compute(row,basis)');expect(lens).not.toContain('B.BUCKETS');
  });
 });
