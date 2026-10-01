@@ -1262,3 +1262,8 @@ body:has(.demo-banner) .bd-bar{top:46px}
 .bd-jump button,.spend-scope-chip{min-height:34px}
 @media(pointer:coarse){.bd-pct{min-height:38px}.bd-link{min-height:40px}.bd-chg{min-height:36px}.bd-input{min-height:42px}}
 .bd-tag{font-size:11px;padding:2px 8px}
+
+/* What each scenario-sharing group means, in words */
+.bd-share-key{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px 22px;margin:14px 0 0;padding-top:12px;border-top:1px solid var(--bd)}
+.bd-share-key dt{font-size:12px;font-weight:700;color:var(--t2)}
+.bd-share-key dd{margin:2px 0 0;font-size:12px;line-height:1.5;color:var(--t3)}

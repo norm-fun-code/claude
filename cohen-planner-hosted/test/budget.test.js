@@ -305,7 +305,7 @@ describe('the groups on the Budget screen',()=>{
   expect(ui).toContain("computedRow('investing','Fidelity brokerage'");
   expect(ui).toContain("computedRow('investing','Stripe shares kept'");
   expect(ui).toContain('All the cash left over after savings');
-  expect(ui).toContain('would come from selling Stripe shares the plan keeps');
+  expect(ui).toContain('would mean selling Stripe shares you would otherwise keep');
   expect(ui).toContain('Drawing down');
   expect(html).toContain("emergency:'Emergency fund'");
  });
@@ -718,5 +718,27 @@ describe('group call-outs and bigger targets on the Budget screen',()=>{
   expect(css).toContain('.bd-pct{min-height:30px;font-size:13px;width:58px}');
   expect(css).toContain('.bd-tag{font-size:11px;padding:2px 8px}');
   expect(css).toContain('@media(pointer:coarse){.bd-pct{min-height:38px}.bd-link{min-height:40px}');
+ });
+});
+
+describe('clearer Budget: fewer repeats, honest bars, plain words',()=>{
+ const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
+ it('keeps the shares in the group headers and off the bar legend',()=>{
+  expect(ui).toContain("${advEscape(x[1])}</span>`).join('')}</div>`;");
+  expect(ui).not.toMatch(/cl-legend">\$\{segsB\.map\([^`]*_lensPct/);
+ });
+ it('scales each row bar to the biggest line in its own group',()=>{
+  expect(ui).toContain('const mx=Math.max(1,...ks.map(k=>living[k])');
+  expect(ui).toContain("max:mx||maxLine");
+ });
+ it('says in words what each scenario-sharing group is',()=>{
+  expect(ui).toContain('<dl class="bd-share-key">');
+  expect(ui).toContain('PlannerShared.GROUPS.map(g=>`<div><dt>${advEscape(g.label)}</dt><dd>${advEscape(g.note)}</dd></div>`)');
+ });
+ it('gives a $0 brokerage row its reason, and keeps the savings note short and plain',()=>{
+  expect(ui).toContain("surplus is vested Stripe shares, which the plan keeps as shares");
+  expect(ui).toContain("Nothing is left over in ${yr}");
+  expect(ui).toContain('Not set, so nothing is added.');
+  expect(ui).toContain('would mean selling Stripe shares you would otherwise keep');
  });
 });

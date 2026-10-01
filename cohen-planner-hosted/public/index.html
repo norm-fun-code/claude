@@ -3853,7 +3853,8 @@ function sharedCard(){
     ?`${n?`${n} saved scenario${n===1?'':'s'} read`:'Saved scenarios will read'} the marked groups from your live plan — change one anywhere and it changes everywhere. Everything unmarked can differ by scenario.`
     :`Nothing is shared yet, so every scenario holds its own copy of every line and they can drift apart. ${n?'':'Once you save scenarios, '}Marking a group keeps it identical across all of them.`;
   return `<section class="cp-card bd-share"><div class="ps-head"><div><h3>Across your scenarios</h3><p>${status}</p></div>${allRec?'':`<button type="button" class="bd-btn primary" onclick="sharedRecommended()">Share the fixed and essential costs</button>`}</div>
-    <div class="bd-share-chips" role="group" aria-label="Groups shared across scenarios">${chips}</div></section>`;
+    <div class="bd-share-chips" role="group" aria-label="Groups shared across scenarios">${chips}</div>
+    <dl class="bd-share-key">${PlannerShared.GROUPS.map(g=>`<div><dt>${advEscape(g.label)}</dt><dd>${advEscape(g.note)}</dd></div>`).join('')}</dl></section>`;
 }
 
 // ── Why the plan draws down ──────────────────────────────────────────────────
@@ -3949,7 +3950,7 @@ function renderBudgetTab(R,P){
   ].filter(x=>x[2]>0);
   const segTotal=segsB.reduce((t,x)=>t+x[2],0)||1;
   const bucketBar=`<div class="ps-bar" role="img" aria-label="${yr} split: ${segsB.map(x=>x[1]+' '+_lensPct(x[2]/den)).join(', ')}">${segsB.map(x=>`<span style="width:${(x[2]/segTotal*100).toFixed(3)}%;background:${RM_COLOR[x[0]]}" title="${advEscape(x[1])} · ${_lensPct(x[2]/den)}"></span>`).join('')}${alloc0.deficit>0?`<i class="ps-income-mark" style="left:${(den/segTotal*100).toFixed(2)}%" title="Income ends here"></i>`:''}</div>
-    <div class="cl-legend">${segsB.map(x=>`<span><i style="background:${RM_COLOR[x[0]]}"></i>${advEscape(x[1])} <b>${_lensPct(x[2]/den)}</b></span>`).join('')}</div>`;
+    <div class="cl-legend">${segsB.map(x=>`<span><i style="background:${RM_COLOR[x[0]]}"></i>${advEscape(x[1])}</span>`).join('')}</div>`;
   const series=B.allocationSeries(P,R);
   const sMax=Math.max(...series.map(a=>Math.max(a.excess,a.deficit)),1);
   const strip=`<div class="bd-excess" role="group" aria-label="Excess income or drawdown, by year">${series.map(a=>`<button type="button" class="${a.year===yr?'on':''}" onclick="budgetYearSet(${a.year})" title="${a.year}: ${a.excess>0?`${fmt(a.excess)} left over — ${fmt(a.investing.total)} invested${a.saving.total?`, ${fmt(a.saving.total)} to the reserve`:''}`:a.deficit>0?`${fmt(a.deficit)} drawn down`:'break-even'}"><span class="up"><i style="height:${(a.excess/sMax*100).toFixed(1)}%"></i></span><span class="dn"><i style="height:${(a.deficit/sMax*100).toFixed(1)}%"></i></span></button>`).join('')}</div>
@@ -4068,28 +4069,36 @@ function renderBudgetTab(R,P){
   // investing (the Fidelity brokerage, which takes all the cash left once the emergency fund is full,
   // and the Stripe shares kept).
   const alloc=B.allocation(P,R,yr);
-  const lineOf=(k,lbl,v,src,ro)=>line(k,lbl,v,src,{readonly:!!ro,shareKey:ro?k:undefined,color:RM_COLOR[B.bucketOf(k)],max:maxLine});
+  const lineOf=(k,lbl,v,src,ro,mx)=>line(k,lbl,v,src,{readonly:!!ro,shareKey:ro?k:undefined,color:RM_COLOR[B.bucketOf(k)],max:mx||maxLine});
   const bucketRows=key=>{
-    const ro=key==='fixed'?fixedExtra.filter(x=>x[2]>0||x[0]==='housing').map(x=>lineOf(x[0],x[1],x[2],'model',true)):[];
     const ks=Object.keys(living).filter(k=>B.bucketOf(k)===key&&!['housing','childcare','tuition'].includes(k)).sort((a,b2)=>living[b2]-living[a]);
-    return ro.join('')+ks.map(k=>lineOf(k,LIV_LABEL[k]||k,living[k],(row.livSrc||{})[k]||'model',false)).join('');
+    // Bars are scaled to the biggest line IN THIS GROUP, so the differences within it are visible. Scaled to
+    // the biggest line on the whole page, Housing flattened every other bar to a sliver.
+    const mx=Math.max(1,...ks.map(k=>living[k]),...(key==='fixed'?fixedExtra.map(x=>x[2]):[]));
+    return (key==='fixed'?fixedExtra.filter(x=>x[2]>0||x[0]==='housing').map(x=>lineOf(x[0],x[1],x[2],'model',true,mx)):[]).join('')+ks.map(k=>lineOf(k,LIV_LABEL[k]||k,living[k],(row.livSrc||{})[k]||'model',false,mx)).join('');
   };
   const computedRow=(key,label,v,sub)=>`<div class="bd-row" style="--tier:${RM_COLOR[key]}"><div class="cl-top"><span class="cl-name">${label}</span><strong class="bd-fixed">${amt(v)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span>${pct(v)} of ${basisWord} income</span><span class="bd-why">${sub}</span></div></div>`;
   const savingRows=()=>{
     const sv=alloc.saving,have=B.emergencySaved(P,R,yr);
     const bits=[];
-    if(sv.src==='model')bits.push(alloc.reserveFunded?`Not set. Your liquid assets (${fmt(alloc.liquidBegin)}) are above the ${fmt(alloc.reserveFloor)} floor${alloc.reserveMonths!=null?`, about ${alloc.reserveMonths} months of fixed costs`:''}, so nothing is added. Type a figure or a percentage to set some aside each year.`:`Not set. ${fmt(sv.reserveGap)} below the ${fmt(alloc.reserveFloor)} floor, so this year's left-over money refills it first.`);
+    if(sv.src==='model')bits.push(alloc.reserveFunded
+      ?`Not set, so nothing is added. Your reserve is already above its ${fmt(alloc.reserveFloor)} floor${alloc.reserveMonths!=null?` (about ${alloc.reserveMonths} months of fixed costs)`:''}. Type an amount or a % to set some aside each year.`
+      :`Not set. The reserve is ${fmt(sv.reserveGap)} below its ${fmt(alloc.reserveFloor)} floor, so this year's left-over money refills it first.`);
     else{
-      bits.push(`${fmt(sv.total)} set aside in ${yr}${sv.fromShares>0?`, of which <strong>${fmt(sv.fromShares)}</strong> would come from selling Stripe shares the plan keeps (the cash left over covers ${fmt(sv.fromCash)})`:''}.`);
-      if(sv.shortfall>0)bits.push(`<strong style="color:var(--a)">${fmt(sv.shortfall)} short</strong>: ${yr} leaves ${fmt(alloc.excess)} over.`);
+      bits.push(`Setting aside ${fmt(sv.total)} in ${yr}.`);
+      if(sv.fromShares>0)bits.push(`Left-over cash covers ${fmt(sv.fromCash)}; the other <strong>${fmt(sv.fromShares)}</strong> would mean selling Stripe shares you would otherwise keep.`);
+      if(sv.shortfall>0)bits.push(`<strong style="color:var(--a)">${fmt(sv.shortfall)} short:</strong> ${yr} only leaves ${fmt(alloc.excess)} over.`);
     }
     if(have.total>0)bits.push(`${fmt(have.total)} set aside since ${R[0].yr}${have.months!=null?`, about ${have.months} months of ${yr}'s fixed costs`:''}.`);
-    return line(PlannerBudget.EMERGENCY,'Emergency fund',sv.target,sv.src,{color:RM_COLOR.saving,max:maxLine})
+    return line(PlannerBudget.EMERGENCY,'Emergency fund',sv.target,sv.src,{color:RM_COLOR.saving,max:Math.max(maxLine,sv.target,1)})
       +`<p class="spend-caption bd-ef-note">${bits.join(' ')}</p>`;
   };
   const investRows=()=>{
     if(alloc.deficit>0)return `<div class="bd-row"><div class="cl-top"><span class="cl-name">Drawing down</span><strong class="bd-fixed" style="color:var(--a)">−${amt(alloc.deficit)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span class="bd-why">${yr} spends more than it takes in, so nothing is invested or saved. The shortfall is met by selling Stripe shares${alloc.drawn.stripe?` (${fmt(alloc.drawn.stripe)} here)`:''} and drawing on the Fidelity brokerage.</span></div></div>`;
-    return computedRow('investing','Fidelity brokerage',alloc.investing.portfolio,'All the cash left over after savings')
+    const why0=alloc.investing.portfolio>0?'All the cash left over after savings'
+      :alloc.excess<=0?`Nothing is left over in ${yr}`
+      :`$0 because ${yr}'s surplus is vested Stripe shares, which the plan keeps as shares. The brokerage only gets cash left after savings and shares.`;
+    return computedRow('investing','Fidelity brokerage',alloc.investing.portfolio,why0)
       +computedRow('investing','Stripe shares kept',alloc.investing.stripe,'Vested shares the plan does not need to sell')
       +`<p class="spend-caption" style="margin:4px 0 0">Plus <strong style="color:var(--t2)">${fmtF(Math.round(alloc.investing.k401/(mo?12:1)))}${unitWord}</strong> into your 401(k), taken from pay before it counts as net income.</p>`;
   };
