@@ -593,7 +593,7 @@ function renderCaseControl(){
   const menu=!_caseMenu?'':`<div class="case-menu" role="menu" aria-label="Plan cases">
     <div class="case-sec">Cases</div>
     <div class="case-item${a?'':' on'}"><button type="button" role="menuitem" class="case-pick" onclick="caseLive()"><i style="background:var(--t3)"></i><span>Live plan</span>${a?'':'<b>✓</b>'}</button></div>
-    ${scenarios.map(item).join('')}
+    ${scenarios.map((s,i)=>item(i,s)).join('')}
     <div class="case-rule"></div>
     ${dirty?`<button type="button" role="menuitem" class="case-act primary" onclick="caseSave()">Save to “${name}”</button><button type="button" role="menuitem" class="case-act" onclick="caseDiscard()">Discard edits</button>`:''}
     ${_caseNaming

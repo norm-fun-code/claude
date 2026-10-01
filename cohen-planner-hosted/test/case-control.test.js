@@ -52,3 +52,30 @@ describe('chrome that was built and hidden',()=>{
   expect(html).not.toContain('function renderStripeReconcile');
  });
 });
+
+// A menu that renders blank rows passed every check above, because none of them opened it with saved
+// cases in it. This one runs the real function against real cases and reads what it draws.
+describe('the case menu with saved cases in it',()=>{
+ const src=html.slice(html.indexOf('function renderCaseControl('),html.indexOf('\n}\n',html.indexOf('function renderCaseControl('))+3);
+ const draw=(extra)=>{
+  const el={innerHTML:''};
+  const scenarios=[{name:'Conservative',color:'#ecc183'},{name:"Ramit's Plan",color:'#845ef7'},{name:'<b>x</b>',color:'#fff'}];
+  const ctx={document:{getElementById:()=>el},scenarios,activeScenarioIdx:1,scenarioDirty:false,compareMode:false,_caseMenu:true,_caseNaming:false,advEscape:v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'),...extra};
+  new Function(...Object.keys(ctx),src+';renderCaseControl();')(...Object.values(ctx));
+  return el.innerHTML;
+ };
+ it('names every case, and points each row at its own index',()=>{
+  const out=draw();
+  for(const n of ['Conservative','Ramit&#39;s Plan'.replace('&#39;',"'"),'&lt;b&gt;x&lt;/b&gt;'])expect(out).toContain('<span>'+n+'</span>');
+  expect(out).toContain('onclick="caseLoad(0)"');expect(out).toContain('onclick="caseLoad(1)"');expect(out).toContain('onclick="caseLoad(2)"');
+  expect(out).toContain('onclick="caseDelete(2)"');
+  expect(out).not.toContain('[object Object]');expect(out).not.toContain('undefined');
+ });
+ it('marks the open case, escapes names, and offers Save only when edited',()=>{
+  expect(draw()).toContain('<b>✓</b>');
+  expect(draw()).not.toContain('<b>x</b>');
+  expect(draw()).not.toContain('class="case-save"');
+  const edited=draw({scenarioDirty:true});
+  expect(edited).toContain('<b>edited</b>');expect(edited).toContain('class="case-save"');
+ });
+});
