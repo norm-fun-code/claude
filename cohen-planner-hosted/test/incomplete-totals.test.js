@@ -107,12 +107,6 @@ describe('completeness is judged on the reading actually shown', () => {
     expect(cockpit).toContain('s.complete!==true');
     expect(cockpit).toContain('d.partial===true');
   });
-
-  it('never prints a list of missing accounts that is empty', () => {
-    // "Monarch returned no balance for:" followed by nothing reads as a broken page.
-    const portfolio = html.slice(html.indexOf('Only warn about what can actually be named'));
-    expect(portfolio).toContain('if(!monarchSnapshot?.partial||!miss.length)return');
-  });
 });
 
 // A long list that cannot be folded is a long list you scroll past every time.

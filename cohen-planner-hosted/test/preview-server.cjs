@@ -30,6 +30,14 @@ const server=http.createServer(async(req,res)=>{
       if(req.method==='PUT')state=JSON.parse(data).state;
       return json({state});
     }
+    // A saved case can be updated and deleted, as the real server allows.
+    const one=/^\/api\/scenarios\/([^/]+)$/.exec(url.pathname);
+    if(one){
+      const i=scenarios.findIndex(x=>x.id===one[1]);
+      if(req.method==='PUT'&&i>=0)Object.assign(scenarios[i],JSON.parse(data));
+      if(req.method==='DELETE'&&i>=0)scenarios.splice(i,1);
+      return json({ok:true});
+    }
     if(url.pathname==='/api/scenarios'){
       if(req.method==='POST')scenarios.push(JSON.parse(data));
       return json(req.method==='GET'?scenarios:{ok:true});

@@ -73,16 +73,6 @@ body[data-view=inputs] #controls{display:block!important;max-height:none;width:1
 .demo-banner{display:flex;align-items:center;justify-content:center;gap:9px;background:linear-gradient(90deg,#4038a7,#635bff);color:#fff;
   padding:8px 14px;margin:-14px -18px 12px;font-size:11px;font-weight:650;letter-spacing:.15px;position:sticky;top:0;z-index:80}
 .demo-banner button{border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;border-radius:7px;padding:4px 9px;font:inherit;cursor:pointer}
-.inputs-cases{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:16px 18px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
-.inputs-cases-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-.inputs-cases-title{font-size:12px;font-weight:750;color:var(--tx);letter-spacing:.1px}.inputs-cases-sub{font-size:10px;color:var(--t3);margin-top:3px}
-.inputs-case-list{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.inputs-case{display:inline-flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid var(--bd);border-radius:9px;background:var(--s2);color:var(--t2);font:600 11px/1 inherit;cursor:pointer;transition:all .14s}
-.inputs-case:hover{border-color:var(--bd2);color:var(--tx);transform:translateY(-1px)}.inputs-case.is-current{color:var(--tx);box-shadow:0 0 0 2px color-mix(in srgb,var(--case-color,var(--accent)) 18%,transparent);border-color:var(--case-color,var(--accent));background:color-mix(in srgb,var(--case-color,var(--accent)) 10%,var(--s1))}
-.inputs-case-dot{width:7px;height:7px;border-radius:50%;background:var(--case-color,var(--accent));flex:none}.inputs-case-check{color:var(--case-color,var(--accent));font-size:12px}.inputs-case-x{border:0;background:none;color:var(--t3);padding:0 0 0 2px;cursor:pointer;font:inherit}.inputs-case-x:hover{color:var(--r)}
-.inputs-case-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--bd)}
-.inputs-case-actions button{font:600 10px/1 inherit;padding:7px 10px;border:1px solid var(--bd);border-radius:7px;background:var(--s2);color:var(--t2);cursor:pointer}.inputs-case-actions button:hover{color:var(--tx);border-color:var(--bd2)}
-.inputs-case-actions .inputs-case-primary{background:var(--accent);color:#fff;border-color:var(--accent)}.inputs-case-actions .inputs-case-primary:hover{color:#fff;background:var(--accent-d)}
-.inputs-case-save{display:flex;gap:6px;flex:1;min-width:220px}.inputs-case-save input{flex:1;min-width:0;padding:7px 9px;border:1px solid var(--bd2);border-radius:7px;background:var(--s1);color:var(--tx);font:11px inherit;outline:none}.inputs-case-save input:focus{border-color:var(--accent)}
 .mono{font-family:'SF Mono','Fira Code','Courier New',monospace}
 .hdr{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid var(--bd);padding-bottom:10px;margin-bottom:14px}
 .hdr h1{font-size:16px;font-weight:600;color:var(--tx);letter-spacing:-.3px}
@@ -448,6 +438,7 @@ body{background:transparent}
     </div>
   </div>
   <div class="hdr-right">
+      <div id="caseControl" class="case-ctl"></div>
       <button class="cmdk-trigger ui-btn" onclick="openPalette()" title="Command palette">Jump to… <kbd id="cmdkKbdHint">⌘K</kbd></button>
       <div class="hdr-status">
         <span id="monarchFreshness" aria-live="polite"></span>
@@ -547,16 +538,71 @@ function markDirty(){
   }
   if(activeScenarioIdx<0||scenarioDirty)return;
   scenarioDirty=true;
-  paintUpdateButton();
+  renderCaseControl();
 }
-function paintUpdateButton(){
-  const b=document.getElementById('updateScenarioBtn');
-  if(!b)return;
-  const name=scenarios[activeScenarioIdx]?.name||'';
-  b.innerHTML=scenarioDirty?`🔄 Update "${advEscape(name)}"`:`✓ "${advEscape(name)}" is up to date`;
-  b.style.borderColor=scenarioDirty?'rgba(245,183,49,.55)':'var(--bd)';
-  b.style.color=scenarioDirty?'var(--a)':'var(--t3)';
-  b.style.background=scenarioDirty?'rgba(245,183,49,.10)':'var(--s2)';
+
+// ── The case control ─────────────────────────────────────────────────────────
+// One place, in the header on every screen, that says which case is being looked at, whether it
+// has been edited, and how to save it. "Plan saved" beside it is the working plan being kept for
+// next time; saving a CASE is a separate act, and until now the only button for it lived in a
+// panel that no screen showed. Edits to a case are never lost by switching away from it without
+// being asked: the menu says what is unsaved and offers to save or discard first.
+let _caseMenu=false,_caseNaming=false;
+function caseMenuToggle(e){if(e)e.stopPropagation();_caseMenu=!_caseMenu;_caseNaming=false;renderCaseControl();if(_caseMenu)setTimeout(()=>document.querySelector('.case-menu button')?.focus(),0)}
+function caseMenuClose(){if(!_caseMenu&&!_caseNaming)return;_caseMenu=false;_caseNaming=false;renderCaseControl()}
+document.addEventListener('click',e=>{if(_caseMenu&&!e.target.closest('.case-wrap'))caseMenuClose()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&_caseMenu){caseMenuClose();document.querySelector('.case-btn')?.focus()}});
+function caseLoad(i){
+  if(activeScenarioIdx>=0&&scenarioDirty&&i!==activeScenarioIdx&&!showConfirm(`"${scenarios[activeScenarioIdx].name}" has edits that are not saved to it. Switch anyway? (Your edits stay in the live plan only if you go back to it.)`))return;
+  caseMenuClose();loadScenario(i);
+}
+function caseLive(){
+  if(activeScenarioIdx>=0&&scenarioDirty&&!showConfirm(`"${scenarios[activeScenarioIdx].name}" has edits that are not saved to it. Go back to the live plan anyway? The edits will be lost.`))return;
+  caseMenuClose();selectLivePlan();
+}
+async function caseSave(){
+  const i=activeScenarioIdx;if(i<0)return;
+  const name=scenarios[i].name;caseMenuClose();
+  await updateScenario(i);
+  showToast(`Saved to “${name}”`,'green');
+}
+function caseDiscard(){
+  const i=activeScenarioIdx;if(i<0||!showConfirm(`Throw away your edits and go back to “${scenarios[i].name}” as last saved?`))return;
+  caseMenuClose();loadScenario(i);
+}
+function caseNew(){_caseNaming=true;_caseMenu=true;renderCaseControl();setTimeout(()=>{const i=document.getElementById('caseNewName');if(i){i.focus();i.select()}},0)}
+async function caseNewConfirm(){
+  const i=document.getElementById('caseNewName');
+  const n=((i&&i.value)||'').trim()||('Scenario '+(scenarios.length+1));
+  _caseNaming=false;_caseMenu=false;renderCaseControl();
+  await saveScenario(n);
+  showToast(`Saved as “${n}”`,'green');
+}
+function caseOverlay(){toggleCompare();renderCaseControl()}
+function caseCompare(){caseMenuClose();_homeView='compare';setTab('home')}
+function caseDelete(i){
+  if(!scenarios[i]||!showConfirm(`Delete the case “${scenarios[i].name}”? This cannot be undone.`))return;
+  caseMenuClose();deleteScenario(i);
+}
+function renderCaseControl(){
+  const el=document.getElementById('caseControl');if(!el)return;
+  const a=activeScenarioIdx>=0?scenarios[activeScenarioIdx]:null,dirty=!!(a&&scenarioDirty);
+  const name=a?advEscape(a.name):'Live plan';
+  const item=(i,s)=>`<div class="case-item${i===activeScenarioIdx?' on':''}"><button type="button" role="menuitem" class="case-pick" onclick="caseLoad(${i})"><i style="background:${s.color||'var(--accent)'}"></i><span>${advEscape(s.name)}</span>${i===activeScenarioIdx?`<b>${dirty?'edited':'✓'}</b>`:''}</button><button type="button" class="case-x" onclick="caseDelete(${i})" aria-label="Delete ${advEscape(s.name)}" title="Delete">✕</button></div>`;
+  const menu=!_caseMenu?'':`<div class="case-menu" role="menu" aria-label="Plan cases">
+    <div class="case-sec">Cases</div>
+    <div class="case-item${a?'':' on'}"><button type="button" role="menuitem" class="case-pick" onclick="caseLive()"><i style="background:var(--t3)"></i><span>Live plan</span>${a?'':'<b>✓</b>'}</button></div>
+    ${scenarios.map(item).join('')}
+    <div class="case-rule"></div>
+    ${dirty?`<button type="button" role="menuitem" class="case-act primary" onclick="caseSave()">Save to “${name}”</button><button type="button" role="menuitem" class="case-act" onclick="caseDiscard()">Discard edits</button>`:''}
+    ${_caseNaming
+      ?`<form class="case-name" onsubmit="event.preventDefault();caseNewConfirm()"><input id="caseNewName" type="text" value="Scenario ${scenarios.length+1}" aria-label="Name for the new case" onkeydown="if(event.key==='Escape'){event.stopPropagation();_caseNaming=false;renderCaseControl()}"><button type="submit" class="case-act primary">Save</button></form>`
+      :`<button type="button" role="menuitem" class="case-act" onclick="caseNew()">Save as a new case…</button>`}
+    ${scenarios.length?`<button type="button" role="menuitem" class="case-act" onclick="caseCompare()">Compare cases</button><button type="button" role="menuitem" class="case-act" onclick="caseOverlay()" aria-pressed="${compareMode}">${compareMode?'✓ ':''}Overlay cases on charts</button>`:''}
+  </div>`;
+  el.innerHTML=`<div class="case-wrap">
+    <button type="button" class="case-btn${dirty?' edited':''}" aria-haspopup="menu" aria-expanded="${_caseMenu}" onclick="caseMenuToggle(event)"><i class="case-dot" style="background:${a?(a.color||'var(--accent)'):'var(--t3)'}"></i><span class="case-name-t">${name}</span>${dirty?'<em>edited</em>':''}<b aria-hidden="true">▾</b></button>
+    ${dirty?`<button type="button" class="case-save" onclick="caseSave()">Save to “${name}”</button>`:''}${menu}</div>`;
 }
 
 // ═══ SYNC STATUS ═══
@@ -1176,10 +1222,12 @@ async function deleteSnapshot(id){
   if(overlaySnapId===id)overlaySnapId=null;
   renderSnapshotBar();render();
 }
-function toggleOverlaySnap(id){overlaySnapId=overlaySnapId===id?null:id;if(activeTab!=='nw'){activeTab='nw';document.querySelectorAll('.tabs button[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='nw'))}render()}
+function toggleOverlaySnap(id){overlaySnapId=overlaySnapId===id?null:id;if(activeTab!=='projection'||_projView!=='nw'){activeTab='projection';_projView='nw';document.querySelectorAll('.tabs button[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='projection'))}render()}
 function renderSnapshotBar(){
   const el=document.getElementById('snapshotBar');if(!el)return;
-  if(!snapshots.length){el.innerHTML='';return}
+  // Snapshots are overlays for the net-worth chart, so the chips live above that chart and
+  // nowhere else; on every other screen they were a row of tiny labels about something not shown.
+  if(!snapshots.length||activeTab!=='projection'||_projView!=='nw'){el.innerHTML='';return}
   let h='<div class="snap-bar"><span style="font-size:7px;color:var(--t3);font-weight:600">📸 SNAPSHOTS:</span>';
   [...snapshots].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).forEach(s=>{
     const sum=s.summary||{};const isA=overlaySnapId===s.id;
@@ -1299,24 +1347,6 @@ function buildControls(){
   const ST=(label,key,body)=>{const c=_collapsedSections.has(key);return`<div class="st" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none" onclick="toggleSection('${key}')"><span>${label}</span><span style="font-size:9px;color:var(--t3);opacity:.6">${c?'▶':'▼'}</span></div>${c?'':body}`};
   const sy=P.planStartYear||2026;
   let h=`<div style="font-size:10px;font-weight:700;margin-bottom:8px">⚙️ Parameters</div>`;
-  if(activeTab!=='inputs')h+=`<div style="margin-bottom:8px">
-    <div id="scenarioSaveArea">
-      <button class="btn btn-g" onclick="showSaveInput()" style="margin-bottom:3px">💾 Save as New</button>
-    </div>
-    <div id="scenarioSaveForm" style="display:none;margin-bottom:3px">
-      <input id="scenarioNameInput" type="text" placeholder="Scenario name…" value="Scenario ${scenarios.length+1}"
-        style="width:100%;padding:6px 8px;border:1px solid var(--accent);border-radius:6px;font-size:11px;font-family:inherit;color:var(--tx);background:var(--s1);outline:none;margin-bottom:4px"
-        onkeydown="if(event.key==='Enter')confirmSaveScenario();if(event.key==='Escape')hideSaveInput()">
-      <div style="display:flex;gap:4px">
-        <button class="btn btn-g" onclick="confirmSaveScenario()" style="flex:1;font-size:10px">Save</button>
-        <button class="btn" onclick="hideSaveInput()" style="flex:1;font-size:10px">Cancel</button>
-      </div>
-    </div>
-    ${activeScenarioIdx>=0?`<button class="btn" id="updateScenarioBtn" onclick="updateScenario(${activeScenarioIdx})" style="margin-bottom:3px;border-color:${scenarioDirty?'rgba(245,183,49,.55)':'var(--bd)'};color:${scenarioDirty?'var(--a)':'var(--t3)'};background:${scenarioDirty?'rgba(245,183,49,.10)':'var(--s2)'}">${scenarioDirty?`🔄 Update "${advEscape(scenarios[activeScenarioIdx]?.name||'')}"`:`✓ "${advEscape(scenarios[activeScenarioIdx]?.name||'')}" is up to date`}</button>`:''}
-    ${scenarios.length>0?`<button class="btn" onclick="toggleCompare()" style="margin-bottom:3px">${compareMode?'Exit Compare':'📊 Compare'}</button>`:''}
-    <button class="btn" onclick="rollForward()" style="margin-bottom:3px;border-color:rgba(8,145,178,.3);color:var(--c);background:#e0f7fa">📅 Roll Forward → ${sy+1}</button>
-  </div>`;
-
   // Kids
   let kidsBody=s('# of kids','numKids',1,4,1)+s('Kid 1 born','kid1Birth',2026,2030,1);
   if(P.numKids>=2)kidsBody+=s('Kid 2 born','kid2Birth',2028,2035,1);
@@ -1789,26 +1819,6 @@ function rebuildScenarioResults(){
   }
 }
 
-function showSaveInput(){
-  const area=document.getElementById('scenarioSaveArea');
-  const form=document.getElementById('scenarioSaveForm');
-  const inp=document.getElementById('scenarioNameInput');
-  if(!area||!form||!inp)return;
-  inp.value='Scenario '+(scenarios.length+1);
-  area.style.display='none';form.style.display='block';
-  inp.focus();inp.select();
-}
-function hideSaveInput(){
-  const area=document.getElementById('scenarioSaveArea');
-  const form=document.getElementById('scenarioSaveForm');
-  if(area)area.style.display='block';if(form)form.style.display='none';
-}
-async function confirmSaveScenario(){
-  const inp=document.getElementById('scenarioNameInput');
-  const n=(inp?inp.value.trim():'')||('Scenario '+(scenarios.length+1));
-  hideSaveInput();
-  await saveScenario(n);
-}
 async function saveScenario(n){
   if(!n){n='Scenario '+(scenarios.length+1);}
   const id=advUuid();
@@ -1839,7 +1849,12 @@ async function updateScenario(i){
   try{
     const r=await fetch('/api/scenarios/'+s.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:s.params,results:s.results})});
     if(!r.ok)throw new Error('HTTP '+r.status);
-  }catch(e){console.error('updateScenario failed:',e);setSyncStatus('error')}
+  }catch(e){
+    // The edits are still in the page; saying so beats a silent amber pill that never clears.
+    console.error('updateScenario failed:',e);setSyncStatus('error');
+    scenarioDirty=true;renderCaseControl();
+    showToast(`Could not save “${s.name}” — your edits are still here. Try again.`,'red');
+  }
 }
 
 async function deleteScenario(i){
@@ -2025,10 +2040,6 @@ function _confettiBurst(){
   setTimeout(()=>root.remove(),2300);
 }
 function _introAnimate(){
-  const hb=document.getElementById('heroBand');if(hb&&hb.firstElementChild){hb.firstElementChild.classList.add('reveal');}
-  document.querySelectorAll('#heroBand .hero-v').forEach(_animEl);
-  document.querySelectorAll('#kpis .kpi').forEach((c,i)=>{c.classList.add('reveal');c.style.animationDelay=(60+i*45)+'ms'});
-  document.querySelectorAll('#kpis .kpi-v').forEach((el,i)=>setTimeout(()=>_animEl(el),120+i*45));
   const ca=document.getElementById('chartArea');if(ca){ca.classList.add('reveal');ca.style.animationDelay='420ms'}
   document.querySelectorAll('#summaries .sc').forEach((c,i)=>{c.classList.add('reveal');c.style.animationDelay=(480+i*60)+'ms'});
 }
@@ -2049,32 +2060,7 @@ function render(){
   try{renderNavLive()}catch(e){}
   if(activeTab!=='income')document.getElementById('flowToggle')?.remove();
   const{R,tT,tC,tTx,tS,dp,mm}=run(P);
-  const last=R[R.length-1],pur=P.housingMode==='rent'?null:R.find(r=>r.yr===P.homePurchaseYear),pliq=pur?pur.liq:0;
-  const peak=R.reduce((a,b)=>b.tu>a.tu?b:a),minL=R.reduce((a,b)=>b.liq<a.liq?b:a);
-  const r26=R[0];
-  document.getElementById('kpis').innerHTML=`
-    <div class="kpi"><div class="kpi-l">📊 ${r26.yr} Eff Tax</div><div class="kpi-v" style="color:var(--a)">${(r26.effRate*100).toFixed(1)}%</div><div class="kpi-s">${fmtF(r26.tax)} on ${fmtF(r26.gross)}</div></div>
-    <div class="kpi"><div class="kpi-l">🏠 Post-Down</div><div class="kpi-v" style="color:${pliq>800000?'var(--g)':'var(--a)'}">${P.housingMode==='rent'?'N/A — renting':fmt(pliq)}</div><div class="kpi-s">${P.homePurchaseYear}</div></div>
-    <div class="kpi"><div class="kpi-l">🎓 Tuition</div><div class="kpi-v" style="color:var(--r)">${fmt(tT)}</div><div class="kpi-s">${P.numKids} kids</div></div>
-    <div class="kpi"><div class="kpi-l">💸 Tax on Sales</div><div class="kpi-v" style="color:var(--r)">${fmt(tTx)}</div><div class="kpi-s">${fmt(tS)} sold</div></div>
-    <div class="kpi"><div class="kpi-l">📉 Liquid Floor</div><div class="kpi-v" style="color:${minL.liq>(P.liquidReserveFloor??D.liquidReserveFloor)?'var(--g)':'var(--a)'}">${fmt(minL.liq)}</div><div class="kpi-s">${minL.yr}</div></div>
-    <div class="kpi"><div class="kpi-l">🏁 NW (${last.yr})</div><div class="kpi-v" style="color:var(--g)">${fmt(last.nw)}</div><div class="kpi-s">+${fmt(last.k401)} 401k</div></div>
-    <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--tx)">${fmt(last.nw+last.k401)}</div><div class="kpi-s">incl. retirement</div></div>
-    ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 ${monarchSnapshot.partial?'Known balances':'Latest NW'}</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${PlannerTime.formatDate(monarchSnapshot.syncedAt,{month:'short',day:'numeric'})}</div></div>`:''}`;
-  // ─── Hero net-worth band ───
-  const _hb=document.getElementById('heroBand');
-  if(_hb){
-    const liveLiq=monarchSnapshot&&!monarchSnapshot.partial?monarchSnapshot.liquid:null;
-    const spark=_sparkSVG(R.map(r=>r.netWorth),190,66,'#635bff');
-    _hb.innerHTML=`<div class="hero">
-      <div class="hero-main">
-        <div class="hero-eyebrow"><span class="dot"></span>Projected net worth · ${last.yr}</div>
-        <div class="hero-v">${fmt(last.netWorth)}</div>
-        <div class="hero-sub"><b>${fmt(last.liq)}</b> liquid${last.sEnd>0?` · <b style="color:#6772e5">${fmt(last.sEnd)}</b> Stripe`:''} · <b>${fmt(last.eq)}</b> home equity · <b>${fmt(last.k401)}</b> retirement${liveLiq!=null?` · today <b>${fmt(liveLiq)}</b> liquid+Stripe`:''}</div>
-      </div>
-      <div class="hero-spark">${spark}</div>
-    </div>`;
-  }
+  const last=R[R.length-1];
   // Celebrate real net-worth milestones (Monarch's actual synced value — not the
   // projected/plan figure, which changes on every slider drag and would fire constantly).
   if(monarchSnapshot&&!monarchSnapshot.partial)_checkMilestone(monarchSnapshot.netWorth);
@@ -2087,11 +2073,7 @@ function render(){
     np.textContent=`${_lastY}: ${fmtF(_c+_s)} (${fmtF(_c)} cash + ${fmtF(_s)} stock) · ${_lastY+10}: ${fmtF(Math.round(_c*(1+_cg)**10+_s*(1+_sg)**10))} at ${(_cg*100).toFixed(1)}% / ${(_sg*100).toFixed(1)}% growth`;}
   const nap=document.getElementById('nancy_preview');
   if(nap){const matYr=P.nancyRampYear+P.nancyRampYears;const nc=Math.min(P.nancyMaxClients,P.nancyRampClients+(P.nancyMaxClients-P.nancyRampClients)*Math.max(0,Math.min(1,(matYr-P.nancyRampYear)/P.nancyRampYears)));nap.textContent=`${matYr}: ~${Math.round(nc)} clients → ${fmtF(Math.round(nc*P.nancyHourlyRate*P.nancyWeeksPerYear))} gross`}
-  let sc='';if(scenarios.length>0){sc='<div class="scenario-bar"><span style="font-size:7px;color:var(--t3);font-weight:600">SAVED:</span>';
-    scenarios.forEach((s,i)=>{const isA=activeScenarioIdx===i;sc+=`<div class="scenario-chip" onclick="loadScenario(${i})" style="border-color:${isA?s.color:s.color+'40'};color:${s.color};${isA?'background:'+s.color+'15':''}"><span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${s.color}"></span>${advEscape(s.name)}${isA?(scenarioDirty?' •':' ✓'):''}<span class="x" onclick="event.stopPropagation();deleteScenario(${i})">✕</span></div>`});
-    if(activeScenarioIdx===-1)sc+=`<span style="font-size:7px;color:var(--t3);font-style:italic;padding:3px">● Unsaved</span>`;
-    else if(scenarioDirty)sc+=`<span style="font-size:7px;color:var(--a);font-style:italic;padding:3px">● Edited \u2014 not yet saved to this case</span>`;sc+='</div>'}
-  document.getElementById('scenarioBar').innerHTML=sc;
+  renderCaseControl();
   renderSnapshotBar();
   const labels=R.map(r=>String(r.yr));const newKey=_chartKey();const reuseChart=(newKey===_lastChartKey&&!!charts.main);if(!reuseChart)destroyCharts();_lastChartKey=newKey;const ca=document.getElementById('chartArea');
   // Sub-view switcher for tabs that hold more than one view. Painted before the tab
@@ -2544,22 +2526,6 @@ function renderStripeTab(R,P){
 
 // Actual synced Stripe balance vs. the plan's assumption. Synced values are shown, never
 // silently written — the planning input stays under the user's control.
-function renderStripeReconcile(actual){
-  actual=Math.round(actual);
-  const planned=Math.round(P.startingStripeEquity||0);
-  if(!actual)return'';
-  if(Math.abs(actual-planned)<1000){
-    return`<div style="font-size:8.5px;color:var(--g);padding:0 10px 5px">✓ Plan matches this balance.</div>`;
-  }
-  const move=actual-planned;
-  const affordable=move<=0||(P.startingLiquid||0)>=move;
-  return`<div style="padding:6px 10px 7px;margin:-2px 0 5px;background:rgba(103,114,229,.05);border:1px solid rgba(103,114,229,.18);border-top:none;border-radius:0 0 6px 6px;font-size:8.5px;line-height:1.5;color:var(--t2)">
-    Plan assumes <strong>${fmt(planned)}</strong> of Stripe equity ${planned===0?'(your Stripe balance is probably still counted inside Starting Liquid)':''}.
-    ${affordable
-      ? `<button onclick="reclassifyStripe(${actual})" style="display:inline-block;margin-top:3px;background:#6772e5;color:#fff;border:none;border-radius:5px;padding:3px 7px;font-family:inherit;font-size:8px;font-weight:600;cursor:pointer">Reclassify ${fmtF(Math.abs(move))} ${move>0?'Liquid → Stripe':'Stripe → Liquid'}</button>`
-      : `<span style="color:var(--t3)">Starting Liquid is too small to reclassify this without inventing wealth.</span>`}
-  </div>`;
-}
 
 // Monarch's "liquid" total sums every non-retirement account, which INCLUDES the Stripe
 // brokerage account. The plan now splits that same money into a diversified pool and a
@@ -4085,107 +4051,6 @@ function renderSpendingTab(R,P){
   document.getElementById('summaries').innerHTML='';
 }
 
-let _acctDonutSpec=null;
-function mountAccountDonut(){
-  if(!_acctDonutSpec||!document.getElementById('acctDonut'))return;
-  const panel=document.getElementById('monarchAccountsPanel');
-  if(panel&&!panel.open)return;
-  if(charts.acct)charts.acct.destroy();
-  charts.acct=makeDonut('acctDonut',_acctDonutSpec.labels,_acctDonutSpec.data,_acctDonutSpec.colors);
-}
-function renderMonarchAccountsCard(){
-  if(!monarchAccounts||monarchAccounts.length===0)return'';
-  const catOrder=['cash','investment','retirement','other_asset','other','liability'];
-  const catLabel={cash:'Cash & Savings',investment:'Investments',retirement:'Retirement',other_asset:'Other Assets',other:'Other',liability:'Liabilities'};
-  const catColor={cash:'var(--b)',investment:'var(--accent)',retirement:'var(--p)',other_asset:'var(--t2)',other:'var(--t2)',liability:'var(--r)'};
-  const groups={};
-  for(const a of monarchAccounts){
-    const c=a.category||'other';
-    if(!groups[c])groups[c]=[];
-    groups[c].push(a);
-  }
-  // Asset side only — a liability share of a pie is meaningless, so debts stay in the list.
-  const assetTotal=monarchAccounts.filter(a=>(a.balance||0)>0).reduce((s,a)=>s+a.balance,0);
-  const rows=catOrder.filter(c=>groups[c]).map(c=>{
-    const accts=groups[c];
-    const total=accts.reduce((s,a)=>s+(a.balance||0),0);
-    const isLiab=c==='liability';
-    const share=!isLiab&&assetTotal>0?Math.max(0,total)/assetTotal*100:0;
-    return`<div style="margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
-        <span style="font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t3)">${catLabel[c]}${!isLiab?` <span style="color:var(--t3);font-weight:600;letter-spacing:0">· ${share.toFixed(0)}%</span>`:''}</span>
-        <span style="font-size:11px;font-weight:700;font-family:'SF Mono',monospace;color:${isLiab?'var(--r)':'var(--tx)'}">${isLiab?'−':''}${fmt(Math.abs(total))}</span>
-      </div>
-      ${!isLiab?`<div style="height:4px;border-radius:2px;background:var(--s2);margin-bottom:6px;overflow:hidden"><div style="width:${share}%;height:100%;background:${catColor[c]};border-radius:2px"></div></div>`:''}
-      ${accts.map(a=>{
-        const nm=a.name||'';
-        const isStripe=nm.toLowerCase().includes('stripe');
-        return`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 10px;background:${isStripe?'rgba(99,91,255,.06)':'var(--s2)'};border:1px solid ${isStripe?'rgba(99,91,255,.2)':'var(--bd)'};border-radius:6px;margin-bottom:3px">
-          <div>
-            <span style="font-size:10.5px;font-weight:${isStripe?700:500};color:var(--tx)">${advEscape(nm)}</span>
-            ${a.institution?`<span style="font-size:8px;color:var(--t3);margin-left:5px">${advEscape(a.institution)}</span>`:''}
-          </div>
-          <span style="font-size:11px;font-weight:600;font-family:'SF Mono',monospace;color:${a.balance<0?'var(--r)':catColor[c]}">${a.balance<0?'−':''}${fmt(Math.abs(a.balance||0))}</span>
-        </div>
-        ${isStripe?renderStripeReconcile(a.balance||0):''}`;
-      }).join('')}
-    </div>`;
-  }).join('');
-  // Stripe gets its own slice rather than hiding inside Investments — the plan treats it as
-  // a separate asset class, so the picture of where the money sits should too.
-  const isStripeAcct=a=>typeof a.name==='string'&&a.name.toLowerCase().includes('stripe');
-  const stripeTot=monarchAccounts.filter(a=>isStripeAcct(a)&&(a.balance||0)>0).reduce((s,a)=>s+a.balance,0);
-  const acctSeries=[];
-  for(const c of catOrder){
-    if(c==='liability'||!groups[c])continue;
-    const t=groups[c].filter(a=>!isStripeAcct(a)&&(a.balance||0)>0).reduce((s,a)=>s+a.balance,0);
-    // Label the investments slice "ex-Stripe": the account LIST groups by Monarch's own
-    // categories (where Stripe is an investment account), but this donut breaks Stripe out as
-    // its own asset class. Without the qualifier the same word reads 44% here and 78% below.
-    const lbl=c==='investment'&&stripeTot>0?catLabel[c]+' (ex-Stripe)':catLabel[c];
-    // Investments must not sit next to Stripe in near-identical violet — Stripe keeps its
-    // brand colour, so the diversified slice moves to teal.
-    if(t>0)acctSeries.push([lbl,t,{cash:'#0073e6',investment:'#14b8a6',retirement:'#7c3aed',other_asset:'#8898aa',other:'#8898aa'}[c]||'#8898aa']);
-  }
-  if(stripeTot>0)acctSeries.push(['Stripe',stripeTot,'#6772e5']);
-  acctSeries.sort((a,b)=>b[1]-a[1]);
-  const acctDonutLabels=acctSeries.map(x=>x[0]),acctDonutData=acctSeries.map(x=>x[1]),acctDonutColors=acctSeries.map(x=>x[2]);
-  // The card returns markup; the canvas can only be bound once the caller has inserted it.
-  _acctDonutSpec=acctDonutData.length>1?{labels:acctDonutLabels,data:acctDonutData,colors:acctDonutColors}:null;
-  const totalNw=monarchAccounts.reduce((s,a)=>s+(a.balance||0),0);
-  return`<details id="monarchAccountsPanel" class="monarch-accounts" ontoggle="if(this.open)requestAnimationFrame(mountAccountDonut)">
-    <summary>
-      <span><strong>All Accounts · Monarch</strong><small>${monarchAccounts.length} accounts</small></span>
-      <span class="monarch-accounts-total">${fmt(totalNw)} ${monarchSnapshot?.partial?'known subtotal':'NW'}</span>
-      <span class="accounts-chevron" aria-hidden="true">⌄</span>
-    </summary>
-    <div class="monarch-accounts-body">
-    ${acctDonutData.length>1?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:center;margin-bottom:14px">
-      <div style="height:190px;position:relative"><canvas id="acctDonut"></canvas></div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        ${acctDonutData.map((v,i)=>`<div style="display:flex;align-items:center;gap:7px;font-size:10px">
-          <span style="width:9px;height:9px;border-radius:2px;background:${acctDonutColors[i]};flex:none"></span>
-          <span style="color:var(--t2);flex:1">${acctDonutLabels[i]}</span>
-          <span style="font-family:'SF Mono',monospace;font-weight:600;color:var(--tx)">${fmt(v)}</span>
-        </div>`).join('')}
-        <div style="border-top:1px solid var(--bd);margin-top:3px;padding-top:6px;display:flex;font-size:10px">
-          <span style="color:var(--t3);flex:1">Total assets</span>
-          <span style="font-family:'SF Mono',monospace;font-weight:700;color:var(--tx)">${fmt(assetTotal)}</span>
-        </div>
-      </div>
-    </div>`:''}
-    ${(()=>{
-      // Only warn about what can actually be named. A partial flag carrying no missing
-      // accounts printed "no balance for:" followed by nothing — a warning with nothing to
-      // point at, which reads as a fault in the page rather than in the data.
-      const miss=(monarchSnapshot&&monarchSnapshot.missingAccounts)||[];
-      if(!monarchSnapshot?.partial||!miss.length)return '';
-      return `<div role="status" style="padding:12px;margin-bottom:12px;background:var(--a-soft);border-radius:8px"><strong>Incomplete totals</strong><br>${monarchAccounts.length} accounts have balances. Monarch returned no balance for: ${miss.map(a=>advEscape(a.name||a)).join(', ')}. Subtotals below exclude these accounts; no $0 balance has been substituted.</div>`;
-    })()}
-      ${rows}
-    </div>
-  </details>`;
-}
 
 function renderPortfolioTab(R,P){
   const ca=document.getElementById('chartArea');
@@ -4216,7 +4081,6 @@ function renderPortfolioTab(R,P){
       <button onclick="runMonarchDiagnostics()" style="padding:7px 14px;background:var(--s2);color:var(--t2);border:1px solid var(--bd);border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;margin-right:6px">🩺 Diagnose connection</button>
       <button onclick="loadMonarchInvestments()" style="padding:7px 14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px">Retry</button>
     <div class="refine-links"><button class="ui-btn" onclick="setSubView('overview')">Manage accounts & classifications →</button></div></div>`;
-    mountAccountDonut();
     return;
   }
 
@@ -4478,7 +4342,6 @@ function renderPortfolioTab(R,P){
 
   <div class="refine-links"><button class="ui-btn" onclick="setSubView('overview')">Manage accounts & classifications →</button></div>
   </div>`;
-  mountAccountDonut();
 
 
   if(donutData.length>0){
@@ -5898,30 +5761,12 @@ function setTab(t){
 function renderInputsTab(){
   const ca=document.getElementById('chartArea'),controls=document.getElementById('controls');
   destroyCharts();
-  ca.innerHTML=`${renderInputScenarioSwitcher()}<div style="margin:2px 2px 14px"><div class="hero-eyebrow">Plan inputs</div><h2 style="font-size:24px;letter-spacing:-.5px;margin-top:5px">The assumptions behind your plan</h2><p style="color:var(--t2);margin-top:6px">The assumptions behind each case. Select a case above, then edit its inputs below.</p></div>`;
+  ca.innerHTML=`<div style="margin:2px 2px 14px"><div class="hero-eyebrow">Plan inputs</div><h2 style="font-size:24px;letter-spacing:-.5px;margin-top:5px">The assumptions behind your plan</h2><p style="color:var(--t2);margin-top:6px">The assumptions behind each case. Select a case above, then edit its inputs below.</p></div>`;
   ca.appendChild(controls);controls.classList.add('inputs-panel');
   document.getElementById('summaries').innerHTML='';
 }
 
-function renderInputScenarioSwitcher(){
-  const currentName=activeScenarioIdx>=0?(scenarios[activeScenarioIdx]?.name||'Selected case'):'Current plan';
-  const currentColor=activeScenarioIdx>=0?(scenarios[activeScenarioIdx]?.color||'var(--accent)'):'var(--accent)';
-  const saved=scenarios.map((s,i)=>`<button class="inputs-case ${activeScenarioIdx===i?'is-current':''}" style="--case-color:${s.color||'var(--accent)'}" onclick="loadScenario(${i})" aria-pressed="${activeScenarioIdx===i}">
-    <span class="inputs-case-dot"></span><span>${advEscape(s.name)}</span>${activeScenarioIdx===i?'<span class="inputs-case-check">✓</span>':''}
-    <span class="inputs-case-x" role="button" aria-label="Delete ${advEscape(s.name)}" onclick="event.stopPropagation();deleteScenario(${i})">×</span></button>`).join('');
-  return `<section class="inputs-cases" aria-label="Plan cases">
-    <div class="inputs-cases-head"><div><div class="inputs-cases-title">Plan cases</div><div class="inputs-cases-sub">Editing <strong style="color:${currentColor}">${advEscape(currentName)}</strong> · changes stay with the selected case</div></div>
-      ${activeScenarioIdx>=0&&scenarioDirty?`<span style="font-size:10px;color:var(--a);font-weight:650">● Unsaved edits</span>`:`<span style="font-size:10px;color:var(--t3)">${scenarios.length} saved case${scenarios.length===1?'':'s'}</span>`}</div>
-    <div class="inputs-case-list"><button class="inputs-case ${activeScenarioIdx<0?'is-current':''}" style="--case-color:var(--accent)" onclick="selectCurrentPlanInInputs()" aria-pressed="${activeScenarioIdx<0}"><span class="inputs-case-dot"></span><span>Current plan</span>${activeScenarioIdx<0?'<span class="inputs-case-check">✓</span>':''}</button>${saved||'<span style="font-size:10px;color:var(--t3);padding:8px 2px">Save a case to compare different futures here.</span>'}</div>
-    <div class="inputs-case-actions">
-      ${activeScenarioIdx>=0?`<button class="inputs-case-primary" onclick="updateScenario(${activeScenarioIdx})">🔄 Update “${advEscape(currentName)}”</button>`:''}
-      <button onclick="toggleInputScenarioSave()">＋ Save current as case</button>${scenarios.length?`<button onclick="toggleCompare()">📊 Compare cases</button>`:''}
-      <div class="inputs-case-save" id="inputsCaseSaveForm" hidden><input id="inputsCaseName" type="text" placeholder="Case name…" value="Scenario ${scenarios.length+1}" onkeydown="if(event.key==='Enter')saveInputScenario();if(event.key==='Escape')toggleInputScenarioSave(false)"><button class="inputs-case-primary" onclick="saveInputScenario()">Save</button></div>
-    </div>
-  </section>`;
-}
-
-function selectCurrentPlanInInputs(){
+function selectLivePlan(){
   // The live plan is always the unsaved baseline. Scenario assumptions are copied only when
   // explicitly selected, so returning here cannot overwrite or silently save any case.
   if(activeScenarioIdx<0)return;
@@ -5929,16 +5774,6 @@ function selectCurrentPlanInInputs(){
   P={...D,...migrateP(attachObserved(live))};
   activeScenarioIdx=-1;scenarioDirty=false;buildControls();render();
 }
-function toggleInputScenarioSave(force){
-  const f=document.getElementById('inputsCaseSaveForm');if(!f)return;
-  f.hidden=force===undefined?!f.hidden:!force;
-  if(!f.hidden){const i=document.getElementById('inputsCaseName');if(i){i.focus();i.select();}}
-}
-async function saveInputScenario(){
-  const i=document.getElementById('inputsCaseName'),name=i?.value.trim()||('Scenario '+(scenarios.length+1));
-  toggleInputScenarioSave(false);await saveScenario(name);
-}
-
 // `shared` is the link a friend opens: the same fictional household, but with nothing to
 // exit TO. Offering "Exit demo" to someone who has no login would hand them a redirect to a
 // sign-in page and look like the demo had broken.
@@ -5984,8 +5819,7 @@ function enterDemoMode(opts){
 }
 function exitDemoMode(){location.reload()}
 document.getElementById('main').innerHTML=`
-  <div id="heroBand"></div>
-  <div class="kpi-grid" id="kpis"></div><div id="scenarioBar"></div><div id="snapshotBar"></div>
+  <div id="snapshotBar"></div>
   <div class="tabs" role="tablist" aria-label="Plan views">
     <button role="tab" aria-selected="false" data-tab="cockpit" onclick="setTab('cockpit')">◎ Cockpit</button>
     <button role="tab" aria-selected="true" class="active" data-tab="home" onclick="setTab('home')">◇ Decisions</button>
@@ -6114,7 +5948,7 @@ function _paletteCommands(){
     {icon:'⬇',label:'Export CSV',hint:'Export',run:()=>exportCSV()},
     {icon:'🖨',label:'Print / Save as PDF',hint:'Export',run:()=>printPDF()},
     {icon:'📸',label:'Save snapshot',hint:'Snapshot',run:()=>showSnapshotInput()},
-    {icon:'💾',label:'Save as new scenario',hint:'Scenario',run:()=>showSaveInput()},
+    {icon:'💾',label:'Save as new scenario',hint:'Scenario',run:()=>caseNew()},
     {icon:'📅',label:'Roll forward to next year',hint:'Plan',run:()=>rollForward()},
     {icon:'🔗',label:monarchSnapshot?'Sync Monarch':'Connect Monarch',hint:'Monarch',run:()=>monarchSnapshot?syncMonarch():connectMonarch()},
   ];

@@ -1042,3 +1042,36 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .bd-share-chip.on{color:var(--tx);border-color:rgba(130,120,238,.55);background:rgba(130,120,238,.14)}
 .bd-share-chip.on i{background:var(--accent);border-color:var(--accent)}
 .bd-tag.shared{color:var(--c);background:rgba(139,221,237,.1);border-color:rgba(139,221,237,.28);text-transform:none;letter-spacing:0;font-weight:600}
+
+/* The case control in the header */
+.case-ctl{position:relative}
+.case-wrap{position:relative;display:flex;align-items:center;gap:8px}
+.case-btn{display:inline-flex;align-items:center;gap:9px;max-width:230px;padding:7px 12px;border-radius:9px;border:1px solid var(--bd);background:var(--s1);color:var(--tx);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.case-btn:hover{background:var(--s2)}
+.case-btn .case-name-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.case-btn em{font-style:normal;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--a)}
+.case-btn b{font-size:10px;color:var(--t3)}
+.case-btn.edited{border-color:rgba(236,193,131,.55)}
+.case-dot{width:9px;height:9px;border-radius:50%;flex:none}
+.case-save{padding:7px 13px;border-radius:9px;border:1px solid var(--a);background:rgba(236,193,131,.14);color:var(--a);font:inherit;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.case-save:hover{background:rgba(236,193,131,.24)}
+.case-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:90;width:300px;max-width:calc(100vw - 28px);padding:8px;border-radius:14px;border:1px solid var(--bd2);background:var(--s1);box-shadow:0 18px 50px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px}
+.case-sec{font-size:10px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:var(--t3);padding:6px 10px 4px}
+.case-rule{height:1px;background:var(--bd);margin:6px 4px}
+.case-item{display:flex;align-items:center;border-radius:9px}
+.case-item:hover{background:var(--s2)}.case-item.on{background:var(--s3)}
+.case-pick{flex:1;min-width:0;display:flex;align-items:center;gap:10px;padding:9px 10px;border:0;background:transparent;color:var(--tx);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.case-pick i{width:9px;height:9px;border-radius:50%;flex:none}
+.case-pick span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.case-pick b{font-size:11px;color:var(--g);font-weight:700}
+.case-item.on .case-pick b{color:var(--g)}
+.case-x{width:30px;height:30px;border:0;border-radius:7px;background:transparent;color:var(--t3);cursor:pointer;font-size:11px;opacity:0}
+.case-item:hover .case-x,.case-x:focus-visible{opacity:1}
+.case-x:hover{color:var(--r);background:var(--s3)}
+.case-act{text-align:left;padding:9px 10px;border:0;border-radius:9px;background:transparent;color:var(--t2);font:inherit;font-size:13px;cursor:pointer}
+.case-act:hover{background:var(--s2);color:var(--tx)}
+.case-act.primary{color:var(--a);font-weight:700}
+.case-name{display:flex;gap:6px;padding:4px}
+.case-name input{flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--accent);background:var(--s3);color:var(--tx);font:inherit;font-size:13px}
+.case-name .case-act{border:1px solid var(--a);padding:8px 14px}
+@media(max-width:760px){.case-wrap{flex-wrap:wrap}.case-btn{max-width:170px}.case-save{max-width:100%}.case-menu{position:fixed;left:14px;right:14px;top:auto;bottom:90px;width:auto}}

@@ -35,12 +35,11 @@ describe('inputs and safe presentation mode',()=>{
     expect(html).toContain('function exitDemoMode(){location.reload()}');
   });
 
-  it('renders the full case switcher inside Inputs and preserves the live baseline',()=>{
-    expect(html).toContain('renderInputScenarioSwitcher()');
-    expect(html).toContain('Plan cases');
-    expect(html).toContain('function selectCurrentPlanInInputs()');
-    expect(html).toContain('function saveInputScenario()');
+  it('keeps one case control in the header, and the live baseline when switching',()=>{
+    expect(html).toContain('id="caseControl"');
+    expect(html).toContain('function renderCaseControl()');
+    expect(html).toContain('function selectLivePlan()');
     expect(html).toContain('livePlanParams');
-    expect(html).toContain('if(activeTab!==\'inputs\')h+=');
+    expect(html).not.toContain('renderInputScenarioSwitcher');
   });
 });

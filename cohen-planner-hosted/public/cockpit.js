@@ -203,10 +203,6 @@ function renderCockpit(R){
       <div id="cp-bridge"></div>
       <div id="cp-year-end"></div>
       <details class="cp-evidence"><summary>Show me why</summary><p>These are year-end estimates from your saved plan assumptions. Net worth here is modeled liquid investments, Stripe, home equity and retirement, less the revolving balance your plan carries. That balance is held flat rather than paid down — right for cards cleared monthly, wrong for a term loan, which would need its own amortisation. The account balances above are separate observations; this chart is not a historical performance record.</p><button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button></details></section>
-      <section class="cp-card"><div class="cp-section-head"><div><h3>Explore your plan</h3></div></div><div class="cp-decisions">
-      <button onclick="cockpitGo('housing')"><span>01 / HOME</span><strong>Find your buying range</strong><small>Timing, down payment & funding →</small></button>
-      <button onclick="cockpitGo('spending')"><span>02 / EVERYDAY LIFE</span><strong>Understand your spending</strong><small>Transactions, categories & history →</small></button>
-      <button onclick="cockpitGo('holdings')"><span>03 / INVESTMENTS</span><strong>See your exposure</strong><small>Positions, allocation & concentration →</small></button></div></section>
       </section>
     </div><aside class="cp-advisor">
       <section class="cp-register" data-tense="attention">

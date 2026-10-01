@@ -93,12 +93,11 @@ describe('the cockpit and the Trajectory tab plot the same figure', () => {
 // A figure presented as "net worth" with no qualifier must be the total. Where a screen
 // deliberately shows the component, it has to say so beside the number.
 describe('no screen calls the component "net worth" without saying so', () => {
-  it('states retirement in the projection hero, which shows the total', () => {
-    const at = html.indexOf('hero-eyebrow"><span class="dot"></span>Projected net worth');
-    expect(at, 'projection hero').toBeGreaterThan(-1);
-    const hero = html.slice(at, html.indexOf('hero-spark', at));
-    expect(hero).toContain('fmt(last.netWorth)');
-    expect(hero).toContain('retirement');           // named in the composition line
+  it('has no hero band whose figure could be mistaken for the component', () => {
+    // The old band showed the total and said what it excluded; it was hidden on every screen and
+    // rebuilt on every render, so it is gone. The Cockpit states its own composition.
+    expect(html).not.toContain('hero-eyebrow"><span class="dot"></span>Projected net worth');
+    expect(html).not.toContain('id="heroBand"');
   });
 
   it('has the advisor quote the total for "Net worth at plan end"', () => {
