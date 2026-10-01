@@ -23,11 +23,9 @@ describe('choosing the year the comparison is about', () => {
     expect(room).toContain('onclick="decisionStepYear(-1)"');
   });
 
-  it('does not throw the fold open when the year came from the picker', () => {
-    // Opening a fold underneath the thing being read is right for a milestone button down
-    // there and wrong for a control up here.
-    expect(room).toContain('function decisionSelectYear(year,reveal){');
-    expect(room).toContain("if(reveal!==false){const fold=document.getElementById('decisionContextFold');if(fold)fold.open=true;}");
+  it('has no fold to throw open: the timeline it belonged to is gone', () => {
+    expect(room).toContain('function decisionSelectYear(year){');
+    expect(room).not.toContain('decisionContextFold');
   });
 
   it('keeps the picker, the scrubber and its label on the same year', () => {

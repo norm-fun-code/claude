@@ -21,7 +21,10 @@ function decisionSyncBase(){
   if(decisionBaseKey&&decisionBaseKey!==key){decisionOverrides={};decisionName='';}
   decisionBaseKey=key;
 }
-function renderDecisionRoom(R){
+// Where it draws. The What-if screen puts it above Key levers, so it is told which element is its own.
+let _drHost='chartArea';
+function renderDecisionRoom(R,host){
+  if(host)_drHost=host;
   decisionSyncBase();
   if(decisionYear===null)decisionYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,PlannerTime.year()));
   decisionYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,decisionYear));
@@ -36,7 +39,7 @@ function renderDecisionRoom(R){
   const age=synced?Math.max(0,Math.floor((Date.now()-Date.parse(monarchSnapshot.syncedAt))/86400000)):null;
   const source=synced?`Monarch · ${PlannerTime.formatDate(monarchSnapshot.syncedAt,{month:'short',day:'numeric'})}${age>7?' · refresh recommended':''}`:(monarchSnapshot?.partial?'Plan assumptions · account totals incomplete (see Portfolio)':(monarchSnapshot?.partial?'Plan assumptions · account totals incomplete (see Portfolio)':'Plan assumptions · live balances unavailable'));
   document.getElementById('summaries').innerHTML='';
-  document.getElementById('chartArea').innerHTML=`<div class="decision-room">
+  document.getElementById(_drHost).innerHTML=`<div class="decision-room">
     <section class="dr-intro">
       <div><h2>${title}</h2><p>${detail}</p>
       </div>
@@ -50,28 +53,12 @@ function renderDecisionRoom(R){
         return `<div class="dr-control"><label for="dr-${key}">${f.label}<output id="dr-value-${key}">${decisionValue(key,value)}</output></label><input id="dr-${key}" type="range" min="${min}" max="${max}" step="${f.step}" value="${value}" oninput="decisionChange('${key}',Number(this.value))"><span>Current plan: ${decisionValue(key,P[key])}</span></div>`;
       }).join('')}</div><div class="dr-impact"><div id="decisionImpact" aria-live="polite"></div><div class="dr-save"><label for="decisionName">Scenario name</label><input id="decisionName" type="text" maxlength="80" placeholder="e.g. More family time" value="${decisionEsc(decisionName)}" oninput="decisionName=this.value"><div><button id="decisionSave" class="dr-primary" onclick="decisionSaveScenario()">Save as new scenario</button><button class="dr-secondary" onclick="decisionAsk('variant')">Ask advisor about this</button></div><p id="decisionSaveStatus" role="status">Saving adds a separate scenario for comparison.</p></div></div></div>
     </section>
-    <details class="polish-fold refine-fold dr-context" id="decisionContextFold"><summary>Current plan context & timeline</summary>
-    <div class="dr-metrics">
-      <article><span>Before closing · ${P.homePurchaseYear}</span><strong>${summary.closingBuffer===null?(P.housingMode==='rent'?'Renting':'Outside horizon'):fmt(summary.closingBuffer)}</strong><p>${summary.closingBuffer===null?(P.housingMode==='rent'?'No home purchase in this case.':'Choose a purchase year within the plan.'):`Investable assets (portfolio + Stripe) the year before, less the ${fmt(summary.down)} down payment. Before closing costs and taxes on the sales that fund it.`}</p></article>
-      <article><span>Lowest projected liquid assets</span><strong class="${summary.floor.liq<0?'dr-negative':''}">${fmt(summary.floor.liq)}</strong><p>${summary.floor.yr} year-end · includes invested assets; not a cash reserve.</p></article>
-      <article><span>Tightest cash-flow year · ${summary.tightest.yr}</span><strong class="${summary.tightest.flow<0?'dr-negative':''}">${decisionMoney(summary.tightest.flowMonthly)}<small>/mo</small></strong><p>Net flow per modeled month — all income, all spending. Home down payment is separate.</p><button class="dr-text-button" onclick="decisionSelectYear(${summary.tightest.yr})">Explore this year →</button></article>
-    </div>
-    <section class="dr-card dr-timeline"><div class="dr-section-head"><div><h3>Life & money timeline</h3></div><span class="dr-pill">${inflationView?P.planStartYear+' purchasing power':'Future dollars'} · projections</span></div>
-      <div class="dr-timeline-layout"><div><div id="decisionChart"></div><div class="dr-scrubber"><label for="decisionYear">Explore year <output id="decisionYearLabel">${decisionYear}</output></label><input id="decisionYear" type="range" min="${R[0].yr}" max="${R[R.length-1].yr}" step="1" value="${decisionYear}" oninput="decisionSelectYear(Number(this.value))"><div><span>${R[0].yr}</span><span>${R[R.length-1].yr}</span></div></div></div><div id="decisionYearDetail" class="dr-year-detail" aria-live="polite"></div></div>
-      <div class="dr-milestones">${upcoming.map(e=>`<button onclick="decisionSelectYear(${e.yr})"><span>${e.yr}</span>${decisionEsc(e.label)}<b aria-hidden="true">↗</b></button>`).join('')||'<p>No upcoming milestones within this horizon.</p>'}</div>
-    </section>
-    </details>
     <details class="dr-method"><summary>What these numbers include</summary><p>All previews use your existing annual projection and tax model. Total net worth includes liquid assets, Stripe equity, home equity and retirement, less modeled debt. Retirement is also shown separately so you can see its contribution. Monthly margin is net flow: all after-tax pay less all modeled spending. A year can need part of the Stripe vest sold to cover spending and still have positive net flow; that is not a deficit, and the amount to sell is shown beside it. Liquid assets include investments and are not the same as cash. Net flow excludes the home down payment. The closing buffer uses the previous year-end investable balance — the diversified portfolio plus Stripe equity, since the funding waterfall sells held Stripe for the down payment once the portfolio reaches its reserve floor — less the down payment. It excludes closing costs and the capital-gains tax on those sales. The existing model continues employment income and retirement contributions through the end of the plan; this is not a retirement drawdown simulation. Returns are assumptions, not guaranteed outcomes. Changing home price holds maintenance and other expenses fixed unless you edit them in Settings. Changing childcare applies the monthly rate to each eligible child.</p></details>
   </div>`;
   decisionContext={R,events};
   decisionUpdatePreview();
 }
-// `reveal` opens the context fold, which is right when the year was chosen from a milestone
-// or the tightest-year button DOWN there — you want to land where you clicked. It is wrong
-// when the year was chosen from the picker beside the comparison, which would then throw a
-// fold open underneath the thing you were reading.
-function decisionSelectYear(year,reveal){
-  if(reveal!==false){const fold=document.getElementById('decisionContextFold');if(fold)fold.open=true;}
+function decisionSelectYear(year){
   if(!decisionContext)return;
   decisionYear=Math.max(P.planStartYear,Math.min(P.planEndYear,year));
   const slider=document.getElementById('decisionYear');if(slider)slider.value=decisionYear;
@@ -168,8 +155,9 @@ function decisionUpdatePreview(){
   document.getElementById('decisionSave').disabled=!changed.length||decisionSaving;
   const row=b.current;
   const family=Array.from({length:P.numKids},(_,i)=>({n:i+1,age:row.yr-P['kid'+(i+1)+'Birth']})).filter(k=>k.age>=0);
-  document.getElementById('decisionYearDetail').innerHTML=`<div class="dr-kicker">${changed.length?'PREVIEW':'CURRENT PLAN'} / ${row.yr}</div><h4>${family.length?family.map(k=>'Kid '+k.n+' · '+(k.age===0?'newborn':'age '+k.age)).join('<br>'):'Before the kids arrive'}</h4><dl><div><dt>Net worth</dt><dd>${fmt(decisionDollars(row.netWorth,row.yr))}</dd></div><div><dt>of which retirement</dt><dd>${fmt(decisionDollars(row.k401,row.yr))}</dd></div><div><dt>Liquid assets</dt><dd>${fmt(decisionDollars(row.liq,row.yr))}</dd></div><div><dt>Net flow / month</dt><dd class="${row.flow<0?'dr-negative':''}">${decisionMoney(decisionDollars(row.flowMonthly,row.yr))}</dd></div><div><dt>Vest sold to cover</dt><dd>${row.gap>0?fmt(decisionDollars(row.gap,row.yr)):'None needed'}</dd></div><div><dt>Education + care / yr</dt><dd>${fmt(decisionDollars(row.tu+row.cc,row.yr))}</dd></div></dl><p>${params.housingMode!=='rent'&&row.yr===params.homePurchaseYear?`${fmt(b.down)} down payment this year, separate from monthly margin.`:params.housingMode!=='rent'&&row.yr>params.homePurchaseYear?'Homeowner phase':'Renting phase'}</p>`;
-  decisionRenderChart(base,preview,changed.length>0);
+  const yd=document.getElementById('decisionYearDetail');
+  if(yd)yd.innerHTML=`<div class="dr-kicker">${changed.length?'PREVIEW':'CURRENT PLAN'} / ${row.yr}</div><h4>${family.length?family.map(k=>'Kid '+k.n+' · '+(k.age===0?'newborn':'age '+k.age)).join('<br>'):'Before the kids arrive'}</h4><dl><div><dt>Net worth</dt><dd>${fmt(decisionDollars(row.netWorth,row.yr))}</dd></div><div><dt>of which retirement</dt><dd>${fmt(decisionDollars(row.k401,row.yr))}</dd></div><div><dt>Liquid assets</dt><dd>${fmt(decisionDollars(row.liq,row.yr))}</dd></div><div><dt>Net flow / month</dt><dd class="${row.flow<0?'dr-negative':''}">${decisionMoney(decisionDollars(row.flowMonthly,row.yr))}</dd></div><div><dt>Vest sold to cover</dt><dd>${row.gap>0?fmt(decisionDollars(row.gap,row.yr)):'None needed'}</dd></div><div><dt>Education + care / yr</dt><dd>${fmt(decisionDollars(row.tu+row.cc,row.yr))}</dd></div></dl><p>${params.housingMode!=='rent'&&row.yr===params.homePurchaseYear?`${fmt(b.down)} down payment this year, separate from monthly margin.`:params.housingMode!=='rent'&&row.yr>params.homePurchaseYear?'Homeowner phase':'Renting phase'}</p>`;
+  if(document.getElementById('decisionChart'))decisionRenderChart(base,preview,changed.length>0);
 }
 function decisionRenderChart(base,preview,changed){
   const W=760,H=215,left=60,right=18,top=16,bottom=30;

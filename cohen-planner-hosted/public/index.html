@@ -2116,9 +2116,8 @@ function render(){
   if(activeTab==='cockpit'){renderCockpit(R);return;}
   if(activeTab==='home'){
     if(_homeView==='housing'||_homeView==='rentbuy'){renderHomeTab(R,P);return}
-    if(_homeView==='levers'){window._lastR=R;window._lastP=P;renderSensitivityTab(R,P);return}
     if(_homeView==='compare'){renderCompareTab(R,P);return}
-    renderDecisionRoom(R);return;
+    renderWhatIfTab(R,P);return;
   }
   if(activeTab==='advisor'){
     renderAdvisorTab(R,P);
@@ -5092,9 +5091,24 @@ function updateRefiCalc(){
   <div style="font-size:9.5px;color:var(--t3);margin-top:8px;line-height:1.5">If you stay in the home past the break-even point, refinancing is a net win. Assumes ${fmt(loan)} loan balance — recalculate near the actual refi date since your balance will have amortized down.</div>`;
 }
 
-function renderSensitivityTab(R,P){
+// ── What-if: try a change, then see which assumptions matter most ────────────────────────────────
+// Two depths of one activity. The first lets you combine changes and see what each does; the second
+// ranks the assumptions by how much the plan moves when each is nudged, so you know which to try.
+function renderWhatIfTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
+  ca.innerHTML=`<div id="wiDR"></div><div class="home-sec"><div class="hero-eyebrow">Then</div><h2>Which assumptions matter most</h2></div><div id="wiKL"></div>`;
+  window._lastR=R;window._lastP=P;
+  renderDecisionRoom(R,'wiDR');
+  renderSensitivityTab(R,P,'wiKL');
+  document.getElementById('summaries').innerHTML='';
+}
+
+let _slHost=null;
+function renderSensitivityTab(R,P,host){
+  if(host)_slHost=host;
+  const ca=document.getElementById(_slHost||'chartArea');
+  if(!_slHost)destroyCharts();
   // Impact is measured on the TOTAL. On the ex-retirement basis a lever that moves
   // retirement — a contribution rate, say — showed almost no impact at all.
   const baseNW=R[R.length-1].netWorth;
@@ -5574,7 +5588,7 @@ function setTab(t){
   // command palette and any in-app link can keep using the old names.
   if(t==='nw'||t==='income'||t==='cashflow'||t==='table'){_projView=t;t='projection';}
   if(t==='goals'){_todayView='budget';t='today';}
-  if(t==='housing'||t==='rentbuy'||t==='sensitivity'||t==='compare'){_homeView=(t==='sensitivity'?'levers':t==='rentbuy'?'housing':t);t='home';}
+  if(t==='housing'||t==='rentbuy'||t==='sensitivity'||t==='compare'){_homeView=(t==='sensitivity'?'explore':t==='rentbuy'?'housing':t);t='home';}
   if(t==='portfolio'){_todayView='holdings';t='today';}
   activeTab=t;document.querySelectorAll('.tabs button[role=tab]').forEach(b=>{const on=b.dataset.tab===t;b.classList.toggle('active',on);b.setAttribute('aria-selected',on?'true':'false');});render();if(!_reduceMotion())requestAnimationFrame(()=>{['chartArea','summaries'].forEach(id=>{const e=document.getElementById(id);if(e){e.classList.remove('tab-fade');void e.offsetWidth;e.classList.add('tab-fade')}})});savePlannerState()}
 
@@ -5686,8 +5700,8 @@ let cockpitExRet=true;
 // levers matter, save and diff. One tab, four depths — not four destinations.
 let _homeView='explore';
 const SUB_VIEWS={
-  home:{get:()=>_homeView==='rentbuy'?'housing':_homeView,set:v=>{_homeView=v},
-    views:[['explore','spark','Explore'],['housing','home','Home'],['levers','chart','Key levers'],['compare','diamond','Compare']]},
+  home:{get:()=>_homeView==='rentbuy'?'housing':_homeView==='levers'?'explore':_homeView,set:v=>{_homeView=v},
+    views:[['explore','spark','What-if'],['housing','home','Home'],['compare','diamond','Compare']]},
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','chart','Net worth'],['income','circle','Income & tax'],['cashflow','arrow','Cash flow'],['table','doc','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},
@@ -5752,7 +5766,7 @@ function _paletteCommands(){
     {icon:'📋',label:'Table',hint:'Projection',run:()=>setTab('table')},
     {icon:'🎯',label:'Budget',hint:'Today',run:()=>{_todayView='budget';setTab('today')}},
     {icon:'🏠',label:'Home: rent or buy',hint:'Decisions',run:()=>setTab('housing')},
-    {icon:'🎚️',label:'Key levers',hint:'Decisions',run:()=>setTab('sensitivity')},
+    {icon:'🎚️',label:'Which assumptions matter most',hint:'Decisions',run:()=>setTab('sensitivity')},
     {icon:'⚖',label:'Compare',hint:'Decisions',run:()=>setTab('compare')},
     {icon:'📊',label:'Holdings',hint:'Today',run:()=>setTab('portfolio')},
     {icon:'◎',label:'Overview',hint:'Today',run:()=>{_todayView='overview';setTab('today')}},

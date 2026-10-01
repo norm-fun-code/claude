@@ -1116,3 +1116,7 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .bd-excess .up i{display:block;width:100%;background:#7ae3c3;border-radius:2px 2px 0 0;opacity:.85}
 .bd-excess .dn i{display:block;width:100%;background:#ecc183;border-radius:0 0 2px 2px;opacity:.85}
 .bd-excess button.on .up i{opacity:1;box-shadow:0 0 0 1px var(--tx) inset}
+
+/* A heading between two parts of one screen (Home, What-if) */
+.home-sec{margin:28px 2px 12px}
+.home-sec h2{font-size:22px;letter-spacing:-.4px;margin:5px 0 0}
