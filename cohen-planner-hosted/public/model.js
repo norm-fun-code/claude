@@ -347,6 +347,24 @@ function budgetValue(p,category,yr,income){
   const base=seg.basis==='gross'?income.gross:income.net;
   return Math.max(0,Math.round(v*(Number(base)||0)));
 }
+// ── Plan items ───────────────────────────────────────────────────────────────
+// Known costs that arrive with a life event — a bar mitzvah, summer camp, furnishing a house —
+// kept as NAMED additions rather than folded into a line's figure. Each adds an amount to a
+// chosen line (or to the one-off column) for the years it covers, growing with inflation unless
+// told otherwise. They sit on top of whatever else the line is doing, a rule or a pin included,
+// so adding one never silently overwrites a choice, and removing it puts things back.
+function planItemsFor(p,yr){
+  const lines={};let oneOff=0;
+  const infl=Number(p&&p.expenseInflation)||0;
+  for(const it of (Array.isArray(p&&p.planItems)?p.planItems:[])){
+    if(!it)continue;
+    const from=Number(it.from),to=Number(it.to),amt=Number(it.amount);
+    if(!Number.isFinite(from)||!Number.isFinite(to)||!Number.isFinite(amt)||yr<from||yr>to)continue;
+    const v=amt*(it.grow===false?1:(1+infl)**(yr-from));
+    if(LIV_KEYS.includes(it.category))lines[it.category]=(lines[it.category]||0)+v;else oneOff+=v;
+  }
+  return{lines,oneOff:Math.round(oneOff)};
+}
 // A recurring or one-time extra cost used only to ask "how much more could be spent?". It never
 // comes from a saved plan — the solver sets it on a copy — and without it nothing changes.
 function probeAdjFor(p,yr){
@@ -652,6 +670,8 @@ function run(p,rets,compiledGrants){
       const ruled=budgetValue(p,category,yr,{net:tax.net,gross:tax.gross});
       if(ruled!==null){livRaw[category]=ruled;livSrc[category]='rule'}else livSrc[category]='model';
     }
+    const itemAdds=planItemsFor(p,yr);
+    for(const k of Object.keys(itemAdds.lines))livRaw[k]+=itemAdds.lines[k];
     const roundParts=(o,f)=>{
       const out={};for(const k of LIV_KEYS)out[k]=Math.round(o[k]*f);
       // Shopping and clothing are one figure in two lines; round the pair together so scaling a
@@ -713,7 +733,7 @@ function run(p,rets,compiledGrants){
     // A one-off for this year alone — see expenseAdjFor. It is real spending, so it lands in
     // the total the cash waterfall and the net-flow figure are computed from, not in a note
     // beside it.
-    const eAdj=expenseAdjFor(p,yr,sy)+probeAdjFor(p,yr);
+    const eAdj=expenseAdjFor(p,yr,sy)+probeAdjFor(p,yr)+itemAdds.oneOff;
     const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu)+eAdj;
     // Same summing discipline: rounded components summed, never a rounded raw sum.
     const totEFull=Math.round(hFull)+Math.round(livFull)+Math.round(ccFull)+Math.round(tuFull)+eAdj;
@@ -838,7 +858,7 @@ function run(p,rets,compiledGrants){
     R.push({yr,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
-      liv:Math.round(liv),livParts,livFullParts,livSrc,cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
+      liv:Math.round(liv),livParts,livFullParts,livSrc,livAdds:Object.fromEntries(Object.entries(itemAdds.lines).map(([k,v])=>[k,Math.round(v)])),cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
       // The WHOLE calendar year, stub or not. On a full year each equals its counterpart.
       // A table comparing a quarter of one year against all of the next answers nothing, so
       // these are what it shows; the projection still carries the remainder forward, and the
@@ -1136,7 +1156,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

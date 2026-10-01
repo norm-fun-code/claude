@@ -362,7 +362,7 @@ app.get('/model.js', requireAuthOrDemo, (req, res) => {
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
-for (const asset of ['planner-time.js', 'stripe-grants.js', 'stripe-grants-ui.js', 'cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'year-end.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js', 'demo-data.js', 'rent-buy.js', 'income-share.js', 'budget.js']) {
+for (const asset of ['planner-time.js', 'stripe-grants.js', 'stripe-grants-ui.js', 'cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'year-end.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js', 'demo-data.js', 'rent-buy.js', 'income-share.js', 'budget.js', 'suggest.js']) {
   app.get('/' + asset, requireAuthOrDemo, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });

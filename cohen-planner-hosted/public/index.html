@@ -30,6 +30,7 @@
 <script src="/decisions.js"></script>
 <script src="/income-share.js"></script>
 <script src="/budget.js"></script>
+<script src="/suggest.js"></script>
 <script src="/rent-buy.js"></script>
 <script src="/decision-room.js"></script>
 <style>
@@ -3534,9 +3535,50 @@ function budgetApply(e,label){
 function budgetUndoLast(){
   if(!_budgetUndo)return;
   const b=_budgetUndo.before;
-  P.budgetRules=b.budgetRules;
-  for(const [k,v] of Object.entries(b.pins)){if(v===undefined)delete P[k];else P[k]=v}
+  if(b.budgetRules!==undefined)P.budgetRules=b.budgetRules;
+  for(const [k,v] of Object.entries(b.pins||{})){if(v===undefined)delete P[k];else P[k]=v}
+  if(b.planItems!==undefined)P.planItems=b.planItems;
+  if(b.budgetDismissed!==undefined)P.budgetDismissed=b.budgetDismissed;
+  for(const [k,v] of Object.entries(b.params||{})){if(v===undefined)delete P[k];else P[k]=v}
   _budgetUndo=null;markDirty();buildControls();render();savePlannerState();
+}
+// Items, dismissals and single-parameter changes share the same undo as rule edits: take a
+// snapshot of exactly what is about to change, change it, and keep the snapshot.
+function budgetChange(label,before,mutate){
+  _budgetUndo={label,before,notes:[]};
+  mutate();
+  markDirty();buildControls();render();savePlannerState();
+}
+function budgetSuggestion(id){const yr=_budgetYear??PlannerTime.year();return PlannerSuggest.events(P,yr,40).find(e=>e.id===id)}
+function budgetAddItem(id){
+  const e=budgetSuggestion(id);if(!e||!e.item)return;
+  const el=document.getElementById('sg_'+id);
+  const n=el?PlannerBudget.parseInput(el.value,'year'):null;
+  if(!n||n.kind!=='amount'){showToast('Enter a dollar amount.','red');return}
+  const item={...e.item,amount:n.annual,sid:e.id};
+  budgetChange(`${e.item.label} added — ${fmtF(n.annual)}${e.perYear?'/yr':''}`,{planItems:structuredClone(P.planItems||[])},()=>{P.planItems=[...(P.planItems||[]),item]});
+}
+function budgetDismiss(id){
+  budgetChange('Suggestion hidden',{budgetDismissed:[...(P.budgetDismissed||[])]},()=>{P.budgetDismissed=[...(P.budgetDismissed||[]),id]});
+}
+function budgetSetParam(id){
+  const e=budgetSuggestion(id);if(!e||!e.param)return;
+  const k=e.param.key;
+  budgetChange(`${k==='maintBase'?'Home upkeep':k} set to ${fmtF(e.param.value)}`,{params:{[k]:P[k]},budgetDismissed:[...(P.budgetDismissed||[])]},()=>{P[k]=e.param.value;P.budgetDismissed=[...(P.budgetDismissed||[]),id]});
+}
+function budgetRemoveItem(i){
+  const it=(P.planItems||[])[i];if(!it)return;
+  budgetChange(`${it.label} removed`,{planItems:structuredClone(P.planItems||[]),budgetDismissed:[...(P.budgetDismissed||[])]},()=>{
+    P.planItems=P.planItems.filter((_,j)=>j!==i);
+    // Removed on purpose, so it is not offered straight back.
+    if(it.sid)P.budgetDismissed=[...(P.budgetDismissed||[]),it.sid];
+  });
+}
+function budgetItemAmount(i,text){
+  const it=(P.planItems||[])[i],n=PlannerBudget.parseInput(text,'year');
+  if(!it||!n||n.kind!=='amount'){render();return}
+  if(n.annual===it.amount){render();return}
+  budgetChange(`${it.label} → ${fmtF(n.annual)}`,{planItems:structuredClone(P.planItems)},()=>{P.planItems=P.planItems.map((x,j)=>j===i?{...x,amount:n.annual}:x)});
 }
 function budgetCurrent(cat){
   const yr=_budgetYear??PlannerTime.year();
@@ -3641,11 +3683,28 @@ function renderBudgetTab(R,P){
     ${f.stockShare>=0.05?`<p class="bd-warn">${_lensPct(f.stockShare)} of ${yr}'s spending depends on Stripe stock you sell. It is the plan — but it is the part that moves with the share price.</p>`:''}
     ${f.fromSavings>0?`<p class="bd-warn">${yr} draws ${fmt(f.fromSavings)} from savings.</p>`:''}</section>`;
 
+  // ── Worth a look ──
+  const pend=PlannerSuggest.pending(P,yr,2);
+  const sug=e=>{
+    const rng=e.range?`typically ${fmt(e.range[0])}–${fmt(e.range[1])}${e.perYear?' a year':''}`:'';
+    const act=e.kind==='item'
+      ?`<label class="bd-sug-amt"><span class="ui-sr">Amount</span><input id="sg_${e.id}" type="text" inputmode="decimal" value="${fmtF(e.item.amount)}" onfocus="this.select()" onkeydown="if(event.key==='Enter')budgetAddItem('${e.id}')"><small>${e.perYear?`/yr, ${e.item.from}–${e.item.to}`:'once'}</small></label>
+        <button type="button" class="bd-btn primary" onclick="budgetAddItem('${e.id}')">Add to plan</button>`
+      :`<button type="button" class="bd-btn primary" onclick="budgetSetParam('${e.id}')">Set to ${fmtF(e.param.value)}</button>`;
+    return `<div class="bd-sug"><div class="bd-sug-year">${e.year}</div><div class="bd-sug-body"><strong>${advEscape(e.title)}</strong><p>${advEscape(e.why)}${rng?` <span class="bd-why">(${rng})</span>`:''}</p>
+      <div class="bd-sug-act">${act}<button type="button" class="bd-btn" onclick="budgetDismiss('${e.id}')">Not now</button></div></div></div>`;
+  };
+  if(pend.length)h+=`<section class="cp-card bd-sugs"><div class="ps-head"><div><h3>Worth a look</h3><p>Costs that tend to arrive with what the plan already knows is coming, ${yr}–${yr+2}. Nothing changes until you add it, and the amounts are starting points to edit.</p></div></div>${pend.map(sug).join('')}</section>`;
+
   // ── The lines ──
   const modelParts=(modelRow&&modelRow.livFullParts)||{};
+  const checkByLine=Object.fromEntries(PlannerSuggest.checks(P,R,yr).map(c=>[c.line,c]));
   const line=(k,label,value,src,opts)=>{
     const o=opts||{};
-    const tag=src==='rule'?'<span class="bd-tag rule">Rule</span>':src==='pin'?'<span class="bd-tag pin">Pinned</span>':'';
+    const chk=checkByLine[k];
+    const tag=(src==='rule'?'<span class="bd-tag rule">Rule</span>':src==='pin'?'<span class="bd-tag pin">Pinned</span>':'')
+      +(chk?`<span class="bd-tag chk ${chk.status}" title="${advEscape(chk.text)}">${chk.status==='low'?'Light':'High'} for the household</span>`:'');
+    const added=(row.livAdds||{})[k]||0;
     const m=modelParts[k],differs=(src==='rule'||src==='pin')&&m!=null&&Math.abs(m-value)>=1;
     const seg=src==='rule'?budgetSegment(P,k,yr):null;
     // A line the model worked out says nothing: thirteen copies of the same sentence is noise, and
@@ -3659,7 +3718,7 @@ function renderBudgetTab(R,P){
     return `<div class="bd-row" style="--tier:${o.color}">
       <div class="cl-top"><span class="cl-name">${advEscape(label)}${tag}</span>${inputHtml}</div>
       <div class="cl-track"><i style="width:${Math.max(1.5,(o.max>0?value/o.max:0)*100).toFixed(1)}%"></i></div>
-      <div class="cl-sub"><span>${pct(value)} of ${basisWord} income</span>${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}<span class="bd-actions">${actions}</span></div></div>`;
+      <div class="cl-sub"><span>${pct(value)} of ${basisWord} income</span>${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}${chk?`<span class="bd-why">${advEscape(chk.text)}</span>`:''}<span class="bd-actions">${actions}</span></div></div>`;
   };
   const living=row.livFullParts||{};
   const c=IS.compute(row,'net');
@@ -3684,6 +3743,10 @@ function renderBudgetTab(R,P){
       <div class="ps-controls"><div class="spend-scope" role="group" aria-label="Edits apply to">${chip(_budgetScope==='onward',"budgetScope('onward')",`From ${yr} on`)}${chip(_budgetScope==='year',"budgetScope('year')",`${yr} only`)}</div>
         <div class="spend-scope" role="group" aria-label="Share of">${chip(basis==='net',"planShareBasis('net')",'Net')}${chip(basis==='gross',"planShareBasis('gross')",'Gross')}</div></div></div>
     ${undo}${groups}${oneOff}
+    ${(P.planItems||[]).length?`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>Plan items you've added</span></div>
+      ${(P.planItems||[]).map((it,i)=>`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
+        <label class="bd-sug-amt"><span class="ui-sr">Amount</span><input type="text" inputmode="decimal" value="${fmtF(it.amount)}" aria-label="${advEscape(it.label)} amount" onfocus="this.select()" onchange="budgetItemAmount(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${it.from===it.to?'once':'/yr'}</small></label>
+        <button type="button" class="bd-btn" onclick="budgetRemoveItem(${i})" aria-label="Remove ${advEscape(it.label)}">Remove</button></div>`).join('')}</div>`:''}
     <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section></div>`;
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';

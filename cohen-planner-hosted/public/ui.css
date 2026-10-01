@@ -1009,3 +1009,26 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .bd-link{border:0;background:transparent;padding:0;font:inherit;font-size:11px;color:var(--accent);cursor:pointer}
 .bd-link:hover{text-decoration:underline}
 @media(max-width:760px){.bd-headroom{grid-template-columns:1fr}.bd-big{font-size:38px}.bd-head h2{font-size:19px}.bd-phase{padding:8px 9px}.bd-phase small{display:none}}
+
+/* Budget: suggestions and plan items */
+.bd-sugs{display:flex;flex-direction:column;gap:2px}
+.bd-sug{display:flex;gap:16px;padding:14px 2px;border-top:1px solid var(--bd)}
+.bd-sug:first-of-type{border-top:0}
+.bd-sug-year{flex:none;width:46px;font-size:15px;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums;padding-top:1px}
+.bd-sug-body{min-width:0;flex:1}
+.bd-sug-body strong{font-size:14px;color:var(--tx)}
+.bd-sug-body p{margin:3px 0 0;font-size:12.5px;line-height:1.6;color:var(--t2);max-width:640px}
+.bd-sug-act{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.bd-sug-amt{display:flex;align-items:baseline;gap:6px}
+.bd-sug-amt input{width:104px;box-sizing:border-box;text-align:right;font:inherit;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--tx);background:var(--s3);border:1px solid var(--bd2);border-radius:8px;padding:6px 9px}
+.bd-sug-amt input:focus{outline:none;border-color:var(--accent)}
+.bd-sug-amt small{font-size:11px;color:var(--t3)}
+.bd-btn{border:1px solid var(--bd);background:var(--s2);color:var(--t2);font:inherit;font-size:12px;font-weight:600;padding:7px 13px;border-radius:8px;cursor:pointer}
+.bd-btn:hover{background:var(--s3);color:var(--tx)}
+.bd-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.bd-btn.primary:hover{background:var(--accent-d)}
+.bd-item{display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--bd)}
+.bd-item>div:first-child{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bd-item strong{font-size:13px;color:var(--tx)}.bd-item small{font-size:11px;color:var(--t3)}
+.bd-tag.chk{color:var(--a);background:rgba(236,193,131,.1);border-color:rgba(236,193,131,.28);text-transform:none;letter-spacing:0;font-weight:600;cursor:help}
+@media(max-width:760px){.bd-sug{flex-direction:column;gap:4px}.bd-sug-year{width:auto}}
