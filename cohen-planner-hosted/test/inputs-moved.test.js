@@ -44,7 +44,7 @@ describe('every control has one definition, wherever it is shown',()=>{
  });
  it('lets Budget edit housing, childcare and tuition in place, and set one-off costs and baselines',()=>{
   const budget=html.slice(html.indexOf('function renderBudgetTab('));
-  expect(budget).toContain("embedControls(k==='housing'?'home':k)");
+  expect(budget).toContain("embedControls('home')");expect(budget).toContain('embedControls(k)');
   expect(budget).toContain("embedControls('oneOff')");
   expect(budget).toContain("embedControls('baselines')");
   expect(budget).toContain('Baselines the model starts from');
