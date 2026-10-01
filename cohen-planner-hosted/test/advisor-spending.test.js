@@ -21,7 +21,7 @@ function runTool(input, report, hasPlan = true) {
     spendingReport: async () => report,
     Date, Math, Number, Set, Map, JSON, console,
   };
-  vm.createContext(ctx);
+  ctx.PlannerTime=require('../public/planner-time.js');vm.createContext(ctx);
   vm.runInContext(source, ctx);
   return ctx.runPlannerTool('get_spending', input);
 }

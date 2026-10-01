@@ -1,6 +1,8 @@
 const normalizeAccountSnapshot = require('./account-snapshot');
 'use strict';
 require('dotenv').config();
+process.env.TZ='America/New_York';
+const PlannerTime=require('./public/planner-time.js');
 
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   console.error('FATAL: SESSION_SECRET env var must be set in production');
@@ -360,7 +362,7 @@ app.get('/model.js', requireAuthOrDemo, (req, res) => {
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
-for (const asset of ['stripe-grants.js', 'stripe-grants-ui.js', 'cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'year-end.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js', 'demo-data.js']) {
+for (const asset of ['planner-time.js', 'stripe-grants.js', 'stripe-grants-ui.js', 'cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'year-end.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js', 'demo-data.js']) {
   app.get('/' + asset, requireAuthOrDemo, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -502,9 +504,9 @@ app.post('/api/monarch-disconnect', requireAuth, async (req, res) => {
 let backfillJob = null;
 app.post('/api/monarch/sync/backfill', requireAuth, async (req, res) => {
   if (backfillJob) return res.status(409).json({ error: 'A history import is already running.', running: true });
-  const today = new Date().toISOString().slice(0, 10);
+  const today = PlannerTime.day();
   const months = Math.min(60, Math.max(1, Number(req.body?.months) || 24));
-  const start = new Date(Date.now() - months * 30.44 * 864e5).toISOString().slice(0, 10);
+  const start = PlannerTime.day(new Date(Date.now() - months * 30.44 * 864e5));
   const startDate = req.body?.startDate || start;
   const endDate = req.body?.endDate || today;
 
@@ -590,9 +592,9 @@ async function spendingReport({ startDate, endDate, committed } = {}) {
 
 app.get('/api/monarch/spending', requireAuth, async (req, res) => {
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = PlannerTime.day();
     const endDate = req.query.end || today;
-    const startDate = req.query.start || new Date(Date.now() - (Number(req.query.months) || 12) * 30.44 * 864e5).toISOString().slice(0, 10);
+    const startDate = req.query.start || PlannerTime.day(new Date(Date.now() - (Number(req.query.months) || 12) * 30.44 * 864e5));
     res.json(await spendingReport({ startDate, endDate,
       committed: req.query.committed ? String(req.query.committed).split(',') : undefined }));
   } catch (err) { res.status(503).json({ error: err.message }); }
@@ -1294,7 +1296,7 @@ app.post('/api/briefings', requireAuth, async (req, res) => {
 // ABSENT rather than defaulted — an absent input makes a monitor report "not checked",
 // and a defaulted one would make it report a clean result it never actually verified.
 async function buildMonitorContext(today) {
-  const ctx = { today: today || new Date().toISOString().slice(0, 10), liquidity: Liquidity,
+  const ctx = { today: today || PlannerTime.day(), liquidity: Liquidity,
     taxRules: TaxRules, sources: {} };
 
   const planRes = await db.query('SELECT state FROM planner_state WHERE id = 1');
@@ -1321,7 +1323,7 @@ async function buildMonitorContext(today) {
 
   // Spending, from the transaction ledger only. No ledger, no spending comparison.
   try {
-    const startDate = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+    const startDate = PlannerTime.day(new Date(Date.now() - 400 * 86400000));
     const [ledger, cats] = await Promise.all([
       monarchSync.ledger({ startDate, endDate: ctx.today }),
       monarchSync.localCategories(),
@@ -1361,7 +1363,7 @@ async function buildMonitorContext(today) {
 
   // Tax facts, REVIEWED ones only. An unreviewed extraction must never reach a calculation.
   try {
-    const y = new Date(ctx.today).getFullYear();
+    const y = PlannerTime.year(ctx.today);
     const f = await db.query(
       `SELECT field, value FROM tax_facts
        WHERE tax_year = $1 AND superseded_at IS NULL AND reviewed = TRUE`, [y]);
@@ -1397,7 +1399,7 @@ async function buildMonitorContext(today) {
 
 app.get('/api/inbox', requireAuth, async (req, res) => {
   try {
-    const today = (req.query.today || new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const today = (req.query.today || PlannerTime.day()).slice(0, 10);
     const ctx = await buildMonitorContext(today);
     const detection = Monitors.detect(ctx);
 
@@ -1536,7 +1538,7 @@ async function runPlannerTool(name, input) {
     case 'record_decision':
       return AdvisorTools.recordDecision(input);
     case 'get_alerts': {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = PlannerTime.day();
       const ctx = await buildMonitorContext(today);
       const detection = Monitors.detect(ctx);
       const st = await db.query('SELECT * FROM alert_states');
@@ -1552,9 +1554,9 @@ async function runPlannerTool(name, input) {
     // costs is a per-month figure, so it is aggregated here rather than left to the model to
     // add up. The month in progress is kept out of the averages and reported separately.
     case 'get_spending': {
-      const endDate = new Date().toISOString().slice(0, 10);
+      const endDate = PlannerTime.day();
       const n = Math.max(1, Math.min(60, Number(input && input.months) || 24));
-      const startDate = new Date(Date.now() - n * 30.44 * 864e5).toISOString().slice(0, 10);
+      const startDate = PlannerTime.day(new Date(Date.now() - n * 30.44 * 864e5));
       const r = await spendingReport({ startDate, endDate });
       const partial = r.coverage.partial;
       const closed = r.months.filter(m => m.month !== partial);
@@ -1599,7 +1601,7 @@ async function runPlannerTool(name, input) {
       };
     }
     case 'get_tax_position': {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = PlannerTime.day();
       const ctx = await buildMonitorContext(today);
       const opportunities = ctx.R
         ? TaxPlan.screenOpportunities({ P: ctx.P, R: ctx.R, marginalRate: ctx.marginalRate })
@@ -1731,12 +1733,12 @@ app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) =>
     // Give the advisor live read-only access to Monarch when the user has connected it.
     const accessToken = true; // NormOS bridge handles server-side authentication.
     const monarchTools = await withTimeout(getMonarchAdvisorTools(accessToken), 7000, []);
-    const nowISO = new Date().toISOString().slice(0, 10);
+    const nowISO = PlannerTime.day();
     const grounding = advisorGrounding(nowISO, TaxRules.staleness(nowISO));
     const sys = systemPrompt + grounding + (monarchTools.length ? `
 
 ═══ LIVE MONARCH ACCESS ═══
-You can query the user's REAL Monarch Money data with the monarch_* tools (accounts and balances only). When the user asks about actual spending, balances, holdings, budgets, or recent activity, call only the tools actually provided. If no tool supplies the requested transactions or holdings, say that access is unavailable; do not invent it. Dates are ISO (YYYY-MM-DD). Today is ${new Date().toISOString().slice(0,10)}. Be specific with real numbers and say when a figure comes from live Monarch data.` : '');
+You can query the user's REAL Monarch Money data with the monarch_* tools (accounts and balances only). When the user asks about actual spending, balances, holdings, budgets, or recent activity, call only the tools actually provided. If no tool supplies the requested transactions or holdings, say that access is unavailable; do not invent it. Dates are ISO (YYYY-MM-DD). Today is ${PlannerTime.day()}. Be specific with real numbers and say when a figure comes from live Monarch data.` : '');
 
     let convo = apiMessages.slice();
     let lastUsage = null;
@@ -1902,7 +1904,7 @@ Workflow: understand what he's asking → set_param for each change → run_proj
   const fullSystemPrompt = agenticSystemPrompt + (monarchTools.length ? `
 
 ═══ LIVE MONARCH ACCESS ═══
-You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, transactions, cash flow, spending by category, investments, recurring, net worth history). Use them to ground proposals in actual numbers. Dates are ISO; today is ${new Date().toISOString().slice(0,10)}.` : '');
+You also have monarch_* tools to read Norm's REAL Monarch Money data (accounts, transactions, cash flow, spending by category, investments, recurring, net worth history). Use them to ground proposals in actual numbers. Dates are ISO; today is ${PlannerTime.day()}.` : '');
 
   try {
     let loopCount = 0;

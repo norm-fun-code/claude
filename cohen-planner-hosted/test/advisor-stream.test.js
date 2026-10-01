@@ -23,7 +23,7 @@ it('emits and saves structured proposals alongside assistant prose',async()=>{
    anthropic:{messages:{stream:req=>{requests.push(req);const first=round++===0;let cb;return{on:(_e,f)=>cb=f,finalMessage:async()=>{
      if(!first)cb('Review the proposed change.');return first?{stop_reason:'tool_use',content:[signedThinking,{type:'tool_use',id:'p1',name:'propose_changes',input:{}}]}:{stop_reason:'end_turn',content:[]};
    }}}}},db:{query:async(sql,params)=>{saved.push({sql,params});return{rows:[{cnt:4}]};}},console,Date};
- vm.createContext(context);vm.runInContext(source,context);
+ context.PlannerTime=require('../public/planner-time.js');vm.createContext(context);vm.runInContext(source,context);
  await handler({body:{chatId:'synthetic',message:'Compare a smaller home',systemPrompt:'',messages:[]}},
  {setHeader(){},flushHeaders(){},write:s=>emitted.push(s),end(){}});
  const events=emitted.filter(s=>s.startsWith('data: ')).map(s=>JSON.parse(s.slice(6)));
@@ -52,7 +52,7 @@ describe('every call the tool loop makes',()=>{
           return first?{stop_reason:'tool_use',content:[{type:'tool_use',id:'t',name:'propose_changes',input:{}}]}
                       :{stop_reason:'end_turn',content:[]};}};}}},
       db:{query:async()=>({rows:[{cnt:4}]})},console,Date};
-    vm.createContext(context);vm.runInContext(source,context);
+    context.PlannerTime=require('../public/planner-time.js');vm.createContext(context);vm.runInContext(source,context);
     await handler({body:{chatId:'c',message:'m',systemPrompt:'',messages:[]}},
       {setHeader(){},flushHeaders(){},write(){},end(){}});
     expect(requests.length).toBeGreaterThan(1);

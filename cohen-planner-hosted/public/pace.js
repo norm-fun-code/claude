@@ -41,6 +41,7 @@
 //    overridable, because one household's "gym" is another's fixed commitment.
 
 (function(root){
+  const PlannerTime=typeof module!=='undefined'&&module.exports?require('./planner-time.js'):root.PlannerTime;
 
   // ── What is not a decision you made this month ───────────────────────────
   // Matched on Monarch's category NAME, since these are stable user-facing labels and the
@@ -221,7 +222,7 @@
   // ── The headline ─────────────────────────────────────────────────────────
   function pace(txns,cats,opts){
     const o=opts||{};
-    const asOf=o.asOf||new Date().toISOString().slice(0,10);
+    const asOf=o.asOf||PlannerTime.day();
     const thisMonth=monthOf(asOf);
     const day=dayOf(asOf);
     const minMonths=o.minMonths??3;

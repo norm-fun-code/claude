@@ -84,7 +84,7 @@ function renderCockpit(R){
   // would silently compare a figure without retirement against one with it.
   const obsRetirement=Number(s&&s.byClass&&s.byClass.retirement?s.byClass.retirement.total:0)||0;
   const obsNw=available?(cockpitExRet?s.netWorth-obsRetirement:s.netWorth):null;
-  const current=R.find(r=>r.yr===new Date().getFullYear())||R[0];
+  const current=R.find(r=>r.yr===PlannerTime.year())||R[0];
   const end=R[R.length-1],floor=R.reduce((a,b)=>a.liq<b.liq?a:b);
   const selected=R.find(r=>r.yr===cockpitYear)||current;cockpitYear=selected.yr;
   // The question is "where am I today versus the end of the year", so today is the OBSERVED
@@ -156,7 +156,7 @@ function renderCockpit(R){
     <section class="cp-register" data-tense="now">
       <div class="cp-register-head">
         <span class="ui-eyebrow">Where you stand</span>
-        <div class="cp-source" role="status"><span class="${partial||stale||!available?'cp-amber':''}">${e(status)}</span>${dated?`<span>As of ${e(date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}))}</span>`:''}<button onclick="cockpitGo('overview')">Sources & accounts ↗</button></div>
+        <div class="cp-source" role="status"><span class="${partial||stale||!available?'cp-amber':''}">${e(status)}</span>${dated?`<span>As of ${e(PlannerTime.formatDate(date,{month:'short',day:'numeric',year:'numeric'}))}</span>`:''}<button onclick="cockpitGo('overview')">Sources & accounts ↗</button></div>
       </div>
     <section class="cp-position ui-rise" aria-label="Financial position">
       <div class="cp-wealth">
@@ -322,7 +322,7 @@ function cockpitObservedLabel(P){
   if(!P||!P.observedOn)return 'the start of the year';
   const t=Date.parse(/T/.test(P.observedOn)?P.observedOn:P.observedOn+'T00:00:00Z');
   if(!Number.isFinite(t))return 'the start of the year';
-  return new Date(t).toLocaleDateString(undefined,{month:'long',day:'numeric',timeZone:'UTC'});
+  return PlannerTime.formatDate(P.observedOn,{month:'long',day:'numeric'});
 }
 
 function cockpitDrawChart(R,P,year){

@@ -23,18 +23,18 @@ function decisionSyncBase(){
 }
 function renderDecisionRoom(R){
   decisionSyncBase();
-  if(decisionYear===null)decisionYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,new Date().getFullYear()));
+  if(decisionYear===null)decisionYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,PlannerTime.year()));
   decisionYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,decisionYear));
   const summary=PlannerDecisions.summarize(P,R,decisionYear);
   const events=PlannerDecisions.milestones(P,R);
-  const todayYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,new Date().getFullYear()));
+  const todayYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,PlannerTime.year()));
   const today=R.find(r=>r.yr===todayYear);
   const title=summary.floor.liq<0?'Your plan has a funding gap.':summary.deficitYears>0?'Some years draw on savings.':'Your next chapter, in focus.';
   const detail=summary.floor.liq<0?`Projected liquid assets turn negative. Explore the timing and trade-offs below.`:summary.deficitYears>0?`${summary.deficitYears} ${summary.deficitYears===1?'year draws':'years draw'} on investments to cover spending. Start with the tightest year.`:`Your current assumptions cover annual spending in every modeled year. Explore how your choices change that path.`;
   const upcoming=events.filter(e=>e.yr>=todayYear).slice(0,4);
   const synced=PlannerDecisions.usableSnapshot(monarchSnapshot);
   const age=synced?Math.max(0,Math.floor((Date.now()-Date.parse(monarchSnapshot.syncedAt))/86400000)):null;
-  const source=synced?`Monarch · ${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}${age>7?' · refresh recommended':''}`:(monarchSnapshot?.partial?'Plan assumptions · account totals incomplete (see Portfolio)':(monarchSnapshot?.partial?'Plan assumptions · account totals incomplete (see Portfolio)':'Plan assumptions · live balances unavailable'));
+  const source=synced?`Monarch · ${PlannerTime.formatDate(monarchSnapshot.syncedAt,{month:'short',day:'numeric'})}${age>7?' · refresh recommended':''}`:(monarchSnapshot?.partial?'Plan assumptions · account totals incomplete (see Portfolio)':(monarchSnapshot?.partial?'Plan assumptions · account totals incomplete (see Portfolio)':'Plan assumptions · live balances unavailable'));
   document.getElementById('summaries').innerHTML='';
   document.getElementById('chartArea').innerHTML=`<div class="decision-room">
     <section class="dr-intro">

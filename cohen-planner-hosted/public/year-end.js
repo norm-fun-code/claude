@@ -23,6 +23,7 @@
 // as unobservable rather than scored against zero.
 
 (function(root){
+  const PlannerTime=typeof module!=='undefined'&&module.exports?require('./planner-time.js'):root.PlannerTime;
 
   const r0=v=>Math.round(Number(v)||0);
   const fin=v=>Number.isFinite(Number(v));
@@ -34,7 +35,7 @@
     const sy=Number((P||{}).planStartYear)||0;
     const now=today==null?new Date():(today instanceof Date?today:new Date(today));
     if(!sy||!Number.isFinite(now.getTime()))return null;
-    const year=now.getFullYear();
+    const year=PlannerTime.year(today==null?now:today);
     if(year<=sy)return null;
     return{closingYear:sy,currentYear:year,yearsBehind:year-sy};
   }

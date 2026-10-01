@@ -17,6 +17,7 @@
 // messages to send someone about their money.
 
 (function(root){
+  const PlannerTime=typeof module!=='undefined'&&module.exports?require('./planner-time.js'):root.PlannerTime;
 
   const SEVERITY={CRITICAL:'critical',WARNING:'warning',INFO:'info'};
   const RANK={critical:0,warning:1,info:2};
@@ -36,7 +37,7 @@
   const usd=v=>(v<0?'−':'')+'$'+Math.round(Math.abs(v)).toLocaleString('en-US');
   const pct=v=>(v*100).toFixed(1)+'%';
   const num=v=>{const n=Number(v);return Number.isFinite(n)?n:null};
-  const isoDay=d=>new Date(d).toISOString().slice(0,10);
+  const isoDay=d=>PlannerTime.day(d);
 
   // ── Alert identity ───────────────────────────────────────────────────────
   // The dedup key must name the CONDITION, not the moment it was noticed. A reserve floor
@@ -343,7 +344,7 @@
     const{P,today,taxPlan}=ctx;
     const alerts=[],skipped=[];
     const now=today?new Date(today):new Date();
-    const y=now.getFullYear();
+    const y=PlannerTime.year(today==null?now:today);
     const daysTo=d=>Math.ceil((Date.parse(d)-now)/86400000);
 
     // Federal estimated tax instalments. The dates are statutory; whether they MATTER here
@@ -395,7 +396,7 @@
 
     // Tender windows. The only dates on which Stripe becomes cash.
     const tenderQuarters=(P&&P.stripeTenderQuarters)||[1,4];
-    const q=Math.floor(now.getMonth()/3)+1;
+    const q=Math.floor(PlannerTime.month(today==null?now:today)/3)+1;
     const nextTenderQ=tenderQuarters.find(t=>t>=q)??tenderQuarters[0];
     const tenderYear=nextTenderQ>=q?y:y+1;
     const tenderStart=`${tenderYear}-${String((nextTenderQ-1)*3+1).padStart(2,'0')}-01`;

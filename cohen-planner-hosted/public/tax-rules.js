@@ -17,6 +17,7 @@
 // than presenting a two-year-old bracket as today's law.
 
 (function(root){
+  const PlannerTime=typeof module!=='undefined'&&module.exports?require('./planner-time.js'):root.PlannerTime;
 
   const RETRIEVED='2026-09-10';
   const TAX_YEAR=2026;
@@ -194,7 +195,7 @@
   function staleness(today){
     const now=today?new Date(today):new Date();
     const days=Math.floor((now-Date.parse(RETRIEVED))/86400000);
-    const currentTaxYear=now.getMonth()>=10?now.getFullYear()+1:now.getFullYear();
+    const currentTaxYear=PlannerTime.month(today==null?now:today)>=10?PlannerTime.year(today==null?now:today)+1:PlannerTime.year(today==null?now:today);
     return{retrieved:RETRIEVED,ageDays:days,taxYear:TAX_YEAR,
       // Inflation adjustments for the next year land each autumn. Once the table's year is
       // behind the year a filer is actually planning for, the figures are last year's.

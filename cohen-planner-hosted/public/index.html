@@ -8,6 +8,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%237d76ff'/><stop offset='.55' stop-color='%235048d6'/><stop offset='1' stop-color='%237c3aed'/></linearGradient></defs><rect width='32' height='32' rx='7' fill='url(%23g)'/><path d='M6 21L13 14L17 18L26 8' stroke='%23fff' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='26' cy='8' r='2.4' fill='%23fff'/></svg>">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+<script src="/planner-time.js"></script>
 <script src="/stripe-grants.js"></script>
 <script src="/model.js"></script>
 <script src="/stripe-grants-ui.js"></script>
@@ -808,7 +809,7 @@ async function syncMonarch({quiet=false}={}){
     // balance" in its own tooltip — a warning that contradicted itself on hover.
     const missing=(d.missingAccounts||[]).length;
     const reallyPartial=!!d.partial&&missing>0;
-    if(freshness){freshness.textContent=(reallyPartial?'Incomplete totals · ':d.stale||d.warning?'Older balances · ':'Observed · ')+new Date(nextSnapshot.syncedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});freshness.title=reallyPartial?`${missing} account${missing===1?'':'s'} ${missing===1?'has':'have'} no balance in Monarch. Totals include available balances only.`:d.warning||'Latest balance observation from NormOS. Bank refresh times may differ.';}
+    if(freshness){freshness.textContent=(reallyPartial?'Incomplete totals · ':d.stale||d.warning?'Older balances · ':'Observed · ')+PlannerTime.formatTime(nextSnapshot.syncedAt,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});freshness.title=reallyPartial?`${missing} account${missing===1?'':'s'} ${missing===1?'has':'have'} no balance in Monarch. Totals include available balances only.`:d.warning||'Latest balance observation from NormOS. Bank refresh times may differ.';}
     if(btn){btn.textContent=reallyPartial?'📍 Refresh available balances':d.stale||d.warning?'📍 Check sync':'📍 Refresh balances';btn.disabled=false;btn.style.display='';}
     const connBtn=document.getElementById('monarchConnectBtn');if(connBtn)connBtn.style.display='none';
     if(!quiet)showToast((reallyPartial?`${d.accounts.length} accounts synced; ${missing} balance unavailable. Totals are incomplete.`:null)||d.warning||(d.stale?'Showing older balances from NormOS. Run the Monarch sync to update them.':`Monarch via NormOS · Liquid ${fmt(monarchSnapshot.liquid)} · 401k ${fmt(monarchSnapshot.retirement)}`),d.stale||d.warning?'red':'green');
@@ -825,11 +826,11 @@ async function syncMonarch({quiet=false}={}){
 function anchorToToday(){
   if(!monarchSnapshot){showToast('Sync Monarch first','red');return;}
   if(monarchSnapshot.partial){showToast('Totals are incomplete. Review the missing account in Portfolio before comparing with your plan.','red');return;}
-  const curYr=new Date().getFullYear();
+  const curYr=PlannerTime.year();
   const todayLiq=monarchSnapshot.liquid;
   const totalNw=monarchSnapshot.netWorth;
   const ret=monarchSnapshot.retirement;
-  const syncDate=new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  const syncDate=PlannerTime.formatDate(monarchSnapshot.syncedAt,{month:'short',day:'numeric',year:'numeric'});
   // Pro-rate plan's liquid target to today for comparison
   let planLiqToday=null;
   try{
@@ -876,7 +877,7 @@ function anchorToToday(){
 }
 
 function showSnapshotInput(){
-  const dflt=`${P.planStartYear||2026} plan · ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
+  const dflt=`${P.planStartYear||2026} plan · ${PlannerTime.formatDate(new Date(),{month:'short',day:'numeric',year:'numeric'})}`;
   const d=document.createElement('div');
   d.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,37,64,.4);z-index:9998;display:flex;align-items:center;justify-content:center';
   d.innerHTML=`<div style="background:#fff;border-radius:12px;padding:24px 28px;width:100%;max-width:380px;box-shadow:0 8px 30px rgba(0,0,0,.15)">
@@ -955,7 +956,7 @@ function printPDF(){
   const defYrs=drawYears(R);
   const pur=R.find(r=>r.yr===P.homePurchaseYear);
   const pliq=pur?pur.liq:0;
-  const today=new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+  const today=PlannerTime.formatDate(new Date(),{year:'numeric',month:'long',day:'numeric'});
   const ey=P.planEndYear||2058;
   const planYears=ey-(P.planStartYear||2026);
 
@@ -1132,7 +1133,7 @@ async function loadSnapshots(){
 async function saveSnapshot(silent,labelOverride){
   const RES=run(P);const{R,tT}=RES;const last=R[R.length-1];
   const def=RES.drawYears;
-  const dflt=`${P.planStartYear||2026} plan · ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`;
+  const dflt=`${P.planStartYear||2026} plan · ${PlannerTime.formatDate(new Date(),{month:'short',day:'numeric',year:'numeric'})}`;
   const label=labelOverride||dflt;
   const summary={finalNW:last.netWorth,final401k:last.k401,totalTuition:tT,deficitYears:def,startingLiquid:P.startingLiquid,liqFloor:Math.min(...R.map(r=>r.liq))};
   const snap={id:advUuid(),label,planYear:P.planStartYear||2026,params:{...P},summary};
@@ -1266,7 +1267,7 @@ function buildControls(){
   const asOf=balanceDate?new Date(balanceDate):null;
     const dated=asOf&&Number.isFinite(asOf.getTime());
     const src=manual?'Your figure — not tracking your accounts'
-      :r.following?`From your accounts${dated?' · '+asOf.toLocaleDateString(undefined,{month:'short',day:'numeric'}):''}`
+      :r.following?`From your accounts${dated?' · '+PlannerTime.formatDate(asOf,{month:'short',day:'numeric'}):''}`
       :r.reason;
     return `<div class="sr">
       <div class="sh"><span class="sl">${r.label}</span><span class="sv">${fmtF(P[key]||0)}</span></div>
@@ -1493,7 +1494,7 @@ async function confirmRollForward(overlay,curYear,nextYear){
   const stripeEl=document.getElementById('rfStripeInput');
   const stripeStr=stripeEl?stripeEl.value:'';
   if(overlay)overlay.remove();
-  await saveSnapshot(true,`${curYear} plan · rolled forward ${new Date().toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`);
+  await saveSnapshot(true,`${curYear} plan · rolled forward ${PlannerTime.formatDate(new Date(),{month:'short',day:'numeric',year:'numeric'})}`);
   // Every rolling window (Norm's two comp streams, the Stripe return curve, Nancy's W2
   // years) shifts together — see /plan-migrate.js, which is unit-tested for exactly this.
   P=PlanMigrate.rollForwardParams(P);
@@ -1526,7 +1527,7 @@ function toggleExpRow(yr){
   // The year we are living through can be checked against what has actually been spent, and
   // that lives in the transaction ledger the Spending tab loads. Opening the row here is the
   // first time this tab needs it, so ask for it then — loadSpending re-renders when it lands.
-  if(_expOpenYears.has(yr)&&yr===new Date().getFullYear()&&!_spend&&!_spendLoading)loadSpending();
+  if(_expOpenYears.has(yr)&&yr===PlannerTime.year()&&!_spend&&!_spendLoading)loadSpending();
   render();
 }
 // ── What the year has actually cost so far ──────────────────────────────────
@@ -1539,13 +1540,13 @@ function toggleExpRow(yr){
 // eight and a bit months of spending measured against twelve months of plan is not a
 // comparison, it is a subtraction with a month missing.
 function expActualYTD(year){
-  if(year!==new Date().getFullYear())return null;
+  if(year!==PlannerTime.year())return null;
   if(_spendLoading)return{loading:true};
   const d=_spend;
   if(!d||d.error||!Array.isArray(d.months))return null;
   const rows=d.months.filter(m=>String(m.month).slice(0,4)===String(year));
   if(!rows.length)return null;
-  const asOf=d.endDate||new Date().toISOString().slice(0,10);
+  const asOf=d.endDate||PlannerTime.day();
   const partial=(d.coverage||{}).partial;
   const closed=rows.filter(m=>m.month!==partial);
   const spent=rows.reduce((t,m)=>t+(Number(m.expense)||0),0);
@@ -1965,7 +1966,7 @@ function render(){
     <div class="kpi"><div class="kpi-l">📉 Liquid Floor</div><div class="kpi-v" style="color:${minL.liq>(P.liquidReserveFloor??D.liquidReserveFloor)?'var(--g)':'var(--a)'}">${fmt(minL.liq)}</div><div class="kpi-s">${minL.yr}</div></div>
     <div class="kpi"><div class="kpi-l">🏁 NW (${last.yr})</div><div class="kpi-v" style="color:var(--g)">${fmt(last.nw)}</div><div class="kpi-s">+${fmt(last.k401)} 401k</div></div>
     <div class="kpi"><div class="kpi-l">🏦 Total w/ 401k</div><div class="kpi-v" style="color:var(--tx)">${fmt(last.nw+last.k401)}</div><div class="kpi-s">incl. retirement</div></div>
-    ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 ${monarchSnapshot.partial?'Known balances':'Latest NW'}</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${new Date(monarchSnapshot.syncedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div></div>`:''}`;
+    ${monarchSnapshot?`<div class="kpi" style="border-color:rgba(191,105,0,.3);background:var(--a-soft)"><div class="kpi-l" style="color:var(--a)">📍 ${monarchSnapshot.partial?'Known balances':'Latest NW'}</div><div class="kpi-v" style="color:var(--a);font-size:13px">${fmt(monarchSnapshot.netWorth)}</div><div class="kpi-s">${PlannerTime.formatDate(monarchSnapshot.syncedAt,{month:'short',day:'numeric'})}</div></div>`:''}`;
   // ─── Hero net-worth band ───
   const _hb=document.getElementById('heroBand');
   if(_hb){
@@ -2131,7 +2132,7 @@ function render(){
   const anchorMatchesToday=anchorObs==null||Math.abs(anchorObs-(startNwK*1000))<1000;
   const anchorIsToday=anchorDated&&anchorMatchesToday;
   const anchorLabel=anchorDated
-    ?new Date(obsOn+'T00:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'})
+    ?PlannerTime.formatDate(obsOn,{month:'short',day:'numeric'})
     :String(sy0-1);
   const nwLabels=[anchorLabel,...labels];
   // The prior-year anchor for the TOTAL line is the plan's whole opening position, not just
@@ -2516,7 +2517,7 @@ const PROV={
 };
 function provChip(kind,asOf,compact=false){
   const p=PROV[kind];if(!p)return'';
-  const when=asOf?new Date(asOf).toLocaleDateString(undefined,{month:'short',day:'numeric'}):null;
+  const when=asOf?PlannerTime.formatDate(asOf,{month:'short',day:'numeric'}):null;
   const text=compact?`${p.icon} ${when||p.label}`:`${p.icon} ${p.label}${when?' · '+when:''}`;
   return `<span class="overview-provenance" title="${p.hint}${when?' · '+when:''}" style="--prov:${p.color}">${text}</span>`;
 }
@@ -2764,7 +2765,7 @@ function renderWatchTab(R,P){
   h+=`<div class="wl-coverage ui-rise ui-rise-2">
     <span>${d.checksRun} of ${d.checksTotal} checks ran</span>
     <span>${d.counts.open} open${d.counts.suppressed?` · ${d.counts.suppressed} silenced`:''}</span>
-    <span title="${advEscape(String(d.generatedAt))}">${Number.isFinite(Date.parse(d.generatedAt))?new Date(d.generatedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'Update time unavailable'}</span>
+    <span title="${advEscape(PlannerTime.formatTime(d.generatedAt))}">${Number.isFinite(Date.parse(d.generatedAt))?PlannerTime.formatTime(d.generatedAt,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'Update time unavailable'}</span>
   </div>`;
   if(!complete)h+=`<div class="wl-banner" data-tone="warning">
       <p><strong>This is a partial picture.</strong> Some checks could not run, so the areas below are unexamined rather than clear.</p></div>`;
@@ -3026,7 +3027,7 @@ function renderOverviewTab(R,P){
       const d=ch.delta;
       h+=`<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:3px">
         <span style="font-size:20px;font-weight:800;font-family:'SF Mono',monospace;color:${d>=0?'var(--g)':'var(--r)'};letter-spacing:-.5px">${d>=0?'+':'−'}${money(Math.abs(d))}</span>
-        <span style="font-size:10px;color:var(--t3)">since ${new Date(ch.from).toLocaleDateString()}${ch.days?` · ${ch.days} days`:''}</span></div>`;
+        <span style="font-size:10px;color:var(--t3)">since ${PlannerTime.formatDate(ch.from)}${ch.days?` · ${ch.days} days`:''}</span></div>`;
       if(!ch.components.length){
         h+=`<div style="font-size:10.5px;color:var(--t2);line-height:1.6;background:var(--s2);border-radius:6px;padding:9px 11px;margin-top:6px">
           <strong style="color:var(--tx)">${advEscape(ch.residual.label)}.</strong> ${advEscape(ch.residual.detail)}</div>`;
@@ -3231,7 +3232,7 @@ let _spendScope={kind:'ytd'};
 // The calendar year the data is standing in, taken from the observation date rather than
 // inferred from the last complete month. In January the most recent complete month is
 // December of the year before, and reading YTD off that would quietly report last year.
-function spendCurrentYear(asOf){return String(asOf||'').slice(0,4)||String(new Date().getFullYear())}
+function spendCurrentYear(asOf){return String(asOf||'').slice(0,4)||String(PlannerTime.year())}
 // `all` is the closed months; `every` is the full history including the month in progress.
 // Year-to-date and a NAMED month read from `every` — the full history including the month in
 // progress. "So far this year" that stops at the end of last month is not what the phrase
@@ -3316,8 +3317,7 @@ function setSpendScopeFromSelect(v){
 function monthLabel(ym,{short=false}={}){
   const m=/^(\d{4})-(\d{2})$/.exec(String(ym||''));
   if(!m)return String(ym||'');
-  const d=new Date(Date.UTC(Number(m[1]),Number(m[2])-1,1));
-  return d.toLocaleDateString(undefined,{month:short?'short':'long',year:'numeric',timeZone:'UTC'});
+  return PlannerTime.formatDate(`${m[1]}-${m[2]}-01`,{month:short?'short':'long',year:'numeric'});
 }
 
 function renderSpendingTab(R,P){
@@ -3343,7 +3343,7 @@ function renderSpendingTab(R,P){
         <div style="font-size:10px;color:var(--t2);margin-top:3px">
           ${nTx?`${nTx.toLocaleString()} transactions · ${st.firstDate||'—'} → ${st.lastDate||'—'}${st.pending?` · ${st.pending} still pending`:''}`
                :'No transaction history imported yet.'}
-          ${st.lastSyncAt?` · synced ${new Date(st.lastSyncAt).toLocaleString()}`:''}
+          ${st.lastSyncAt?` · synced ${PlannerTime.formatTime(st.lastSyncAt)}`:''}
         </div>
       </div>
       <div style="display:flex;gap:5px;flex-wrap:wrap">
@@ -3372,7 +3372,7 @@ function renderSpendingTab(R,P){
   }
 
   const months=d.months||[],cov=d.coverage||{},tot=d.totals||{},cnt=d.counts||{};
-  const asOf=d.endDate||new Date().toISOString().slice(0,10);
+  const asOf=d.endDate||PlannerTime.day();
   const completeAll=months.filter(m=>m.month<asOf.slice(0,7));
   // The donut answers "where does it go", and that question has a period attached to it —
   // twelve months and last March are different questions with different answers. The month in
@@ -3767,7 +3767,7 @@ function renderPortfolioTab(R,P){
     </div>
   </div>
 
-  ${inv.warning||inv.stale?`<div role="status" class="glass-card" style="padding:12px;margin-bottom:12px;color:var(--a)">${advEscape(inv.warning||'Showing the last saved holdings.')} Observed ${advEscape(new Date(inv.asOf).toLocaleString())}.</div>`:''}
+  ${inv.warning||inv.stale?`<div role="status" class="glass-card" style="padding:12px;margin-bottom:12px;color:var(--a)">${advEscape(inv.warning||'Showing the last saved holdings.')} Observed ${advEscape(PlannerTime.formatTime(inv.asOf))}.</div>`:''}
   <div class="pf-kpis pf-summary">
     ${[
       {l:'Total Value',v:fmt(totalVal),s:'investment portfolio',c:'var(--accent)'},
@@ -5198,7 +5198,7 @@ function enterDemoMode(opts){
     for(const sel of ['.logout-btn','#monarchSyncBtn','#monarchConnectBtn','#monarchFreshness','.sync-pill'])
       document.querySelectorAll(sel).forEach(el=>el.remove());
   }
-  const year=new Date().getFullYear();
+  const year=PlannerTime.year();
   // One fictional household, from public/demo-data.js — the same module the server uses to
   // rewrite the shared page. The shared page's D is already scrubbed; the owner's is not, and
   // this used to start from it with a dozen keys overridden, so every other budget line still
@@ -6089,7 +6089,7 @@ function advRelTime(ts){
   if(d<7)return d+'d';
   const w=Math.floor(d/7);
   if(w<4)return w+'w';
-  return new Date(ts).toLocaleDateString(undefined,{month:'short',day:'numeric'});
+  return PlannerTime.formatDate(ts,{month:'short',day:'numeric'});
 }
 
 async function advSwitchChat(id){
@@ -6163,7 +6163,7 @@ function advExportChats(){
   const data={exportedAt:new Date().toISOString(),chats:advisorChats};
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download=`advisor-chats-${new Date().toISOString().slice(0,10)}.json`;a.click();
+  a.download=`advisor-chats-${PlannerTime.day()}.json`;a.click();
 }
 
 async function advSend(){

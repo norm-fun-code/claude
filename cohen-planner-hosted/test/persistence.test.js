@@ -197,7 +197,7 @@ describe('the trajectory anchor is labelled for when the balance was true', () =
 
   it('uses the observation date when the plan opens mid-year', () => {
     expect(fn).toContain('anchorDated=!!obsOn&&Number(obsOn.slice(0,4))===sy0');
-    expect(fn).toContain("toLocaleDateString(undefined,{month:'short',day:'numeric'})");
+    expect(fn).toContain("PlannerTime.formatDate(obsOn,{month:'short',day:'numeric'})");
   });
 
   it('keeps the prior year-end when there is no observation, where it is correct', () => {

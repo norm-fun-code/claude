@@ -22,6 +22,7 @@
 // its saving as banked.
 
 (function(root,rules){
+  const PlannerTime=typeof module!=='undefined'&&module.exports?require('./planner-time.js'):root.PlannerTime;
 
   const CONFIDENCE={
     ESTIMATE:'estimate',                       // our arithmetic, our stated assumptions
@@ -126,7 +127,7 @@
     // In February two tax years are live: last year's return is not yet filed and this
     // year's first instalment is not yet due. Which one is being planned has to be said,
     // not inferred from today's date.
-    const y=num(i.taxYear)??asOf.getFullYear();
+    const y=num(i.taxYear)??PlannerTime.year(i.asOf||asOf);
     // Instalment dates are statutory. Which ones have passed drives everything below.
     const instalments=[
       {label:'Q1',due:`${y}-04-15`},{label:'Q2',due:`${y}-06-15`},

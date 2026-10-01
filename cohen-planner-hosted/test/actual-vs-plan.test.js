@@ -66,11 +66,11 @@ describe('actual so far, against the plan for the same stretch', () => {
   });
 
   it('only appears for the year we are actually in', () => {
-    expect(html).toContain("if(year!==new Date().getFullYear())return null;");
+    expect(html).toContain("if(year!==PlannerTime.year())return null;");
   });
 
   it('asks for the ledger when the row is opened, since this tab never loaded it', () => {
-    expect(html).toContain("if(_expOpenYears.has(yr)&&yr===new Date().getFullYear()&&!_spend&&!_spendLoading)loadSpending();");
+    expect(html).toContain("if(_expOpenYears.has(yr)&&yr===PlannerTime.year()&&!_spend&&!_spendLoading)loadSpending();");
     expect(html).toContain("if(_spendLoading)return{loading:true};");
   });
 

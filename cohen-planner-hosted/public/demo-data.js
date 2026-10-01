@@ -18,6 +18,7 @@
 // budget line showing the real household while presenting.
 
 (function (root) {
+  const PlannerTime=typeof module!=='undefined'&&module.exports?require('./planner-time.js'):root.PlannerTime;
 
   // ── The default plan, with every money figure replaced ───────────────────
   const DEMO_OVERRIDES = {
@@ -144,7 +145,7 @@
     ({ id, name, systemCategory: systemCategory || null, group: { id: 'g-' + type, name: type, type } }));
 
   function demoLedger(today, P) {
-    const end = new Date((today || new Date().toISOString().slice(0, 10)) + 'T00:00:00Z');
+    const end = new Date((today || PlannerTime.day()) + 'T00:00:00Z');
     const rand = rng(20260923);
     const pick = a => a[Math.floor(rand() * a.length)];
     const between = (lo, hi) => Math.round((lo + rand() * (hi - lo)) * 100) / 100;

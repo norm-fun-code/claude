@@ -309,7 +309,7 @@ describe('the spending scope filter', () => {
   const src = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const ctx = () => {
     const c = { _spendScope: { kind: 'all' } };
-    vm.createContext(c);
+    c.PlannerTime=require('../public/planner-time.js');vm.createContext(c);
     vm.runInContext(src.slice(src.indexOf('function spendCurrentYear'), src.indexOf('function setSpendScope(')), c);
     vm.runInContext(src.slice(src.indexOf('function monthLabel'), src.indexOf('\n\nfunction renderSpendingTab')), c);
     return c;

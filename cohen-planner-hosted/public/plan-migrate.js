@@ -8,6 +8,7 @@
 // its total STARTING net worth. Only the cash-vs-asset behaviour of stock is allowed to
 // change, because that is the whole point of the split.
 (function(root){
+  const PlannerTime=typeof module!=='undefined'&&module.exports?require('./planner-time.js'):root.PlannerTime;
   const NORM_YEARS=11;   // normCashY0..Y10 / normStockY0..Y10
   const STRIPE_RET_YEARS=10;
 
@@ -142,8 +143,8 @@
     // A date outside the first plan year tells the engine nothing it can use: before it,
     // the whole year is ahead; after it, the year is already over. Only stamp a date that
     // actually falls inside the year being stubbed.
-    if(now.getFullYear()!==sy)return{...P,observedOn:null};
-    const iso=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    if(PlannerTime.year(today==null?now:today)!==sy)return{...P,observedOn:null};
+    const iso=PlannerTime.day(today==null?now:today);
     return{...P,observedOn:iso};
   }
 
