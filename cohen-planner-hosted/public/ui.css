@@ -1186,3 +1186,9 @@ body:has(.demo-banner) .bd-bar{top:46px}
 .bd-bottom>b{font-size:20px;color:var(--t3);font-weight:400}
 .bd-bottom .pos strong{color:var(--g)}.bd-bottom .neg strong{color:var(--a)}
 .bd-bottom p{flex:1 1 100%;margin:0;font-size:12px;color:var(--t3)}
+
+/* Collapsed sections below the lines: the cards inside lose their own frame, so a fold is one thing */
+.bd-over>summary{cursor:pointer;font-weight:600;color:var(--t2);font-size:14px}
+.bd-over-in{display:flex;flex-direction:column;gap:22px;margin-top:16px}
+.bd-over-in>.cp-card,.bd-over-in .cp-card{background:none;border:0;border-top:1px solid var(--bd);border-radius:0;box-shadow:none;padding:18px 0 0;margin:0}
+.bd-over-in>.cp-card:first-child{border-top:0;padding-top:0}

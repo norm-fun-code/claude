@@ -434,3 +434,31 @@ describe('the Budget reads like a P&L, and every line can be set as a share of i
   for(const line of ['dining','shopping','entertainment','vacations'])expect(S.BANDS[line]).toBeTruthy();
  });
 });
+
+describe('Budget layout: the lines come first',()=>{
+ const render=html.slice(html.indexOf('function renderBudgetTab('));
+ it('opens with one summary card, then the line by line, and everything else folds below',()=>{
+  const at=s=>render.indexOf(s);
+  expect(at('<section class="cp-card bd-buckets">')).toBeLessThan(at('<section class="cp-card bd-lines">'));
+  expect(at('<section class="cp-card bd-lines">')).toBeLessThan(at('${overTimeHtml}${scenarioFold}${assumeHtml}'));
+  for(const piece of ['const phasesHtml=','const tuitionHtml=','const fundHtml=','const sharedHtml='])expect(render).toContain(piece);
+  // None of the over-time material is emitted before the lines any more.
+  const before=render.slice(0,at('<section class="cp-card bd-lines">'));
+  for(const gone of ['h+=phasesHtml','h+=tuitionHtml','h+=fundHtml','h+=sharedHtml','h+=budgetTuitionHtml'])expect(before).not.toContain(gone);
+ });
+ it('keeps the plan shape, tuition, the year-by-year strip and the funding bar in one Over time fold, and the scenarios in another',()=>{
+  const over=render.slice(render.indexOf('const overTimeHtml='),render.indexOf('const scenarioFold='));
+  for(const piece of ['${phasesHtml}','${strip}','${tuitionHtml}','${fundHtml}'])expect(over).toContain(piece);
+  expect(render).toContain("const scenarioFold=`<details class=\"cp-card spend-details bd-over\" ${bdFold('scenarios')}>");
+ });
+ it('remembers which folds are open, so a redraw does not shut the one you are reading',()=>{
+  expect(html).toContain('const _bdFolds=new Set();');
+  expect(html).toContain("ontoggle=\"budgetFold('${k}',this.open)\"");
+  for(const k of ['over','scenarios','suggest','baselines','nyc'])expect(html).toContain(`bdFold('${k}')`);
+ });
+ it('gives the funding bar its own colours so teal and amber keep one meaning on the page',()=>{
+  const m=html.match(/const BD_COLOR=\{([^}]+)\}/)[1];
+  const groups=html.match(/const RM_COLOR=\{([^}]+)\}/)[1];
+  for(const k of ['cash','stock','savings','left']){const c=m.match(new RegExp(k+":'(#[0-9a-f]+)'"))[1];expect(groups.includes(c),k).toBe(false)}
+ });
+});

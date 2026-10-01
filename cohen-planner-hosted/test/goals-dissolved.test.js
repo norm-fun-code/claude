@@ -20,12 +20,13 @@ describe('the Goals tab is gone and each part has a home',()=>{
   // The old card closed a <details> inside a loop, thirty times over.
   expect(between('function mortgagePayoffHtml(','function renderHousingTab(')).not.toMatch(/<\/div><\/details>`;\s*\}\)\.join/);
  });
- it('puts tuition beside the shape of the plan, as the reason for it',()=>{
+ it('keeps tuition with the shape of the plan, in the Over time section below the lines',()=>{
   expect(html).toContain('function budgetTuitionHtml(R,P)');
-  expect(html).toContain('h+=budgetTuitionHtml(R,P);');
   const render=html.slice(html.indexOf('function renderBudgetTab('));
-  expect(render.indexOf('h+=budgetTuitionHtml(R,P);')).toBeGreaterThan(render.indexOf('The shape of the plan'));
-  expect(render.indexOf('h+=budgetTuitionHtml(R,P);')).toBeLessThan(render.indexOf('h+=sharedCard();'));
+  expect(render).toContain('const tuitionHtml=budgetTuitionHtml(R,P);');
+  const over=render.slice(render.indexOf('const overTimeHtml='),render.indexOf('const scenarioFold='));
+  expect(over.indexOf('${phasesHtml}')).toBeGreaterThan(-1);
+  expect(over.indexOf('${phasesHtml}')).toBeLessThan(over.indexOf('${tuitionHtml}'));
  });
  it('puts risk and confidence under the net-worth chart, once',()=>{
   expect(html).toContain('function riskFoldHtml()');

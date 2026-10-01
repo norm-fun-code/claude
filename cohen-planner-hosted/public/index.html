@@ -3588,6 +3588,11 @@ function renderIncomeLens(R,actual){
 // later — tuition makes that the plan, not a failure — so the measure of a budget is HEADROOM:
 // how much more could be spent with liquid assets never below the reserve floor in any year.
 let _budgetYear=null,_budgetUnit='month',_budgetScope='onward',_budgetUndo=null,_budgetEdit=null;
+// Which folds you have open. The page redraws whenever a year or a figure changes, and a fold that
+// snapped shut each time would lose your place.
+const _bdFolds=new Set();
+function budgetFold(k,open){if(open)_bdFolds.add(k);else _bdFolds.delete(k)}
+const bdFold=k=>`data-fold="${k}" ontoggle="budgetFold('${k}',this.open)"${_bdFolds.has(k)?' open':''}`;
 function budgetJump(key){
   const el=document.getElementById('bd-g-'+key),bar=document.querySelector('.bd-bar');if(!el)return;
   const calm=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -3598,7 +3603,7 @@ function budgetJump(key){
 }
 function budgetEdit(k){_budgetEdit=_budgetEdit===k?null:k;render()}
 const RM_COLOR={income:'#b8e986',fixed:'#8278ee',essential:'#8bdded',discretionary:'#ecc183',saving:'#6fa8ff',investing:'#7ae3c3',oneoff:'#b6a8ff',tax:'#6b7a90',pretax:'#8ebfff',short:'#ff9caf'};
-const BD_COLOR={cash:'#7ae3c3',stock:'#8278ee',savings:'#ecc183',left:'#8bdded',save:'#7ae3c3',draw:'#ecc183'};
+const BD_COLOR={cash:'#a3b8cc',stock:'#d4a5ff',savings:'#ff9f7a',left:'#d9e1ea',save:'#7ae3c3',draw:'#ecc183'};
 function budgetYearSet(y){_budgetYear=Number(y);render()}
 function budgetYearStep(d,first,last){_budgetYear=Math.min(last,Math.max(first,(_budgetYear??PlannerTime.year())+d));render()}
 function budgetUnit(u){_budgetUnit=u;render()}
@@ -3786,7 +3791,7 @@ function budgetNYCApply(){
   showToast('NYC family budget applied to every case; housing stays separate','green');
 }
 function budgetNYCNotes(){
-  return `<details class="cp-card"><summary>NYC family budget assumptions${P.nycFamilyBudget?' · active':''}</summary>
+  return `<details class="cp-card" ${bdFold('nyc')}><summary>NYC family budget assumptions${P.nycFamilyBudget?' · active':''}</summary>
     <p>Planning allowances in ${P.planStartYear} dollars, inflated ${((P.expenseInflation||0)*100).toFixed(1)}% each year. These are comfortable NYC estimates, not measured spending or guaranteed costs.</p>
     <p>Two adults: groceries $1,200/month; dining $1,200; shopping $600; clothing $400; miscellaneous household supplies and gifts $500; entertainment $375; vacations $18,000/year. Child additions are separate, so clothing is never counted twice.</p>
     <table><thead><tr><th>Child age</th><th>Groceries /mo</th><th>Shopping /mo</th><th>Clothing /mo</th></tr></thead><tbody>
@@ -3864,14 +3869,14 @@ function renderBudgetTab(R,P){
 
   // ── The shape of the plan ──
   const years=R.length,tot=ph.reduce((t,p)=>t+p.years,0)||1;
-  h+=`<section class="cp-card bd-phases"><div class="ps-head"><div><h3>The shape of the plan</h3><p>Saving hard first and drawing down later is the plan, not a problem. Click a stretch to jump to it.</p></div></div>
+  const phasesHtml=`<section class="cp-card bd-phases"><div class="ps-head"><div><h3>The shape of the plan</h3><p>Saving hard first and drawing down later is the plan, not a problem. Click a stretch to jump to it.</p></div></div>
     <div class="bd-phasebar">${ph.map(p=>`<button type="button" class="bd-phase ${p.kind}${yr>=p.from&&yr<=p.to?' on':''}" style="flex:${p.years}" onclick="budgetYearSet(${p.from})" title="${p.kind==='save'?'Adding to savings':'Drawing on savings and Stripe'} ${p.from}–${p.to}: ${p.total>=0?'+':'−'}${fmt(Math.abs(p.total))}">
         <span>${p.kind==='save'?'Saving':'Drawing down'}</span><b>${p.from===p.to?p.from:p.from+'–'+String(p.to).slice(2)}</b><small>${p.total>=0?'+':'−'}${fmt(Math.abs(p.total))}</small></button>`).join('')}
       <i class="bd-here" style="left:${((yr-first+.5)/years*100).toFixed(2)}%" aria-hidden="true"></i></div></section>`;
 
-  h+=budgetTuitionHtml(R,P);
+  const tuitionHtml=budgetTuitionHtml(R,P);
 
-  h+=sharedCard();
+  const sharedHtml=sharedCard();
 
 
   // ── Where the year's money goes, and what the excess does ──
@@ -3899,13 +3904,14 @@ function renderBudgetTab(R,P){
   const exHead=alloc0.excess>0
     ?`${yr} leaves <strong>${amtShort(alloc0.excess)}${unitWord}</strong> over: <strong>${amtShort(alloc0.investing.total)}</strong> goes to investments${alloc0.saving.total?` after <strong>${amtShort(alloc0.saving.total)}</strong> to the emergency fund`:', none to the emergency fund'}.`
     :alloc0.deficit>0?`${yr} spends <strong>${amtShort(alloc0.deficit)}${unitWord}</strong> more than it takes in, so nothing is added to savings or investments — the gap is drawn from them.`:`${yr} comes out level: nothing left over, nothing drawn.`;
+  const stockLine=f.stockShare>=0.05?`<p class="spend-caption" style="margin:10px 0 0">${_lensPct(f.stockShare)} of ${yr}'s spending is paid by selling Stripe stock, the part that moves with the share price.${f.fromSavings>0?` ${fmt(f.fromSavings)} comes from savings.`:''}</p>`:'';
   h+=`<section class="cp-card bd-buckets"><div class="ps-head"><div><h3>Where ${yr}'s money goes</h3><p>${exHead}</p></div></div>
-    ${bucketBar}<p class="spend-caption" style="margin:12px 0 4px">${reserveNote}</p>${strip}</section>`;
+    ${bucketBar}${stockLine}</section>`;
 
   // ── Where this year's money comes from ──
   const seg=[['cash','Cash pay',f.fromCash],['stock','Stripe stock',f.fromStock],['savings','Savings',f.fromSavings],['left','Left over',f.leftover]].filter(s=>s[2]>0);
   const ftot=seg.reduce((t,s)=>t+s[2],0)||1;
-  h+=`<section class="cp-card bd-fund"><div class="ps-head"><div><h3>Where ${yr}'s spending comes from</h3>
+  const fundHtml=`<section class="cp-card bd-fund"><div class="ps-head"><div><h3>Where ${yr}'s spending comes from</h3>
     <p>${fmt(f.spend)} of spending against ${fmt(f.cash+f.stock)} of net income (${fmt(f.cash)} cash pay${f.stock?` + ${fmt(f.stock)} Stripe stock`:''}).</p></div></div>
     <div class="ps-bar" role="img" aria-label="${yr} spending is paid ${seg.map(s=>s[1]+' '+fmt(s[2])).join(', ')}">${seg.map(s=>`<span style="width:${(s[2]/ftot*100).toFixed(2)}%;background:${BD_COLOR[s[0]]}" title="${s[1]} · ${fmt(s[2])}"></span>`).join('')}</div>
     <div class="cl-legend">${seg.map(s=>`<span><i style="background:${BD_COLOR[s[0]]}"></i>${s[1]} <b>${fmt(s[2])}</b></span>`).join('')}</div>
@@ -3929,10 +3935,17 @@ function renderBudgetTab(R,P){
   const sugCount=pend.length+checkList.length;
   // Assumptions about a family like yours (rules of thumb for a high-cost metro): out of the way, at the
   // bottom, opened on purpose. Nothing here changes the plan until you add it.
-  const assumeHtml=`<details class="cp-card spend-details bd-assume"><summary>Suggestions for a family like yours${sugCount?` · ${sugCount}`:''}</summary>
+  const assumeHtml=`<details class="cp-card spend-details bd-assume" ${bdFold('suggest')}><summary>Suggestions for a family like yours${sugCount?` · ${sugCount}`:''}</summary>
     <p class="spend-caption" style="margin:10px 0 4px">Rules of thumb for a household in a high-cost city, not facts about yours. Costs that tend to arrive with what the plan already knows is coming (${yr}–${yr+2}), and lines that look light or high for the household. Nothing changes until you add it, and the amounts are starting points to edit.</p>
     ${checkList.length?`<div class="bd-checks">${checkList.map(c=>`<div class="bd-check ${c.status}"><strong>${advEscape(LIV_LABEL[c.line]||c.line)} looks ${c.status==='low'?'light':'high'}</strong><span>${advEscape(c.text)}</span></div>`).join('')}</div>`:''}
     ${sugBody||(checkList.length?'':'<p class="spend-caption">Nothing to suggest for these years.</p>')}</details>`;
+
+  // Over time and settings: useful, but not what you open the Budget to do, so they wait below the lines.
+  const overTimeHtml=`<details class="cp-card spend-details bd-over" ${bdFold('over')}><summary>Over time · the shape of the plan, tuition, year by year, how ${yr} is funded</summary>
+    <div class="bd-over-in">${phasesHtml}
+      <section class="cp-card"><div class="ps-head"><div><h3>Left over, year by year</h3><p>${reserveNote}</p></div></div>${strip}</section>
+      ${tuitionHtml}${fundHtml}</div></details>`;
+  const scenarioFold=`<details class="cp-card spend-details bd-over" ${bdFold('scenarios')}><summary>Scenarios · what stays the same across your cases</summary><div class="bd-over-in">${sharedHtml}</div></details>`;
 
   // ── The lines ──
   const modelParts=(modelRow&&modelRow.livFullParts)||{};
@@ -4028,7 +4041,7 @@ function renderBudgetTab(R,P){
   // repeated and not inflated, set for any year of the first eleven.
   const oneOff=`<div class="cl-group bd-sec" id="bd-g-oneoff" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off costs</span><span class="cl-gtot">${row.eAdj?`${pct(Math.abs(row.eAdj))} <small>${row.eAdj<0?'−':''}${amtShort(Math.abs(row.eAdj))}${unitWord}</small>`:'<small>none in '+yr+'</small>'}</span></div>
     <div class="bd-oneoff">${embedControls('oneOff')}</div></div>`;
-  const baselines=`<details class="polish-fold refine-fold"><summary>Baselines the model starts from</summary><div>
+  const baselines=`<details class="polish-fold refine-fold" ${bdFold('baselines')}><summary>Baselines the model starts from</summary><div>
     <p class="spend-caption" style="margin:0 0 10px">The yearly figure each line starts from in the plan's first year, before children, inflation and any rule or pin above. Changing one moves the model's own figure and keeps its growth; a rule above replaces a line outright.</p>
     ${embedControls('baselines')}</div></details>`;
   const undo=_budgetUndo?`<div class="bd-undo" role="status"><span>${advEscape(_budgetUndo.label)}${_budgetUndo.notes.map(n=>` · your ${n.years.join(', ')} ${n.kind==='later-rule'?'change':'pin'}${n.years.length>1?'s':''} still apply${n.years.length>1?'':'s'}`).join('')}</span><button type="button" onclick="budgetUndoLast()">Undo</button></div>`:'';
@@ -4040,7 +4053,7 @@ function renderBudgetTab(R,P){
       ${(P.planItems||[]).map((it,i)=>`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
         <label class="bd-sug-amt"><span class="ui-sr">Amount</span><input type="text" inputmode="decimal" value="${fmtF(it.amount)}" aria-label="${advEscape(it.label)} amount" onfocus="this.select()" onchange="budgetItemAmount(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${it.from===it.to?'once':'/yr'}</small></label>
         <button type="button" class="bd-btn" onclick="budgetRemoveItem(${i})" aria-label="Remove ${advEscape(it.label)}">Remove</button></div>`).join('')}</div>`:''}
-    <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
+    <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${overTimeHtml}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
 }
