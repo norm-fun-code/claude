@@ -201,3 +201,63 @@ describe('the Budget screen',()=>{
   expect(ui).toContain('B.modelPlan(P)');
  });
 });
+
+describe("Ramit's four buckets",()=>{
+ const P=plan(),R=M.run(P).R;
+ it('sort every line into exactly one bucket, and an unknown one lands in guilt-free',()=>{
+  const all=B.BUCKETS.flatMap(b=>b.lines);
+  expect(new Set(all).size).toBe(all.length);
+  for(const k of M.LIV_KEYS)expect(B.BUCKETS.some(b=>b.lines.includes(k))).toBe(true);
+  expect(B.bucketOf('groceries')).toBe('fixed');expect(B.bucketOf('vacations')).toBe('saving');
+  expect(B.bucketOf('dining')).toBe('guilt');expect(B.bucketOf('pets')).toBe('guilt');
+  expect(B.BUCKETS.find(b=>b.key==='investing').lines).toEqual([]);
+ });
+ it('split a surplus into Stripe kept, portfolio and reserve, adding to the excess exactly',()=>{
+  for(const r of R){
+   const a=B.allocation(P,R,r.yr);
+   expect(a.investing.stripe+a.investing.portfolio+a.saving.reserve).toBeGreaterThanOrEqual(a.excess-2);
+   expect(a.investing.stripe+a.investing.portfolio+a.saving.reserve).toBeLessThanOrEqual(a.excess+2);
+   expect(a.excess*a.deficit).toBe(0);
+   expect(a.investing.stripe).toBeLessThanOrEqual(Math.max(0,r.sRet||0)+1);
+  }
+ });
+ it('says drawing down when the year runs a deficit, with nothing invested',()=>{
+  const r=R.find(r=>r.flowFull<-1000),a=B.allocation(P,R,r.yr);
+  expect(a.deficit).toBe(-r.flowFull);expect(a.investing.total).toBe(0);expect(a.saving.total).toBe(0);
+ });
+ it('tops up the cash reserve first when it is below its floor',()=>{
+  const low=plan({liquidReserveFloor:2000000}),RL=M.run(low).R,a=B.allocation(low,RL,2026);
+  expect(a.reserveFunded).toBe(false);
+  expect(a.saving.reserveGap).toBeGreaterThan(0);
+  expect(a.saving.reserve).toBe(Math.min(a.excess-a.investing.stripe,a.saving.reserveGap));
+ });
+ it('states the reserve in months of fixed costs, and the 401(k) as outside the surplus',()=>{
+  const a=B.allocation(P,R,2030);
+  expect(a.reserveMonths).toBeCloseTo(P.liquidReserveFloor/a.fixedPerMonth,0);
+  expect(a.investing.k401).toBe(P.pretax401k);
+ });
+ it('does not change the projection, and covers every year once',()=>{
+  const before=JSON.stringify(M.run(P).R);B.allocationSeries(P,R);expect(JSON.stringify(M.run(P).R)).toBe(before);
+  expect(B.allocationSeries(P,R).map(a=>a.year)).toEqual(R.map(r=>r.yr));
+  expect(B.allocation(P,R,1999)).toBe(null);
+ });
+});
+
+describe("Ramit's buckets on the Budget screen",()=>{
+ const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
+ it('groups the lines under the four buckets, not fixed / essential / discretionary',()=>{
+  expect(ui).toContain('B.BUCKETS.map(b=>{');
+  expect(ui).not.toContain('IS.tierOfLiving(k)===t.key');
+  expect(ui).toContain('Your four buckets');
+ });
+ it('shows Ramit\'s range as a ruler only against take-home, and says where the excess goes',()=>{
+  expect(ui).toContain("basis==='net'?`<div class=\"bd-ruler\"");
+  expect(ui).toContain('B.allocation(P,R,yr)');
+  expect(ui).toContain('B.allocationSeries(P,R)');
+  expect(ui).toContain('Drawing down');
+ });
+ it('leaves the Spending Plan mode on its own grouping',()=>{
+  const lens=html.slice(html.indexOf('function renderIncomeLens('),html.indexOf('function renderSpendingTab('));
+  expect(lens).toContain('IS.compute(row,basis)');expect(lens).not.toContain('B.BUCKETS');
+ });
+});

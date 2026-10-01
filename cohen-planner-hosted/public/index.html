@@ -3544,6 +3544,7 @@ function renderIncomeLens(R,actual){
 // how much more could be spent with liquid assets never below the reserve floor in any year.
 let _budgetYear=null,_budgetUnit='month',_budgetScope='onward',_budgetUndo=null,_budgetHead=null,_budgetEdit=null;
 function budgetEdit(k){_budgetEdit=_budgetEdit===k?null:k;render()}
+const RM_COLOR={fixed:'#8278ee',investing:'#7ae3c3',saving:'#8bdded',guilt:'#ecc183',oneoff:'#b6a8ff',tax:'#6b7a90',pretax:'#8ebfff',short:'#ff9caf'};
 const BD_COLOR={cash:'#7ae3c3',stock:'#8278ee',savings:'#ecc183',left:'#8bdded',save:'#7ae3c3',draw:'#ecc183'};
 function budgetYearSet(y){_budgetYear=Number(y);render()}
 function budgetYearStep(d,first,last){_budgetYear=Math.min(last,Math.max(first,(_budgetYear??PlannerTime.year())+d));render()}
@@ -3800,6 +3801,33 @@ function renderBudgetTab(R,P){
 
   h+=sharedCard();
 
+
+  // ── Your four buckets, and where the excess goes ──
+  const alloc0=B.allocation(P,R,yr);
+  const goalsSpend=B.BUCKETS[2].lines.reduce((t,k)=>t+(row.livFullParts[k]||0),0);
+  const fixedSpend=B.BUCKETS[0].lines.reduce((t,k)=>t+(k==='housing'?row.hFull:k==='childcare'?row.ccFull:k==='tuition'?row.tuFull:(row.livFullParts[k]||0)),0);
+  const guiltSpend=Object.keys(row.livFullParts).filter(k=>B.bucketOf(k)==='guilt').reduce((t,k)=>t+row.livFullParts[k],0);
+  const segsB=[
+    ...(basis==='gross'?[['tax','Taxes',Math.round(row.tax)],['pretax','401(k) & benefits',Math.round(row.gross-row.tax-row.netTC)]]:[]),
+    ['fixed','Fixed costs',fixedSpend],['investing','Investing',alloc0.investing.total],
+    ['saving','Saving goals',goalsSpend+alloc0.saving.total],['guilt','Guilt-free',guiltSpend],
+    ...(row.eAdj>0?[['oneoff','One-off',row.eAdj]]:[]),
+    ...(alloc0.deficit>0?[['short','Drawn from savings & Stripe',alloc0.deficit]]:[]),
+  ].filter(x=>x[2]>0);
+  const segTotal=segsB.reduce((t,x)=>t+x[2],0)||1;
+  const bucketBar=`<div class="ps-bar" role="img" aria-label="${yr} split: ${segsB.map(x=>x[1]+' '+_lensPct(x[2]/den)).join(', ')}">${segsB.map(x=>`<span style="width:${(x[2]/segTotal*100).toFixed(3)}%;background:${RM_COLOR[x[0]]}" title="${advEscape(x[1])} · ${_lensPct(x[2]/den)}"></span>`).join('')}${alloc0.deficit>0?`<i class="ps-income-mark" style="left:${(den/segTotal*100).toFixed(2)}%" title="Income ends here"></i>`:''}</div>
+    <div class="cl-legend">${segsB.map(x=>`<span><i style="background:${RM_COLOR[x[0]]}"></i>${advEscape(x[1])} <b>${_lensPct(x[2]/den)}</b></span>`).join('')}</div>`;
+  const series=B.allocationSeries(P,R);
+  const sMax=Math.max(...series.map(a=>Math.max(a.excess,a.deficit)),1);
+  const strip=`<div class="bd-excess" role="group" aria-label="Excess income or drawdown, by year">${series.map(a=>`<button type="button" class="${a.year===yr?'on':''}" onclick="budgetYearSet(${a.year})" title="${a.year}: ${a.excess>0?`${fmt(a.excess)} left over — ${fmt(a.investing.total)} invested${a.saving.total?`, ${fmt(a.saving.total)} to the reserve`:''}`:a.deficit>0?`${fmt(a.deficit)} drawn down`:'break-even'}"><span class="up"><i style="height:${(a.excess/sMax*100).toFixed(1)}%"></i></span><span class="dn"><i style="height:${(a.deficit/sMax*100).toFixed(1)}%"></i></span></button>`).join('')}</div>
+    <div class="spend-caption" style="display:flex;justify-content:space-between;margin-top:3px"><span>${R[0].yr}</span><span>Above the line: left over each year · below: drawn down</span><span>${R[R.length-1].yr}</span></div>`;
+  const reserveNote=alloc0.reserveMonths!=null?`Your ${fmt(alloc0.reserveFloor)} reserve floor is <strong>${alloc0.reserveMonths} months</strong> of ${yr}'s fixed costs${alloc0.reserveMonths>12?' — well beyond the usual six, which is the Stripe cushion doing the job of an emergency fund':''}.`:'';
+  const exHead=alloc0.excess>0
+    ?`${yr} leaves <strong>${amtShort(alloc0.excess)}${unitWord}</strong> over: <strong>${amtShort(alloc0.investing.total)}</strong> goes to investing${alloc0.saving.total?` and <strong>${amtShort(alloc0.saving.total)}</strong> to refill the cash reserve`:', none to the cash reserve — it is already above its floor'}.`
+    :alloc0.deficit>0?`${yr} spends <strong>${amtShort(alloc0.deficit)}${unitWord}</strong> more than it takes in, so nothing is added to savings or investments — the gap is drawn from them.`:`${yr} comes out level: nothing left over, nothing drawn.`;
+  h+=`<section class="cp-card bd-buckets"><div class="ps-head"><div><h3>Your four buckets · ${yr}</h3><p>${exHead}</p></div></div>
+    ${bucketBar}<p class="spend-caption" style="margin:12px 0 4px">${reserveNote}${basis==='net'?' Ramit’s ranges sit beside each bucket below.':''}</p>${strip}</section>`;
+
   // ── Where this year's money comes from ──
   const seg=[['cash','Cash pay',f.fromCash],['stock','Stripe stock',f.fromStock],['savings','Savings',f.fromSavings],['left','Left over',f.leftover]].filter(s=>s[2]>0);
   const ftot=seg.reduce((t,s)=>t+s[2],0)||1;
@@ -3858,15 +3886,40 @@ function renderBudgetTab(R,P){
     ['childcare','Childcare',row.ccFull,{}],
     ['tuition','Tuition',row.tuFull,{}],
   ];
-  const groups=c.tiers.map(t=>{
-    const keys=Object.keys(living).filter(k=>IS.tierOfLiving(k)===t.key);
-    const ro=t.key==='fixed'?fixedExtra.filter(x=>x[2]>0||x[0]==='housing'):[];
-    const total=keys.reduce((s,k)=>s+living[k],0)+ro.reduce((s,x)=>s+x[2],0);
-    const rows=[...ro.map(x=>line(x[0],x[1],x[2],'model',{readonly:true,shareKey:x[0],color:PS_COLOR[t.key],max:maxLine})),
-      ...keys.sort((a,b)=>living[b]-living[a]).map(k=>line(k,LIV_LABEL[k]||k,living[k],(row.livSrc||{})[k]||'model',{color:PS_COLOR[t.key],max:maxLine}))].join('');
-    return `<div class="cl-group" style="--tier:${PS_COLOR[t.key]}"><div class="cl-ghead"><span><i></i>${advEscape(t.label)}</span><span class="cl-gtot">${pct(total)} <small>${amtShort(total)}${unitWord}</small></span></div>
-      <p class="cl-gnote">${advEscape(t.note)}</p><div class="cl-list">${rows}</div></div>`;
+  // The four buckets. Fixed costs, saving goals and guilt-free are lines you set; investing is what the
+  // plan does with what is left, so it is shown, with its numbers, but not edited.
+  const alloc=B.allocation(P,R,yr);
+  const lineOf=(k,lbl,v,src,ro)=>line(k,lbl,v,src,{readonly:!!ro,shareKey:ro?k:undefined,color:RM_COLOR[B.bucketOf(k)],max:maxLine});
+  const bucketRows=key=>{
+    const b=B.BUCKETS.find(x=>x.key===key);
+    if(key==='investing')return '';
+    const ro=key==='fixed'?fixedExtra.filter(x=>x[2]>0||x[0]==='housing').map(x=>lineOf(x[0],x[1],x[2],'model',true)):[];
+    const ks=Object.keys(living).filter(k=>B.bucketOf(k)===key&&!['housing','childcare','tuition'].includes(k)).sort((a,b2)=>living[b2]-living[a]);
+    return ro.join('')+ks.map(k=>lineOf(k,LIV_LABEL[k]||k,living[k],(row.livSrc||{})[k]||'model',false)).join('');
+  };
+  const spendIn=key=>{
+    const b=B.BUCKETS.find(x=>x.key===key);
+    return b.lines.reduce((t,k)=>t+(k==='housing'?row.hFull:k==='childcare'?row.ccFull:k==='tuition'?row.tuFull:(living[k]||0)),0)
+      +(key==='guilt'?Object.keys(living).filter(k=>B.bucketOf(k)==='guilt'&&!b.lines.includes(k)).reduce((t,k)=>t+living[k],0):0);
+  };
+  const investRows=()=>{
+    const it=(label,v,sub)=>`<div class="bd-row" style="--tier:${RM_COLOR.investing}"><div class="cl-top"><span class="cl-name">${label}</span><strong class="bd-fixed">${amt(v)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span>${pct(v)} of ${basisWord} income</span><span class="bd-why">${sub}</span></div></div>`;
+    if(alloc.deficit>0)return `<div class="bd-row"><div class="cl-top"><span class="cl-name">Drawing down</span><strong class="bd-fixed" style="color:var(--a)">−${amt(alloc.deficit)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span class="bd-why">${yr} spends more than it takes in. The shortfall is met by selling Stripe shares${alloc.drawn.stripe?` (${fmt(alloc.drawn.stripe)} here)`:''} and drawing on the portfolio — nothing is added to investments.</span></div></div>`;
+    return it('Stripe shares kept',alloc.investing.stripe,'Vested shares the plan does not need to sell')+it('Added to the portfolio',alloc.investing.portfolio,alloc.saving.reserve?'After the cash reserve is topped up':'Left over after everything above')
+      +`<p class="spend-caption" style="margin:4px 0 0">Plus <strong style="color:var(--t2)">${fmtF(Math.round(alloc.investing.k401/(mo?12:1)))}${unitWord}</strong> into your 401(k), taken from pay before it counts as net income.</p>`;
+  };
+  const bucketGroups=B.BUCKETS.map(b=>{
+    const spent=b.key==='investing'?alloc.investing.total:spendIn(b.key)+(b.key==='saving'?alloc.saving.reserve:0);
+    const share=den>0?spent/den:0;
+    // The ruler: Ramit's range as a band, and where this year sits against it. Only meaningful against
+    // take-home pay, so it is drawn for net income and not for gross.
+    const scale=0.75;
+    const ruler=basis==='net'?`<div class="bd-ruler" title="Ramit's range for ${advEscape(b.label.toLowerCase())}: ${Math.round(b.range[0]*100)}${b.range[0]===b.range[1]?'':'–'+Math.round(b.range[1]*100)}% of take-home"><i class="band" style="left:${(b.range[0]/scale*100).toFixed(1)}%;width:${Math.max(1.5,(b.range[1]-b.range[0])/scale*100).toFixed(1)}%"></i><i class="mark" style="left:${Math.min(100,share/scale*100).toFixed(1)}%"></i></div>`:'';
+    const rows=b.key==='investing'?investRows():bucketRows(b.key)+(b.key==='saving'&&alloc.saving.reserve>0?`<div class="bd-row" style="--tier:${RM_COLOR.saving}"><div class="cl-top"><span class="cl-name">Cash reserve top-up</span><strong class="bd-fixed">${amt(alloc.saving.reserve)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span class="bd-why">The reserve is below its ${fmt(alloc.reserveFloor)} floor, so surplus refills it before anything is invested</span></div></div>`:'');
+    return `<div class="cl-group" style="--tier:${RM_COLOR[b.key]}"><div class="cl-ghead"><span><i></i>${advEscape(b.label)}</span><span class="cl-gtot">${_lensPct(share)} <small>${amtShort(spent)}${unitWord}</small></span></div>
+      <p class="cl-gnote">${advEscape(b.note)}${basis==='net'?` · Ramit: ${Math.round(b.range[0]*100)}${b.range[0]===b.range[1]?'':'–'+Math.round(b.range[1]*100)}% of take-home`:''}</p>${ruler}<div class="cl-list">${rows}</div></div>`;
   }).join('');
+  const groups=bucketGroups;
   // One-off costs have a home here whether or not this year has one: a single year's cost, not
   // repeated and not inflated, set for any year of the first eleven.
   const oneOff=`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off costs</span><span class="cl-gtot">${row.eAdj?`${pct(Math.abs(row.eAdj))} <small>${row.eAdj<0?'−':''}${amtShort(Math.abs(row.eAdj))}${unitWord}</small>`:'<small>none in '+yr+'</small>'}</span></div>

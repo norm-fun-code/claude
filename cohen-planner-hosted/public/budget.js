@@ -195,7 +195,76 @@
     };
   }
 
-  const api = { modelPlan, parseInput, edit, describe, funding, phases, headroom, feasible };
+  // ── Ramit's Conscious Spending Plan ─────────────────────────────────────────
+  // Four buckets for take-home pay: fixed costs, investing, saving goals and guilt-free spending.
+  // The two that are SPENDING (fixed, guilt-free) and the one that is spending-on-goals (saving
+  // goals: vacations and giving, as the household's own ledger groups them) are lines you set.
+  // Investing is not a line — it is what the plan does with what is left — so it is computed.
+  //
+  // The reference ranges are Ramit's published guidance, of take-home pay. They are a ruler held up
+  // beside the plan, not a target: this household saves hard early and draws down later by design.
+  const BUCKETS = [
+    { key: 'fixed', label: 'Fixed costs', range: [0.50, 0.60],
+      note: 'Housing, childcare, tuition, insurance, utilities, transit, auto, groceries, medical',
+      lines: ['housing', 'childcare', 'tuition', 'insurance', 'utilities', 'transit', 'auto', 'groceries', 'medical'] },
+    { key: 'investing', label: 'Investing', range: [0.10, 0.10], computed: true,
+      note: 'Stripe shares kept and money added to the portfolio, from what is left over; 401(k) comes off pay first',
+      lines: [] },
+    { key: 'saving', label: 'Saving goals', range: [0.05, 0.10],
+      note: 'Vacations and giving, and topping up the cash reserve when it is below its floor',
+      lines: ['vacations', 'charity'] },
+    { key: 'guilt', label: 'Guilt-free spending', range: [0.20, 0.35],
+      note: 'Dining, shopping, clothing, entertainment and anything else, with no guilt',
+      lines: ['dining', 'shopping', 'clothing', 'entertainment', 'misc'] },
+  ];
+  // A line the engine adds later lands in guilt-free rather than vanishing, so the buckets always
+  // add up to the year's spending.
+  const bucketOf = line => {
+    const b = BUCKETS.find(x => x.lines.includes(line));
+    return b ? b.key : 'guilt';
+  };
+
+  // What a year's money does, in the order the plan actually does it. `excess` is the year's net
+  // cash flow when positive: everything earned after tax, less everything spent. It stays as Stripe
+  // shares first (the plan keeps vested shares it does not need to sell), and what is left goes to
+  // the portfolio — which is the cash reserve until that is back at its floor, and then investments.
+  //
+  // This describes where the surplus lands; it does not change the projection. The model has one
+  // liquid pool, and says so, so "savings" here is the reserve top-up and nothing is invented.
+  function allocation(P, R, year) {
+    const i = R.findIndex(r => r.yr === year);
+    if (i < 0) return null;
+    const r = R[i], prev = i > 0 ? R[i - 1] : null;
+    const floor = Number(P.liquidReserveFloor) || 0;
+    const liqBegin = prev ? prev.liq : Number(P.startingLiquid) || 0;
+    const flow = Number(r.flowFull) || 0;
+    const excess = Math.max(0, flow), deficit = Math.max(0, -flow);
+    const stripe = Math.min(Math.max(0, Number(r.sRet) || 0), excess);
+    const toPortfolio = excess - stripe;
+    const reserveGap = Math.max(0, floor - liqBegin);
+    const reserve = Math.min(toPortfolio, reserveGap);
+    const invested = toPortfolio - reserve;
+    const k401 = Math.round(Number(P.pretax401k) || 0);
+    // Fixed costs, per month, for the reserve in months.
+    const liv = r.livFullParts || {};
+    const fixed = (r.hFull || 0) + (r.ccFull || 0) + (r.tuFull || 0)
+      + BUCKETS[0].lines.filter(k => liv[k] != null).reduce((t, k) => t + liv[k], 0);
+    return {
+      year, flow, excess, deficit,
+      investing: { stripe: Math.round(stripe), portfolio: Math.round(invested), total: Math.round(stripe + invested), k401 },
+      saving: { reserve: Math.round(reserve), reserveGap: Math.round(reserveGap), total: Math.round(reserve) },
+      // A shortfall is met by selling shares, then drawing the portfolio down.
+      drawn: { stripe: Math.round(Math.max(0, (Number(r.sold) || 0) + (Number(r.sHold) || 0))), total: Math.round(deficit) },
+      reserveFloor: floor, liquid: Math.round(r.liq), liquidBegin: Math.round(liqBegin),
+      fixedPerMonth: Math.round(fixed / 12),
+      reserveMonths: fixed > 0 ? Math.round(floor / (fixed / 12) * 10) / 10 : null,
+      reserveFunded: liqBegin >= floor,
+    };
+  }
+  // The same, for every year — the strip that shows saving early and drawing down later.
+  const allocationSeries = (P, R) => R.map(r => allocation(P, R, r.yr));
+
+  const api = { BUCKETS, bucketOf, allocation, allocationSeries, modelPlan, parseInput, edit, describe, funding, phases, headroom, feasible };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PlannerBudget = api;
 })(typeof window !== 'undefined' ? window : this);

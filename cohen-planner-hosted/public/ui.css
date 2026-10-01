@@ -1102,3 +1102,17 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .bd-oneoff{margin-top:10px;max-width:520px}
 .sg-assume{max-width:620px}
 .bd-actions.show{opacity:1}
+
+/* Ramit's buckets */
+.bd-buckets .ps-bar{margin-top:12px}
+.bd-ruler{position:relative;height:8px;margin:2px 0 10px;border-radius:4px;background:var(--s3)}
+.bd-ruler .band{position:absolute;top:0;bottom:0;border-radius:4px;background:color-mix(in srgb,var(--tier) 38%,transparent);border:1px solid color-mix(in srgb,var(--tier) 70%,transparent);box-sizing:border-box}
+.bd-ruler .mark{position:absolute;top:-3px;bottom:-3px;width:3px;margin-left:-1.5px;border-radius:2px;background:var(--tx)}
+.bd-excess{display:flex;gap:2px;height:84px;margin-top:14px}
+.bd-excess button{flex:1;min-width:0;display:flex;flex-direction:column;padding:0;border:0;background:transparent;cursor:pointer;border-radius:3px}
+.bd-excess button:hover,.bd-excess button.on{background:var(--s3)}
+.bd-excess .up,.bd-excess .dn{flex:1;display:flex;align-items:flex-end}
+.bd-excess .dn{align-items:flex-start;border-top:1px solid var(--bd2)}
+.bd-excess .up i{display:block;width:100%;background:#7ae3c3;border-radius:2px 2px 0 0;opacity:.85}
+.bd-excess .dn i{display:block;width:100%;background:#ecc183;border-radius:0 0 2px 2px;opacity:.85}
+.bd-excess button.on .up i{opacity:1;box-shadow:0 0 0 1px var(--tx) inset}
