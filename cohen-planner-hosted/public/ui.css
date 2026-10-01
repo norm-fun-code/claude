@@ -1120,3 +1120,4 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 /* A heading between two parts of one screen (Home, What-if) */
 .home-sec{margin:28px 2px 12px}
 .home-sec h2{font-size:22px;letter-spacing:-.4px;margin:5px 0 0}
+.cl-sub .cl-mo{color:var(--tx);font-weight:600}

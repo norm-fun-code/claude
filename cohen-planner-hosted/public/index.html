@@ -3431,7 +3431,7 @@ function _lensRow(name,value,sh,basis,max,color,extra){
   return `<div class="cl-row${extra&&extra.muted?' cl-muted':''}"${color?` style="--tier:${color}"`:''}>
     <div class="cl-top"><span class="cl-name">${advEscape(name)}</span><span class="cl-pct">${_lensPct(sh[basis])}<small>${_lensWord[basis]}</small></span></div>
     <div class="cl-track"><i style="width:${Math.max(1.5,sh[basis]/max*100).toFixed(1)}%"></i></div>
-    <div class="cl-sub"><span>${fmt(value)}</span>${others.map(b=>`<span>${_lensPct(sh[b])} ${_lensWord[b]}</span>`).join('')}${extra&&extra.note?`<span class="cl-then">${extra.note}</span>`:''}</div>
+    <div class="cl-sub"><span>${fmt(value)}</span>${extra&&extra.perMonth!=null?`<span class="cl-mo">${fmtF(Math.round(extra.perMonth))}/mo</span>`:''}${others.map(b=>`<span>${_lensPct(sh[b])} ${_lensWord[b]}</span>`).join('')}${extra&&extra.note?`<span class="cl-then">${extra.note}</span>`:''}</div>
   </div>`;
 }
 function renderIncomeLens(R,actual){
@@ -3449,12 +3449,13 @@ function renderIncomeLens(R,actual){
     const basis=haveIncome?basisWanted:'spend';
     const share=net=>({spend:net/closedTotal,net:haveIncome?net/inc.net:null,gross:haveIncome?net/inc.gross:null});
     const pos=rows.filter(r=>r.net>0);
-    const list=[...pos.slice(0,12).map(r=>({name:r.name,net:r.net})),...(pos.length>12?[{name:'Everything smaller',net:pos.slice(12).reduce((t,r)=>t+r.net,0),muted:true}]:[])];
+    const list=[...pos.slice(0,12).map(r=>({name:r.name,net:r.net,perMonth:r.perMonth})),...(pos.length>12?[{name:'Everything smaller',net:pos.slice(12).reduce((t,r)=>t+r.net,0),perMonth:pos.slice(12).reduce((t,r)=>t+r.perMonth,0),muted:true}]:[])];
+    const perMonthAll=rows.reduce((t,r)=>t+(r.perMonth||0),0);
     const max=Math.max(...list.map(l=>share(l.net)[basis]),1e-9);
-    body=`<div class="cl-list">${list.map(l=>_lensRow(l.name,l.net,share(l.net),basis,max,null,{muted:l.muted})).join('')}</div>`;
+    body=`<div class="cl-list">${list.map(l=>_lensRow(l.name,l.net,share(l.net),basis,max,null,{muted:l.muted,perMonth:l.perMonth})).join('')}</div>`;
     headline=haveIncome
-      ?`Over this period you spent <strong>${fmt(closedTotal)}</strong> — <strong>${_lensPct(closedTotal/inc.net)}</strong> of net income, <strong>${_lensPct(closedTotal/inc.gross)}</strong> of gross.`
-      :`Over this period you spent <strong>${fmt(closedTotal)}</strong>. Income shares need the plan to cover these months.`;
+      ?`Over this period you spent <strong>${fmt(closedTotal)}</strong> (<strong>${fmtF(Math.round(perMonthAll))}</strong> a month) — <strong>${_lensPct(closedTotal/inc.net)}</strong> of net income, <strong>${_lensPct(closedTotal/inc.gross)}</strong> of gross.`
+      :`Over this period you spent <strong>${fmt(closedTotal)}</strong> (<strong>${fmtF(Math.round(perMonthAll))}</strong> a month). Income shares need the plan to cover these months.`;
     foot=haveIncome
       ?'Net of refunds. Income is the plan\'s figure for the same months, not your deposits — the ledger records what landed in accounts, not gross pay or Stripe vests. Net is after tax, 401(k) and benefits.'
       :'The plan does not cover every month in this period, so income-based shares are hidden rather than guessed.';
@@ -3486,17 +3487,17 @@ function renderIncomeLens(R,actual){
       return `<div class="cl-group" style="--tier:${PS_COLOR[t.key]}">
         <div class="cl-ghead"><span><i></i>${advEscape(t.label)}</span><span class="cl-gtot">${_lensPct(tsh[basis])} <small>${fmt(t.value)}</small></span></div>
         <p class="cl-gnote">${advEscape(t.note)}</p>
-        <div class="cl-list">${lines.map(l=>_lensRow(l.label,l.value,sh(l.value),basis,max,PS_COLOR[t.key],{note:then(t.key,l.key)})).join('')}</div></div>`;
+        <div class="cl-list">${lines.map(l=>_lensRow(l.label,l.value,sh(l.value),basis,max,PS_COLOR[t.key],{note:then(t.key,l.key),perMonth:l.value/12})).join('')}</div></div>`;
     }).join('');
     const one=c.oneOff?`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>One-off</span><span class="cl-gtot">${_lensPct(Math.abs(sh(c.oneOff)[basis]))} <small>${c.oneOff<0?'−':''}${fmt(Math.abs(c.oneOff))}</small></span></div></div>`:'';
     const leftover=basis==='spend'?'':`<div class="cl-left ${c.overspent?'is-short':''}"><span>${c.overspent?'Beyond income — from savings or Stripe':'Left over'}</span><strong>${_lensPct(Math.abs(c.left)/c.denom)} <small>${_lensWord[basis]} · ${fmt(Math.abs(c.left))}</small></strong></div>`;
     body=bar+groups+one+leftover;
     const fx=c.tiers.find(t=>t.key==='fixed'),es=c.tiers.find(t=>t.key==='essential'),ch=c.tiers.find(t=>t.key==='choice');
     headline=basis==='spend'
-      ?`In ${yr} the plan spends <strong>${fmt(c.spend)}</strong>: <strong>${_lensPct(fx.share)}</strong> fixed, <strong>${_lensPct(es.share)}</strong> essentials, <strong>${_lensPct(ch.share)}</strong> discretionary.`
+      ?`In ${yr} the plan spends <strong>${fmt(c.spend)}</strong> (<strong>${fmtF(Math.round(c.spend/12))}</strong> a month): <strong>${_lensPct(fx.share)}</strong> fixed, <strong>${_lensPct(es.share)}</strong> essentials, <strong>${_lensPct(ch.share)}</strong> discretionary.`
       :c.overspent
-        ?`In ${yr} the plan spends <strong>${fmt(-c.left)}</strong> more than it takes in — <strong>${_lensPct(-c.left/c.denom)}</strong> ${_lensWord[basis]} comes from savings or Stripe.`
-        :`In ${yr}, <strong>${_lensPct(fx.share)}</strong> ${_lensWord[basis]} is fixed commitments, <strong>${_lensPct(es.share)}</strong> essentials and <strong>${_lensPct(ch.share)}</strong> discretionary${c.left>0?` — leaving <strong>${_lensPct(c.left/c.denom)}</strong>`:''}.`;
+        ?`In ${yr} the plan spends <strong>${fmt(-c.left)}</strong> more than it takes in — <strong>${_lensPct(-c.left/c.denom)}</strong> ${_lensWord[basis]} comes from savings or Stripe. Spending is <strong>${fmtF(Math.round(c.spend/12))}</strong> a month.`
+        :`In ${yr}, <strong>${_lensPct(fx.share)}</strong> ${_lensWord[basis]} is fixed commitments, <strong>${_lensPct(es.share)}</strong> essentials and <strong>${_lensPct(ch.share)}</strong> discretionary${c.left>0?` — leaving <strong>${_lensPct(c.left/c.denom)}</strong>`:''}. Spending is <strong>${fmtF(Math.round(c.spend/12))}</strong> a month.`;
     foot=`Projected, not imported. Income counts Stripe stock at its vest value; net is after tax, 401(k) and benefits.${bc?` The small figure on each line is its share in ${first}, the plan's first year.`:''} Which lines count as fixed is a judgement — each group lists what is in it.${c.overspent?' The marker on the bar is where income ends.':''}`;
     const yrOptions=R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('');
     ctl=`<div class="ps-year" role="group" aria-label="Year to look at">

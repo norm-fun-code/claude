@@ -127,3 +127,17 @@ describe('categories against income',()=>{
   }
  });
 });
+
+describe('per-month figures on the categories card',()=>{
+ const lens=html.slice(html.indexOf('function _lensRow('),html.indexOf('let _budgetYear='));
+ it('puts a per-month figure on every row, in Actual and in Plan',()=>{
+  expect(lens).toContain('class="cl-mo"');
+  expect(lens).toContain('perMonth:r.perMonth');          // imported: the figure the ledger already divides by months elapsed
+  expect(lens).toContain('perMonth:l.value/12');           // projected: a year is twelve months
+  expect(lens).toContain('perMonth:pos.slice(12).reduce((t,r)=>t+r.perMonth,0)');   // the combined row adds up
+ });
+ it('states the monthly total in each headline',()=>{
+  expect(lens).toContain('a month) — <strong>');
+  expect((lens.match(/fmtF\(Math\.round\(c\.spend\/12\)\)\}<\/strong> a month/g)||[]).length).toBe(3);   // spending, net/gross, and overspent
+ });
+});
