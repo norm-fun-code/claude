@@ -3957,7 +3957,7 @@ function renderBudgetTab(R,P){
   // ── Header ──
   const yrOptions=R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('');
   let h=`<div class="bd">
-    <div class="bd-head"><div><div class="hero-eyebrow">Budget</div><h2>What each line gets, and whether the plan can afford it</h2></div></div>
+    <div class="bd-head"><div><div class="hero-eyebrow">Budget</div><h2 style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">What each line gets</h2></div></div>
     <div class="bd-bar" role="toolbar" aria-label="Budget controls">
         <div class="ps-year" role="group" aria-label="Budget year">
           <button type="button" onclick="budgetYearStep(-1,${first},${last})" aria-label="Previous year"${yr<=first?' disabled':''}>‹</button>
