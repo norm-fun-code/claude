@@ -78,7 +78,26 @@
       accounted: (net ? 0 : tax + pretax) + spend + left };
   }
 
-  const api = { TIERS, FIXED_LIVING, ESSENTIAL_LIVING, tierOfLiving, LIVING_LABEL, compute };
+  // The plan's income for the months a ledger period covers. The ledger records what landed in
+  // accounts — net pay, no Stripe vests, no gross — so it cannot say what a category is a share
+  // of GROSS income. The plan can, and it is the same income the look-ahead card divides by, so
+  // the two surfaces agree. Each month takes a twelfth of its year; the month in progress takes
+  // the share of a twelfth that has elapsed, matching how its spending is counted.
+  // `ok` is false when any month falls outside the plan, rather than guessing at its income.
+  function periodIncome(months, R, opts) {
+    const o = opts || {}, partial = o.partial || null, frac = Number(o.fraction);
+    let gross = 0, net = 0, weight = 0;
+    for (const m of months || []) {
+      const key = String(m.month != null ? m.month : m);
+      const row = (R || []).find(r => r.yr === Number(key.slice(0, 4)));
+      if (!row || !(Number(row.gross) > 0)) return { ok: false, gross: 0, net: 0, weight: 0 };
+      const w = key === partial ? (Number.isFinite(frac) ? frac : 1) : 1;
+      gross += row.gross / 12 * w; net += (Number(row.netTC) || 0) / 12 * w; weight += w;
+    }
+    return { ok: weight > 0, gross, net, weight };
+  }
+
+  const api = { periodIncome, TIERS, FIXED_LIVING, ESSENTIAL_LIVING, tierOfLiving, LIVING_LABEL, compute };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PlannerIncomeShare = api;
 })(typeof window !== 'undefined' ? window : this);

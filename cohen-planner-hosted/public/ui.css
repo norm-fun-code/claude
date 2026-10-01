@@ -925,3 +925,19 @@ body[data-subview=spending] .spend-details summary{min-height:44px;align-content
 .exp-share{font-size:11px;font-weight:400;color:var(--t3);font-variant-numeric:tabular-nums}
 .exp-pct{flex:none;min-width:42px;text-align:right;font-size:11px;color:var(--t3);font-variant-numeric:tabular-nums}
 .exp-liv-grid>div:not(.exp-edit-row) .exp-pct{margin-left:auto}
+
+/* Categories against income: a bar per category, the primary share large, the others beneath. */
+.cl-card{display:flex;flex-direction:column;gap:14px}
+.cl-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px 28px}
+.cl-row{display:flex;flex-direction:column;gap:5px;min-width:0}
+.cl-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.cl-name{font-size:13px;font-weight:600;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cl-pct{font-size:18px;font-weight:700;color:var(--tx);font-variant-numeric:tabular-nums;white-space:nowrap}
+.cl-pct small{font-size:10px;font-weight:400;color:var(--t3);margin-left:5px}
+.cl-track{height:6px;border-radius:3px;background:var(--s3);overflow:hidden}
+.cl-track i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--c))}
+.cl-sub{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:11px;color:var(--t3);font-variant-numeric:tabular-nums}
+.cl-sub span:first-child{color:var(--t2)}
+.cl-muted .cl-track i{background:var(--bd2)}
+.cl-muted .cl-name{color:var(--t2);font-weight:500}
+.spend-scope-chip:disabled{opacity:.4;cursor:default}

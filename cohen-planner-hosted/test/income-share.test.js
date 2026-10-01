@@ -86,3 +86,29 @@ describe('a share of income beside every expense figure',()=>{
   expect((r.livFullParts.groceries/r.netTC*100).toFixed(1)).toBe((g.share*100).toFixed(1));
  });
 });
+
+describe('categories against income',()=>{
+ it('takes a twelfth of each month\'s year, and the part-month share of the month in progress',()=>{
+  const r26=at(2026),r27=at(2027);
+  const full=S.periodIncome([{month:'2026-11'},{month:'2026-12'},{month:'2027-01'}],R,{});
+  expect(full.ok).toBe(true);
+  expect(full.gross).toBeCloseTo(r26.gross/12*2+r27.gross/12,6);
+  expect(full.net).toBeCloseTo(r26.netTC/12*2+r27.netTC/12,6);
+  const part=S.periodIncome([{month:'2026-11'},{month:'2026-12'}],R,{partial:'2026-12',fraction:.5});
+  expect(part.weight).toBeCloseTo(1.5,9);
+  expect(part.gross).toBeCloseTo(r26.gross/12*1.5,6);
+ });
+ it('refuses to guess income for a month the plan does not cover',()=>{
+  expect(S.periodIncome([{month:'2024-05'}],R,{}).ok).toBe(false);
+  expect(S.periodIncome([],R,{}).ok).toBe(false);
+ });
+ it('sits between the charts and the look-ahead card, defaults to net, and hides what it cannot compute',()=>{
+  const spend=html.slice(html.indexOf('function renderSpendingTab('));
+  expect(html).toContain("let _catLensBasis='net';");
+  expect(spend.indexOf('h+=renderCategoryLens(')).toBeGreaterThan(spend.indexOf('class="spend-visuals"'));
+  expect(spend.indexOf('h+=renderPlanShareCard(R);')).toBeGreaterThan(spend.indexOf('h+=renderCategoryLens('));
+  expect(spend.indexOf('h+=renderPlanShareCard(R);')).toBeLessThan(spend.indexOf('Category details'));
+  const lens=html.slice(html.indexOf('function renderCategoryLens('),html.indexOf('function renderSpendingTab('));
+  expect(lens).toContain("const basis=have?_catLensBasis:'spend';");
+ });
+});

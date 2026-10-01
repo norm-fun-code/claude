@@ -3480,6 +3480,48 @@ function renderPlanShareCard(R){
   </section>`;
 }
 
+// ── What each category is, against income ────────────────────────────────────
+// A category total says how much; it does not say how much that is. Each line here is read
+// three ways — of spending, of net income, of gross income — and one of them sets the bars.
+// Net is the default: tax is not something you spend, so a share of take-home is the one that
+// answers "can we afford this".
+let _catLensBasis='net';
+function catLensBasis(b){_catLensBasis=b;render()}
+function renderCategoryLens(rows,complete,cov,closedTotal,R){
+  if(typeof PlannerIncomeShare==='undefined'||!rows||!rows.length||!(closedTotal>0))return '';
+  const inc=PlannerIncomeShare.periodIncome(complete,R,{partial:cov.partial,fraction:cov.fractionElapsed});
+  const pct=x=>x>=0.1?(x*100).toFixed(0)+'%':(x*100).toFixed(1)+'%';
+  const have=inc.ok;
+  const basis=have?_catLensBasis:'spend';
+  const share=(net)=>({spend:net/closedTotal,net:have?net/inc.net:null,gross:have?net/inc.gross:null});
+  const shown=rows.filter(r=>r.net>0).slice(0,12);
+  const rest=rows.filter(r=>r.net>0).slice(12).reduce((t,r)=>t+r.net,0);
+  const list=[...shown.map(r=>({name:r.name,net:r.net})),...(rest>0?[{name:'Everything smaller',net:rest,muted:true}]:[])];
+  const prim=list.map(l=>share(l.net)[basis]);
+  const max=Math.max(...prim,1e-9);
+  const word={spend:'of spending',net:'of net income',gross:'of gross income'};
+  const chip=(b,l)=>`<button type="button" class="spend-scope-chip${basis===b?' is-on':''}" aria-pressed="${basis===b}"${have||b==='spend'?'':' disabled'} onclick="catLensBasis('${b}')">${l}</button>`;
+  const lines=list.map((l,i)=>{
+    const sh=share(l.net),others=['spend','net','gross'].filter(b=>b!==basis&&sh[b]!=null);
+    return `<div class="cl-row${l.muted?' cl-muted':''}">
+      <div class="cl-top"><span class="cl-name">${advEscape(l.name)}</span>
+        <span class="cl-pct">${pct(prim[i])}<small>${word[basis]}</small></span></div>
+      <div class="cl-track"><i style="width:${Math.max(1.5,prim[i]/max*100).toFixed(1)}%"></i></div>
+      <div class="cl-sub"><span>${fmt(l.net)}</span>${others.map(b=>`<span>${pct(sh[b])} ${word[b]}</span>`).join('')}</div>
+    </div>`;
+  }).join('');
+  const head=have
+    ?`Over this period you spent <strong>${fmt(closedTotal)}</strong> — <strong>${pct(closedTotal/inc.net)}</strong> of net income, <strong>${pct(closedTotal/inc.gross)}</strong> of gross.`
+    :`Over this period you spent <strong>${fmt(closedTotal)}</strong>. Income shares need the plan to cover these months.`;
+  return `<section class="cp-card cl-card">
+    <div class="ps-head"><div><h3>Categories against your income</h3><p>Same period as the chart above · net of refunds</p></div>
+      <div class="spend-scope" role="group" aria-label="Measure each category as a share of">${chip('net','Net income')}${chip('gross','Gross income')}${chip('spend','Spending')}</div></div>
+    <p class="ps-headline">${head}</p>
+    <div class="cl-list">${lines}</div>
+    <p class="spend-caption">${have?'Income is the plan\'s figure for the same months, not your deposits — the ledger records what landed in accounts, not gross pay or Stripe vests. Net is after tax, 401(k) and benefits.':'The plan does not cover every month in this period, so income-based shares are hidden rather than guessed.'}</p>
+  </section>`;
+}
+
 function renderSpendingTab(R,P){
   let spendingViz=null;
   const ca=document.getElementById('chartArea');
@@ -3493,7 +3535,6 @@ function renderSpendingTab(R,P){
   let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px" class="spending-workspace">`;
 
   h+=paceCard(d.pace);
-  h+=renderPlanShareCard(R);
 
   // ── Freshness and coverage, before any number that depends on them ──
   const nTx=st.transactions||0;
@@ -3522,6 +3563,7 @@ function renderSpendingTab(R,P){
       <div style="font-size:10.5px;color:var(--t2);margin-bottom:10px">${advEscape(d.error)}</div>
       <button onclick="openMonarchDiagnostics()" style="font-size:10px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);font-family:inherit;cursor:pointer">🩺 Diagnose connection</button>
     </div></div>`;
+    h+=renderPlanShareCard(R);
     ca.innerHTML=h;document.getElementById('summaries').innerHTML='';return;
   }
   if(!nTx){
@@ -3529,6 +3571,7 @@ function renderSpendingTab(R,P){
       <div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:6px">Import your history to begin</div>
       <div style="font-size:11px;color:var(--t2);line-height:1.6;max-width:520px;margin:0 auto">Transactions are read through the same Monarch connection your balances use. Nothing is written back — the import is read-only, and your own categorisations are never overwritten by a later sync.</div>
     </div></div>`;
+    h+=renderPlanShareCard(R);
     ca.innerHTML=h;document.getElementById('summaries').innerHTML='';return;
   }
 
@@ -3662,6 +3705,9 @@ function renderSpendingTab(R,P){
     <section class="cp-card"><div class="spend-drift-head"><div><h3>Run-rate drift</h3><p>The last twelve closed months · each point is the ${driftWord}-month average ending there</p></div>${driftToggle}</div><div class="spend-ltm-wrap"><canvas id="spendLtmChart" role="img" aria-label="Rolling ${driftWord}-month average income and spending"></canvas></div><p class="spend-caption" id="spendLtmNote">${driftCaption} Flat is a steady run rate; a rising or falling line is drift. The series breaks across gaps in the records.</p></section>
     <section class="cp-card"><h3>Income & spending</h3><p>Every imported month · current and unverified months are labeled${_spendScope.kind!=='all'?' · not narrowed by the period above':''}</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Month by month, as recorded. Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section>
     </div></div>`;
+
+    h+=renderCategoryLens(rows,complete,cov,closedTotal,R);
+    h+=renderPlanShareCard(R);
 
     h+=`<div class="glass-card" style="padding:16px 18px">
       <details class="spend-details"><summary>Category details · exact amounts & refunds</summary>
