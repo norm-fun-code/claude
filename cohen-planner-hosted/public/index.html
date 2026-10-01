@@ -3073,6 +3073,16 @@ function renderOverviewTab(R,P){
 }
 
 let _spend=null,_spendLoading=false,_syncStatus=null,_syncPoll=null;
+// The drift view is independent of the category period above it. Keep the chosen smoothing
+// window while the user moves around the app, without turning it into a plan assumption.
+let _spendDriftWindow=12;
+
+function setSpendDriftWindow(months){
+  const n=Number(months);
+  if(![3,6,12].includes(n)||n===_spendDriftWindow)return;
+  _spendDriftWindow=n;
+  render();
+}
 
 async function loadSpending(){
   if(_demoMode)return;
@@ -3449,7 +3459,7 @@ function renderSpendingTab(R,P){
     }).sort((x,y)=>y.net-x.net);
     const shown=rows.slice(0,16),rest=rows.slice(16);
     const restNet=rest.reduce((s,r)=>s+r.net,0);
-    spendingViz={rows,months,asOf,verified:cov.completeMonths||[]};
+    spendingViz={rows,months,asOf,verified:cov.completeMonths||[],driftWindow:_spendDriftWindow};
     // The control sits with the chart it changes. Ranges wider than the history are hidden
     // rather than shown selected-but-identical, which would imply a longer view exists.
     const scopeChip=(kind,value,label,on)=>`<button class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}" onclick="setSpendScope('${kind}',${value==null?'null':`'${value}'`})">${label}</button>`;
@@ -3477,9 +3487,18 @@ function renderSpendingTab(R,P){
         </select>
       </label>
     </div>`;
+    const driftWords={3:'three',6:'six',12:'twelve'},driftWord=driftWords[_spendDriftWindow];
+    const driftCaption=_spendDriftWindow===3
+      ?'Each point averages three months, so recent changes show quickly. Read a move as an early signal: one unusual quarter can still bend the line.'
+      :_spendDriftWindow===6
+        ?'Each point averages six months, balancing recent movement with enough history to soften a single unusual month.'
+        :'Each point averages twelve months, so one unusual month barely moves it. This is the steadiest view of the long-term run rate.';
+    const driftToggle=`<div class="spend-scope spend-drift-scope" role="group" aria-label="Averaging window for run-rate drift">
+      ${[3,6,12].map(n=>`<button class="spend-scope-chip${_spendDriftWindow===n?' is-on':''}" aria-pressed="${_spendDriftWindow===n}" onclick="setSpendDriftWindow(${n})">${n}M</button>`).join('')}
+    </div>`;
     h+=`<div class="spend-visuals"><section class="cp-card"><h3>Where your money goes</h3><p>Imported records for ${advEscape(spendScopeLabel(completeAll,asOf,months))}${singleMonth?'':partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}</p>${scopeControl}<div class="spend-donut-wrap"><canvas id="spendCategoryChart" role="img" aria-label="Spending by category from imported records"></canvas></div><div id="spendCategoryLegend" class="spend-legend"></div><p class="spend-caption">Net of refunds. Categories with net credits appear in the details, outside the donut.</p></section>
     <div class="spend-stack">
-    <section class="cp-card"><h3>Run-rate drift</h3><p>The last twelve closed months · each point is the twelve-month average ending there</p><div class="spend-ltm-wrap"><canvas id="spendLtmChart" role="img" aria-label="Rolling twelve-month average income and spending"></canvas></div><p class="spend-caption" id="spendLtmNote">Each point averages the twelve months ending there, so one unusual month barely moves it: flat is a steady run rate, and a rising or falling line is real drift. The series breaks across any gap in the records rather than drawing through it.</p></section>
+    <section class="cp-card"><div class="spend-drift-head"><div><h3>Run-rate drift</h3><p>The last twelve closed months · each point is the ${driftWord}-month average ending there</p></div>${driftToggle}</div><div class="spend-ltm-wrap"><canvas id="spendLtmChart" role="img" aria-label="Rolling ${driftWord}-month average income and spending"></canvas></div><p class="spend-caption" id="spendLtmNote">${driftCaption} Flat is a steady run rate; a rising or falling line is drift. The series breaks across gaps in the records.</p></section>
     <section class="cp-card"><h3>Income & spending</h3><p>Every imported month · current and unverified months are labeled${_spendScope.kind!=='all'?' · not narrowed by the period above':''}</p><div class="spend-trend-wrap"><canvas id="spendMonthlyChart" role="img" aria-label="Monthly recorded income and spending"></canvas></div><p class="spend-caption">Month by month, as recorded. Transfers and card payments are excluded. These are recorded transactions, not projected amounts.</p></section>
     </div></div>`;
 

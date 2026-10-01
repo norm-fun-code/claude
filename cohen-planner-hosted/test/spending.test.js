@@ -534,7 +534,7 @@ describe('the rolling LTM series', () => {
   it('is a chart of its own, not lines laid over the monthly bars', () => {
     const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
     const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-    expect(cockpit).toContain("PlannerSpending.rollingSeries(months,12,{skip:[asOf.slice(0,7)]})");
+    expect(cockpit).toContain("PlannerSpending.rollingSeries(months,windowMonths,{skip:[asOf.slice(0,7)]})");
     expect(cockpit).toContain("document.getElementById('spendLtmChart')");
     expect(cockpit).toContain('charts.spendingLtm=new Chart');
     expect(html).toContain('id="spendLtmChart"');
@@ -544,13 +544,17 @@ describe('the rolling LTM series', () => {
     expect(barChart).not.toMatch(/12-month average/);
   });
 
-  it('puts the last twelve closed months on the axis, with no control over it', () => {
-    // One fixed, obvious period, like the bars next door — so the shape means the same thing
-    // every time it is looked at, and nothing has to be chosen first.
+  it('puts the last twelve closed months on the axis while letting the average change', () => {
+    // The time shown stays fixed so switching smoothing windows changes the signal rather
+    // than also moving the goalposts underneath it.
     const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
+    const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
     expect(cockpit).toContain("const closed=months.filter(m=>m.month!==asOf.slice(0,7));");
     expect(cockpit).toContain('const from=Math.max(0,closed.length-12);');
     expect(cockpit).toContain('closed.slice(from).map(m=>ltm[months.indexOf(m)]||null)');
+    expect(cockpit).toContain('const windowMonths=[3,6,12].includes(Number(driftWindow))');
+    expect(html).toContain('onclick="setSpendDriftWindow(${n})"');
+    expect(html).toContain("let _spendDriftWindow=12;");
     // Nothing to draw is said in words, not shown as a flat line at zero.
     expect(cockpit).toContain('spendLtmNote');
   });
@@ -575,7 +579,7 @@ describe('the drift chart when the history is too short to drift', () => {
     // `window.PlannerSpending` read three lines above it in the temporal dead zone.
     expect(src).not.toMatch(/\bconst window=/);
     expect(src).toContain('if(!points){');
-    expect(src).toMatch(/Twelve consecutive months of records are needed/);
+    expect(src).toContain('consecutive months of records are needed');
   });
 
   it('marks a point that has no neighbour to join, rather than drawing a zero-length line', () => {

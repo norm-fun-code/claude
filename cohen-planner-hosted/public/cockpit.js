@@ -551,7 +551,7 @@ function cockpitRenderBridge(R,year){
   </details>`;
 }
 
-function mountSpendingCharts({rows,months,asOf,verified}){
+function mountSpendingCharts({rows,months,asOf,verified,driftWindow=12}){
   const palette=['#7ae3c3','#a99bff','#78b7ef','#efb873','#ed91b0','#6dcacb','#bbc884','#748db5'];
   const positive=rows.filter(r=>r.net>0),top=positive.slice(0,7),other=positive.slice(7).reduce((s,r)=>s+r.net,0);
   const slices=other?[...top,{name:'Other categories',net:other}]:top;
@@ -564,15 +564,16 @@ function mountSpendingCharts({rows,months,asOf,verified}){
     {label:'Income',data:months.map(m=>m.income||0),backgroundColor:'#72cbb0',borderRadius:4},
     {label:'Spending',data:months.map(m=>m.expense||0),backgroundColor:'#a798ef',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#bdc9dc',font:{size:12}}},tooltip:{callbacks:{label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}`}}},scales:{x:{ticks:{color:'#aabbd0',maxRotation:60,minRotation:45,autoSkipPadding:12,font:{size:11}},grid:{display:false}},y:{ticks:{color:'#aabbd0',callback:v=>fmt(v)},grid:{color:'#27364b'}}}}});
 
-  // ── Drift: the trailing twelve-month run rate, on its own ──
+  // ── Drift: a selectable trailing run rate, on its own ──
   // A separate chart rather than lines over the bars. A single month is noise at this scale and
   // the bars carry it; what this one is for is the direction the run rate has been moving, and
   // that reads far better without twenty-odd bars behind it. The axis is a per-month average,
   // not a twelve-month total, so the numbers stay comparable with the bars next door.
   const ltmCanvas=document.getElementById('spendLtmChart');
   if(ltmCanvas){
+    const windowMonths=[3,6,12].includes(Number(driftWindow))?Number(driftWindow):12;
     const ltm=window.PlannerSpending
-      ? PlannerSpending.rollingSeries(months,12,{skip:[asOf.slice(0,7)]})
+      ? PlannerSpending.rollingSeries(months,windowMonths,{skip:[asOf.slice(0,7)]})
       : months.map(()=>null);
     // The axis is the last twelve CLOSED months, full stop — no control, no trimming to
     // whatever happens to have a window. Like the bars next door it is one fixed, obvious
@@ -587,7 +588,7 @@ function mountSpendingCharts({rows,months,asOf,verified}){
     if(!points){
       // Nothing to draw at all. Saying why beats an empty grid that reads as a run rate of zero.
       ltmCanvas.closest('.spend-ltm-wrap').style.display='none';
-      if(note)note.textContent='Twelve consecutive months of records are needed before a trailing average exists. Import more history and this shows how the run rate has moved.';
+      if(note)note.textContent=`${windowMonths} consecutive months of records are needed before this trailing average exists. Import more history and this shows how the run rate has moved.`;
     }else{
       const span=series,lab=closed.slice(from).map(m=>monthLabel(m.month));
       const line=(key,label,color)=>({label,data:span.map(p=>p?p[key]:null),
@@ -598,11 +599,11 @@ function mountSpendingCharts({rows,months,asOf,verified}){
           return d[i]!=null&&d[i-1]==null&&d[i+1]==null?3.5:0},
         pointHoverRadius:4,fill:false,spanGaps:false});
       charts.spendingLtm=new Chart(ltmCanvas,{type:'line',data:{labels:lab,datasets:[
-        line('income','Income · trailing 12-month average','#72cbb0'),
-        line('expense','Spending · trailing 12-month average','#a798ef')]},
+        line('income',`Income · trailing ${windowMonths}-month average`,'#72cbb0'),
+        line('expense',`Spending · trailing ${windowMonths}-month average`,'#a798ef')]},
         options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
           plugins:{legend:{labels:{color:'#bdc9dc',font:{size:12}}},
-            tooltip:{callbacks:{title:c=>`12 months to ${c[0].label}`,label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}/mo`}}},
+            tooltip:{callbacks:{title:c=>`${windowMonths} months to ${c[0].label}`,label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}/mo`}}},
           scales:{x:{ticks:{color:'#aabbd0',maxRotation:60,minRotation:45,autoSkipPadding:12,font:{size:11}},grid:{display:false}},
             y:{ticks:{color:'#aabbd0',callback:v=>fmt(v)},grid:{color:'#27364b'}}}}});
     }
