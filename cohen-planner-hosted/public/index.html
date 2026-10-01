@@ -3677,6 +3677,34 @@ function budgetGridHtml(R,yr,allOv,series,mo){
   </tbody></table></div>
   <p class="spend-caption" style="margin:10px 0 0">Future dollars. A dot marks a rule of yours (purple) or a figure you set for one year (amber). Click a year to budget it.</p>`;
 }
+// Rent for the years before a purchase (or every year, when renting). It honours the scope chips like every
+// other line: for one year only, or from this year on. The Home tab's slider still sets the rent for the whole plan.
+function budgetRentSet(text){
+  const v=Math.round(Number(String(text).replace(/[^0-9.]/g,'')));
+  const yr=_budgetYear??PlannerTime.year();
+  if(!Number.isFinite(v)||v<0){showToast('Type a monthly rent in dollars','red');render();return}
+  const old=P.rentSteps,only=_budgetScope==='year';
+  const kept=(Array.isArray(old)?old:[]).filter(x=>!(Number(x.from)===yr&&!!x.only===only));
+  P.rentSteps=[...kept,{from:yr,monthly:v,...(only?{only:true}:{})}];
+  _budgetUndo={label:'Rent',before:{params:{rentSteps:old}},notes:[]};
+  markDirty();render();savePlannerState();
+  budgetSnack(`Rent → ${fmtF(v)}/mo, ${only?yr+' only':'from '+yr}`,[]);
+}
+function budgetRentReset(){
+  const old=P.rentSteps;if(!Array.isArray(old)||!old.length)return;
+  delete P.rentSteps;
+  _budgetUndo={label:'Rent',before:{params:{rentSteps:old}},notes:[]};
+  markDirty();render();savePlannerState();
+  budgetSnack('Rent → back to the plan-wide figure',[]);
+}
+function budgetRentHtml(yr,row,unitWord,mo){
+  const buying=P.housingMode!=='rent';
+  if(buying&&yr>=P.homePurchaseYear)return `<p class="spend-caption">${yr} is after the purchase, so housing here is the mortgage, tax and upkeep. Rent only applies to the years before it.</p>`;
+  const per=mo?12:1,steps=Array.isArray(P.rentSteps)?P.rentSteps:[];
+  return `<div class="sr"><div class="sh"><span class="sl">Monthly rent in ${yr}</span></div>
+    <span class="bd-edit"><input class="bd-input" id="bd_rent" type="text" inputmode="decimal" value="${fmtF(Math.round(row.hFull/12))}" aria-label="Monthly rent in ${yr}" onfocus="this.select()" onchange="budgetRentSet(this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>/mo</small></span>
+    <p class="spend-caption" style="margin:6px 0 0">Applies ${_budgetScope==='year'?yr+' only':'from '+yr+' on, growing at the rent inflation below'}, per the switch at the top.${steps.length?` <button type="button" class="bd-link" onclick="budgetRentReset()">Clear my rent changes</button>`:''}</p></div>`;
+}
 function budgetEdit(k){_budgetEdit=_budgetEdit===k?null:k;render()}
 const RM_COLOR={income:'#b8e986',fixed:'#8278ee',essential:'#8bdded',discretionary:'#ecc183',saving:'#6fa8ff',investing:'#7ae3c3',oneoff:'#b6a8ff',tax:'#6b7a90',pretax:'#8ebfff',short:'#ff9caf'};
 const BD_COLOR={cash:'#a3b8cc',stock:'#d4a5ff',savings:'#ff9f7a',left:'#d9e1ea',save:'#7ae3c3',draw:'#ecc183'};
@@ -4104,7 +4132,7 @@ function renderBudgetTab(R,P){
     return `<div class="bd-row" style="--tier:${o.color}">
       <div class="cl-top"><span class="cl-name">${advEscape(label)}${tag}</span>${inputHtml}</div>
       <div class="cl-track"><i style="width:${Math.max(1.5,(o.max>0?value/o.max:0)*100).toFixed(1)}%"></i></div>
-      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord} income</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord} income"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord} income" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord} income</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${actualStrip(k,value,o.readonly)}${changeChips(k)}${chk?`<p class="bd-callout ${chk.status}"><b>${chk.status==='low'?'Looks light':'Looks high'}.</b> ${advEscape(chk.text)}</p>`:''}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${embedControls(k==='housing'?'home':k)}</div>`:''}`;
+      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord} income</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord} income"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord} income" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord} income</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${actualStrip(k,value,o.readonly)}${changeChips(k)}${chk?`<p class="bd-callout ${chk.status}"><b>${chk.status==='low'?'Looks light':'Looks high'}.</b> ${advEscape(chk.text)}</p>`:''}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${k==='housing'?budgetRentHtml(yr,row,unitWord,mo):''}${k==='housing'?embedControls('home').replace(/<div class="sr"><div class="sh"><span class="sl">Monthly rent<\/span>[\s\S]*?<\/div><input[^>]*><\/div>/,''):embedControls(k)}</div>`:''}`;
   };
   const living=row.livFullParts||{};
   const c=IS.compute(row,'net');

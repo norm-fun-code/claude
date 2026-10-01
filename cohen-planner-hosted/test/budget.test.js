@@ -755,3 +755,25 @@ describe('year by year grid',()=>{
   expect(html).toMatch(/const had=_bdFolds\.has\(k\)[\s\S]*k==='grid'&&open&&!had/);
  });
 });
+
+describe('rent set from the Budget honours the scope',()=>{
+ const base=plan();
+ const rents=p=>M.run(p).R.map(r=>[r.yr,r.hFull]);
+ const first=rents(base).filter(([y])=>y<base.homePurchaseYear);
+ it('a one-year figure changes that year and no other',()=>{
+  const y=first[2][0];
+  const after=rents({...base,rentSteps:[{from:y,monthly:9000,only:true}]});
+  for(const [yr,h] of after){
+   const was=rents(base).find(a=>a[0]===yr)[1];
+   if(yr===y)expect(h).toBe(108000);else expect(h).toBe(was);
+  }
+ });
+ it('a from-this-year figure leaves earlier years alone and moves later ones',()=>{
+  const y=first[2][0];
+  const after=rents({...base,rentSteps:[{from:y,monthly:9000}]}),was=rents(base);
+  for(const [yr,h] of after){
+   const w=was.find(a=>a[0]===yr)[1];
+   if(yr<y)expect(h).toBe(w);else if(yr<base.homePurchaseYear)expect(h).toBe(108000);
+  }
+ });
+});

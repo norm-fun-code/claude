@@ -678,7 +678,13 @@ function run(p,rets,compiledGrants){
   // today's rent for the years it still rents hands buying money it never earned. The
   // comparison sets this flag; the saved plan never does, so its projection is unchanged.
   const inflateRent=p.housingMode==='rent'||p.rentInflatesBeforePurchase===true;
-  const monthlyRent=Math.min(rentCap,Number(p.nycRent||0)*(inflateRent?(1+rentGrowth)**(yr-sy):1));
+  // Rent you set from a year on, or for one year only (Budget → Housing). A one-year figure is exactly
+  // what was typed; a from-this-year-on figure restarts the rent there and then grows the way it always did.
+  const rentSteps=Array.isArray(p.rentSteps)?p.rentSteps.filter(x=>x&&Number.isFinite(Number(x.from))&&Number(x.monthly)>=0&&Number(x.from)<=yr):[];
+  const rentPin=rentSteps.filter(x=>x.only&&Number(x.from)===yr).at(-1);
+  const rentRoll=rentSteps.filter(x=>!x.only).reduce((m,x)=>!m||Number(x.from)>=Number(m.from)?x:m,null);
+  const rentBase=rentRoll?Number(rentRoll.monthly):Number(p.nycRent||0),rentFrom=rentRoll?Number(rentRoll.from):sy;
+  const monthlyRent=rentPin?Number(rentPin.monthly):Math.min(rentCap,rentBase*(inflateRent?(1+rentGrowth)**(yr-rentFrom):1));
   let h=sub?am+ptax+(p.maintBase+insuranceFor(p.homePrice,p))*1.02**(yr-p.homePurchaseYear):monthlyRent*12;
     const inf=(1+p.expenseInflation)**(yr-sy);
     let gr=p.baseGroceries*inf,di=p.baseDining*inf,sh=p.baseShopping*inf,va=(nk>0?p.postKidVacations:p.baseVacations)*inf;
