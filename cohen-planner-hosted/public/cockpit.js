@@ -548,6 +548,7 @@ function cockpitRenderBridge(R,year){
 }
 
 function mountSpendingCharts({rows,months,asOf,verified,driftWindow=12}){
+  const dollars=v=>fmtF(Math.round(v));
   charts.spendingMonths=new Chart(document.getElementById('spendMonthlyChart'),{type:'bar',data:{labels:months.map(m=>monthLabel(m.month)+(m.month===asOf.slice(0,7)?' · partial':verified.includes(m.month)?'':' *')),datasets:[
     {label:'Income',data:months.map(m=>m.income||0),backgroundColor:'#72cbb0',borderRadius:4},
     {label:'Spending',data:months.map(m=>m.expense||0),backgroundColor:'#a798ef',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#bdc9dc',font:{size:12}}},tooltip:{callbacks:{label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}`}}},scales:{x:{ticks:{color:'#aabbd0',maxRotation:60,minRotation:45,autoSkipPadding:12,font:{size:11}},grid:{display:false}},y:{ticks:{color:'#aabbd0',callback:v=>fmt(v)},grid:{color:'#27364b'}}}}});
