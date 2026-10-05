@@ -5,6 +5,24 @@ const STRIPE_BILLIONS=['referenceValuation','valuationCeiling'];
 function stripeWorkspaceSet(view){stripeWorkspace=['overview','prices','income','assumptions'].includes(view)?view:'overview';render();}
 function stripeWorkspaceNav(){return `<nav class="sg-nav" aria-label="Stripe workspace">${[['overview','Position'],['income','Compensation'],['prices','Valuation path'],['assumptions','Assumptions']].map(([v,l])=>`<button class="${stripeWorkspace===v?'active':''}" aria-current="${stripeWorkspace===v?'page':'false'}" onclick="stripeWorkspaceSet('${v}')">${l}</button>`).join('')}</nav>`;}
 function stripeGrantIntro(){return '';}
+// Put 2037 onward (the years after the eleven explicit ones) back on the growth assumptions: forget every
+// figure typed into those rows, so they follow the last explicit year at the cash and stock growth rates again.
+let _laterBackup=null;
+function stripeManualClear(){
+  const had=P.stripeManualLater||{},n=Object.keys(had).length;
+  if(!n)return;
+  const from=(P.planStartYear||2026)+11;
+  if(!showConfirm(`Go back to the growth assumptions for ${from} onward?\n\nThe ${n} figure${n===1?'':'s'} you typed in those years will be dropped. Years ${from} on will grow from the last year in the table at your growth rates.`))return;
+  _laterBackup=had;
+  delete P.stripeManualLater;
+  markDirty();buildControls();savePlannerState();render();
+  showToast(`${from}+ now follows your assumptions. Undo is on the Compensation tab until you reload.`,'green');
+}
+function stripeManualRestore(){
+  if(!_laterBackup)return;
+  P.stripeManualLater=_laterBackup;_laterBackup=null;
+  markDirty();buildControls();savePlannerState();render();
+}
 function stripeManualSet(year,key,value){
   if(value.trim()===''||!Number.isFinite(Number(value))||Number(value)<0){showToast('Enter a non-negative annual amount.','red');return;}
   const i=year-(P.planStartYear||2026), n=Number(value);
@@ -69,7 +87,7 @@ function renderStripeWorkspace(R){
     // vest withholding, the return path, and how much of each vest is sold. One definition, here.
     h+=`<section class="sc sg-assume">${embedControls('stripe')}</section>`;
   }else if(stripeWorkspace==='income'){
-    h+=`<section class="sc"><p>Cash includes salary, bonus and cash awards. Stock is gross compensation at vesting, including the upside you expect. These inputs feed every projection.</p><div class="sg-table-wrap"><table><thead><tr><th>Year</th><th>Cash compensation</th><th>Stock compensation at vesting</th><th>Total</th></tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>{const n=normComp(P,i);return `<tr><th>${sy+i}</th>${['cash','stock'].map(k=>`<td><input id="sg-comp-${k}-${sy+i}" type="number" min="0" step="any" aria-label="${sy+i} ${k} compensation" value="${Math.round(n[k])}" onchange="stripeManualSet(${sy+i},'${k}',this.value)"></td>`).join('')}<td id="sg-total-${sy+i}">${fmt(n.cash+n.stock)}</td></tr>`;}).join('')}</tbody></table></div><p class="sg-note">Years after ${sy+10} follow the growth assumptions unless you enter an annual amount. Previously calculated amounts have been preserved as manual inputs.</p></section>`;
+    h+=`<section class="sc"><p>Cash includes salary, bonus and cash awards. Stock is gross compensation at vesting, including the upside you expect. These inputs feed every projection.</p>${Object.keys(P.stripeManualLater||{}).length?`<p class="sg-note">You have typed your own figures for ${sy+11} onward. <button type="button" class="bd-link" onclick="stripeManualClear()">Use my growth assumptions for ${sy+11}+ instead</button></p>`:_laterBackup?`<p class="sg-note">Back on your growth assumptions for ${sy+11}+. <button type="button" class="bd-link" onclick="stripeManualRestore()">Undo</button></p>`:''}<div class="sg-table-wrap"><table><thead><tr><th>Year</th><th>Cash compensation</th><th>Stock compensation at vesting</th><th>Total</th></tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>{const n=normComp(P,i);return `<tr><th>${sy+i}</th>${['cash','stock'].map(k=>`<td><input id="sg-comp-${k}-${sy+i}" type="number" min="0" step="any" aria-label="${sy+i} ${k} compensation" value="${Math.round(n[k])}" onchange="stripeManualSet(${sy+i},'${k}',this.value)"></td>`).join('')}<td id="sg-total-${sy+i}">${fmt(n.cash+n.stock)}</td></tr>`;}).join('')}</tbody></table></div><p class="sg-note">Years after ${sy+10} follow the growth assumptions unless you enter an annual amount. Previously calculated amounts have been preserved as manual inputs.</p></section>`;
     h+=`<section class="sc sg-assume"><h3>Growth, 401(k) and benefits</h3>${embedControls('norm')}</section>`;
   }else{
     // Billions in, billions out. The field used to be labelled in dollars, so "160" — the

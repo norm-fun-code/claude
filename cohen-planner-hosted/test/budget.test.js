@@ -777,3 +777,19 @@ describe('rent set from the Budget honours the scope',()=>{
   }
  });
 });
+
+describe('Stripe compensation: back to the assumptions for the later years',()=>{
+ const ui=fs.readFileSync(new URL('../public/stripe-grants-ui.js',import.meta.url),'utf8');
+ it('offers a reset only while typed figures exist, and undo after',()=>{
+  expect(ui).toContain('function stripeManualClear()');
+  expect(ui).toContain('delete P.stripeManualLater');
+  expect(ui).toMatch(/Object\.keys\(P\.stripeManualLater\|\|\{\}\)\.length\?[\s\S]*stripeManualClear\(\)[\s\S]*_laterBackup\?[\s\S]*stripeManualRestore\(\)/);
+ });
+ it('clearing the typed years returns the model to its growth formula',()=>{
+  const typed=M.run(plan({stripeManualLater:{2037:{cash:900000,stock:900000}}})).R;
+  const clean=M.run(plan({})).R;
+  expect(M.normComp(plan({stripeManualLater:{2037:{cash:900000,stock:900000}}}),11).cash).toBe(900000);
+  expect(M.normComp(plan({}),11).cash).not.toBe(900000);
+  expect(typed.find(r=>r.yr===2037).netTC).not.toBe(clean.find(r=>r.yr===2037).netTC);
+ });
+});
