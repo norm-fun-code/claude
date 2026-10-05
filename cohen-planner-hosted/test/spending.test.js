@@ -644,3 +644,19 @@ describe('the month in progress is selectable', () => {
     expect(recent).not.toContain('every');
   });
 });
+
+describe('stock pay logged as a paycheck still counts as income', () => {
+  const opts = { accountClasses: { brk: 'taxable', priv: 'private', chk: 'cash' }, investmentAccountIds: new Set(['brk']) };
+  it('a paycheck-category deposit into a non-cash account is income, not saving', () => {
+    expect(S.classify(tx({ categoryId: '3', accountId: 'priv', amount: 20000 }), cats, opts)).toBe(S.KIND.INCOME);
+    expect(S.classify(tx({ categoryId: '3', accountId: 'brk', amount: 20000 }), cats, opts)).toBe(S.KIND.INCOME);
+  });
+  it('a plain transfer into the same account is still saving', () => {
+    expect(S.classify(tx({ categoryId: '4', accountId: 'priv', amount: 20000 }), cats, opts)).toBe(S.KIND.INVESTMENT);
+  });
+  it('is counted once in the month, and no longer lands in the investment total', () => {
+    const { totals } = S.summarize([tx({ id: 'a', categoryId: '3', accountId: 'priv', amount: 20000 })], CATS, opts);
+    expect(totals.income).toBe(20000);
+    expect(totals.investment).toBe(0);
+  });
+});

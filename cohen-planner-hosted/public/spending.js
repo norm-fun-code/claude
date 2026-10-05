@@ -33,6 +33,7 @@
   const SYSTEM_CARD_PAYMENT=new Set(['credit_card_payment']);
   const NAME_CARD_PAYMENT=/credit\s*card\s*payment|card\s*payment|payment\s*-\s*thank\s*you/i;
   const NAME_TRANSFER=/^transfer|transfer$|internal\s*transfer/i;
+  const NAME_CONTRIBUTION=/contribution|401\s*\(?k\)?|roth|ira\b/i;   // money we put in, even when filed as income
   const NAME_INVESTMENT=/invest|brokerage|contribution|401\s*\(?k\)?|roth|ira\b/i;
 
   const norm=s=>String(s==null?'':s).trim().toLowerCase();
@@ -100,8 +101,14 @@
     // the same dollars are not recorded twice.
     const acctCls=o.accountClasses&&txn.accountId!=null?o.accountClasses[String(txn.accountId)]:null;
     const intoNonCash=acctCls&&acctCls!=='cash'&&acctCls!=='debt'&&acctCls!=='unknown';
-    if(intoNonCash&&txn.amount>0)return KIND.INVESTMENT;
+    // Pay that lands in a non-cash account is still pay. Stock compensation logged as a paycheck is filed
+    // under an income category but deposited into the equity or brokerage account, and the destination
+    // rule below would call it saving: the month's income lost it and no longer matched Monarch, which
+    // counts anything in an income category as income. A plain transfer in is not in that category,
+    // so it still reads as saving.
     const toInvestment=o.investmentAccountIds&&txn.accountId!=null&&o.investmentAccountIds.has(String(txn.accountId));
+    if((intoNonCash||toInvestment)&&txn.amount>0&&group==='income'&&!NAME_CONTRIBUTION.test(name))return KIND.INCOME;
+    if(intoNonCash&&txn.amount>0)return KIND.INVESTMENT;
     if(toInvestment||NAME_INVESTMENT.test(name))return KIND.INVESTMENT;
 
     if(group==='transfer'||SYSTEM_TRANSFER.has(sys)||NAME_TRANSFER.test(name))return KIND.TRANSFER;
