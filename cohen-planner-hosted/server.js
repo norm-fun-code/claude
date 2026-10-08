@@ -25,10 +25,8 @@ const { migrateP } = require('./public/plan-migrate.js');
 const { createMonarchLive } = require('./monarch-live');
 const monarchLive = createMonarchLive({ db });
 const { createMonarchSync } = require('./monarch-sync');
-// The transaction feed is the NormOS bridge, not monarchLive — that module reads account
-// balances and holds no session capable of fetching transactions. Passing it here is what
-// made every sync refuse with "No transaction feed".
-const monarchSync = createMonarchSync({ db, live: require('./transactions-bridge').createTransactionsBridge() });
+// Transaction imports read Monarch directly; balance and holding transports are independent.
+const monarchSync = createMonarchSync({ db, live: require('./monarch-transactions').createMonarchTransactions() });
 const Spending = require('./public/spending.js');
 const Accounts = require('./public/accounts.js');
 const Snapshots = require('./public/snapshots.js');

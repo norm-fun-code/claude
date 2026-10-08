@@ -1,7 +1,7 @@
 'use strict';
 // ═══ TRANSACTION SYNC ═══
 // Persistence and reconciliation for the Monarch transaction ledger. The transport lives in
-// monarch-live.js; this module owns "what is true locally after a sync".
+// monarch-transactions.js; this module owns "what is true locally after a sync".
 //
 // Four properties it has to hold, because getting any of them wrong corrupts every number
 // downstream and the corruption is silent:
@@ -20,9 +20,8 @@
 
 const SYNC_KEY = 'monarch_tx_sync';
 
-// Transactions and categories come from the NormOS bridge (transactions-bridge.js), the same
-// read-only credential the balances and holdings travel on. The planner holds no Monarch
-// session and never did the fetching itself.
+// Transactions and categories come directly from Monarch using server-side credentials.
+// Import failures never substitute another source or discard the last successful ledger.
 //
 // This guard remains because the feed is injected: handed a module that cannot fetch — which
 // is exactly what happened when monarchLive, the BALANCE reader, was passed here — every

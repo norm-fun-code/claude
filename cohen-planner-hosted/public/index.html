@@ -4244,7 +4244,7 @@ function renderSpendingTab(R,P){
   const syncCard=`<div class="glass-card" style="padding:14px 16px">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <div>
-        <div style="font-size:11px;font-weight:700;color:var(--tx)">💳 Spending & cash flow</div>
+        <div style="font-size:11px;font-weight:700;color:var(--tx)">💳 Spending & cash flow · Monarch</div>
         <div style="font-size:10px;color:var(--t2);margin-top:3px">
           ${nTx?`${nTx.toLocaleString()} transactions · ${st.firstDate||'—'} → ${st.lastDate||'—'}${st.pending?` · ${st.pending} still pending`:''}`
                :'No transaction history imported yet.'}
@@ -4275,7 +4275,7 @@ function renderSpendingTab(R,P){
   if(!nTx){
     h+=`<div class="glass-card" style="padding:26px;text-align:center">
       <div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:6px">Import your history to begin</div>
-      <div style="font-size:11px;color:var(--t2);line-height:1.6;max-width:520px;margin:0 auto">Transactions are read through the same Monarch connection your balances use. Nothing is written back — the import is read-only, and your own categorisations are never overwritten by a later sync.</div>
+      <div style="font-size:11px;color:var(--t2);line-height:1.6;max-width:520px;margin:0 auto">Transactions are imported directly from Monarch, independently of the balance connection. Nothing is written back — the import is read-only, and your own categorisations are never overwritten by a later sync.</div>
     </div></div>`;
     h+=renderIncomeLens(R,null);
     ca.innerHTML=h;document.getElementById('summaries').innerHTML='';return;
