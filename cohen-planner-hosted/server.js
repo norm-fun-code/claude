@@ -2154,7 +2154,10 @@ async function initSchemaWithRetry(retries = 5, delayMs = 3000) {
   for (let i = 0; i < retries; i++) {
     try {
       await db.initSchema();
-      console.log('DB schema ready');
+      // Apply the Oct 8 audited cash/stock cases exactly once, without touching
+      // household, housing, account or other scenario assumptions.
+      const compUpdate = await require('./audited-comp-scenarios').applyAuditedCompScenarios(db.pool);
+      console.log('DB schema ready; audited comp scenarios:', JSON.stringify(compUpdate));
       return;
     } catch (err) {
       console.error(`DB schema init attempt ${i + 1}/${retries} failed:`, err.message);
