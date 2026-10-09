@@ -26,7 +26,7 @@ const { createMonarchLive } = require('./monarch-live');
 const monarchLive = createMonarchLive({ db });
 const { createMonarchSync } = require('./monarch-sync');
 // Transaction imports read Monarch directly; balance and holding transports are independent.
-const monarchSync = createMonarchSync({ db, live: require('./monarch-transactions').createMonarchTransactions() });
+const monarchSync = createMonarchSync({ db, live: require('./monarch-transactions').createMonarchTransactions({ db }) });
 const Spending = require('./public/spending.js');
 const Accounts = require('./public/accounts.js');
 const Snapshots = require('./public/snapshots.js');

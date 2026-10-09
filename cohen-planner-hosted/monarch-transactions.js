@@ -15,30 +15,22 @@ const TRANSACTIONS = `query Web_GetTransactionsList($offset: Int, $limit: Int, $
 const CATEGORIES = `query GetCategories {
   categories { id name systemCategory isDisabled group { id name type } }
 }`;
-function createMonarchTransactions({env=process.env,fetchImpl=fetch}={}) {
-  function headers() {
-    const h={'Content-Type':'application/json','Client-Platform':'web'};
-    // Cookie authentication takes precedence when the current Monarch session uses it.
-    // Credentials remain server-side and are sent only to the fixed Monarch HTTPS origin.
-    if(env.MONARCH_COOKIE) {
-      const cookie=env.MONARCH_COOKIE.trim();
-      h.Cookie=cookie;
-      const csrf=cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1];
-      if(csrf)h['X-CSRFToken']=csrf;
-      h.Origin='https://app.monarch.com';h.Referer='https://app.monarch.com/';
-    } else if(env.MONARCH_TOKEN) h.Authorization='Token '+env.MONARCH_TOKEN.trim();
-    else throw new Error('Direct Monarch import is not configured. Set MONARCH_TOKEN or MONARCH_COOKIE on the planner service.');
-    return h;
-  }
+function createMonarchTransactions({db,env=process.env,fetchImpl=fetch}={}) {
+  const session=require('./monarch-session').createMonarchSession({db,env,fetchImpl});
   async function query(operationName,query,variables={}) {
-    const auth=headers();let response;
+    let auth=await session.current();let response;
     try {
-      response=await fetchImpl(ENDPOINT,{method:'POST',headers:auth,body:JSON.stringify({operationName,query,variables}),
+      const send=()=>fetchImpl(ENDPOINT,{method:'POST',headers:auth.headers,body:JSON.stringify({operationName,query,variables}),
         cache:'no-store',redirect:'error',signal:AbortSignal.timeout(60000)});
+      response=await send();
+      if(response.status===401) {
+        await session.renew(auth.generation);auth=await session.current();response=await send();
+      }
     } catch(e) {
+      if(e?.message?.startsWith('Monarch '))throw e;
       throw new Error(e?.name==='TimeoutError'?'Monarch timed out returning transaction data.':'Monarch could not be reached. Previously imported transactions were kept.');
     }
-    if(response.status===401)throw new Error('Monarch rejected the saved session. Renew the planner’s Monarch connection before importing again.');
+    if(response.status===401)throw new Error('Monarch rejected the renewed session. Account verification may be needed; saved transactions were kept.');
     if(response.status===403)throw new Error('Monarch denied the transaction request. Check the planner’s Monarch connection; saved transactions were kept.');
     if(response.status===429)throw new Error('Monarch is rate-limiting imports. Wait before trying again.');
     if(!response.ok)throw new Error('Monarch transaction request failed (HTTP '+response.status+').');

@@ -145,7 +145,7 @@ describe('the real sync runs on it, unchanged', () => {
 
   it('is what the server actually hands the sync', () => {
     const src = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
-    expect(src).toContain("createMonarchSync({ db, live: require('./monarch-transactions').createMonarchTransactions() })");
+    expect(src).toContain("createMonarchSync({ db, live: require('./monarch-transactions').createMonarchTransactions({ db }) })");
     expect(src).not.toContain('createMonarchSync({ db, live: monarchLive })');
   });
 });
