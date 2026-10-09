@@ -555,11 +555,11 @@ function caseMenuClose(){if(!_caseMenu&&!_caseNaming)return;_caseMenu=false;_cas
 document.addEventListener('click',e=>{if(_caseMenu&&!e.target.closest('.case-wrap'))caseMenuClose()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&_caseMenu){caseMenuClose();document.querySelector('.case-btn')?.focus()}});
 function caseLoad(i){
-  if(activeScenarioIdx>=0&&scenarioDirty&&i!==activeScenarioIdx&&!showConfirm(`"${scenarios[activeScenarioIdx].name}" has edits that are not saved to it. Switch anyway? (Your edits stay in the live plan only if you go back to it.)`))return;
+  if(activeScenarioIdx>=0&&caseReallyEdited()&&i!==activeScenarioIdx&&!showConfirm(`"${scenarios[activeScenarioIdx].name}" has edits that are not saved to it. Switch anyway? (Your edits stay in the live plan only if you go back to it.)`))return;
   caseMenuClose();loadScenario(i);
 }
 function caseLive(){
-  if(activeScenarioIdx>=0&&scenarioDirty&&!showConfirm(`"${scenarios[activeScenarioIdx].name}" has edits that are not saved to it. Go back to the live plan anyway? The edits will be lost.`))return;
+  if(activeScenarioIdx>=0&&caseReallyEdited()&&!showConfirm(`"${scenarios[activeScenarioIdx].name}" has edits that are not saved to it. Go back to the live plan anyway? The edits will be lost.`))return;
   caseMenuClose();selectLivePlan();
 }
 async function caseSave(){
@@ -607,9 +607,22 @@ async function caseRestore(i){
     renderCaseControl();savePlannerState();showToast('Case restored','green');
   }catch(e){showToast('Could not restore case: '+e.message,'red')}
 }
+// "Edited" is a fact about the plan, not a flag that something once touched. Anything that calls markDirty
+// (or a flag saved from an earlier session) used to leave a case showing EDITED with nothing changed, so
+// the flag is only believed while the working plan really differs from what the case holds. The comparison
+// is the one a save would make: the same assumptions, stripped of balances, grants and shared lines.
+function caseReallyEdited(){
+  if(!scenarioDirty||activeScenarioIdx<0||!scenarios[activeScenarioIdx])return false;
+  try{
+    const canon=o=>JSON.stringify(o,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().filter(x=>v[x]!==undefined).map(x=>[x,v[x]])):v);
+    const same=canon(keepAssumptions({...P}))===canon(keepAssumptions({...D,...migrateP(scenarios[activeScenarioIdx].params)}));
+    if(same)scenarioDirty=false;
+    return !same;
+  }catch(e){return true}
+}
 function renderCaseControl(){
   const el=document.getElementById('caseControl');if(!el)return;
-  const a=activeScenarioIdx>=0?scenarios[activeScenarioIdx]:null,dirty=!!(a&&scenarioDirty);
+  const a=activeScenarioIdx>=0?scenarios[activeScenarioIdx]:null,dirty=!!(a&&caseReallyEdited());
   const name=a?advEscape(a.name):'Live plan';
   const item=(i,s)=>`<div class="case-item${i===activeScenarioIdx?' on':''}"><button type="button" role="menuitem" class="case-pick" onclick="caseLoad(${i})"><i style="background:${s.color||'var(--accent)'}"></i><span>${advEscape(s.name)}</span>${i===activeScenarioIdx?`<b>${dirty?'edited':'✓'}</b>`:''}</button><button type="button" class="case-x" onclick="caseArchive(${i})" aria-label="Remove ${advEscape(s.name)}" title="Remove (can restore)">✕</button></div>`;
   const menu=!_caseMenu?'':`<div class="case-menu" role="menu" aria-label="Plan cases">

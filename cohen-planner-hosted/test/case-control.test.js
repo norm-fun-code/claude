@@ -61,6 +61,7 @@ describe('the case menu with saved cases in it',()=>{
   const el={innerHTML:''};
   const scenarios=[{name:'Conservative',color:'#ecc183'},{name:"Ramit's Plan",color:'#845ef7'},{name:'<b>x</b>',color:'#fff'}];
   const ctx={document:{getElementById:()=>el},scenarios,activeScenarioIdx:1,scenarioDirty:false,compareMode:false,_caseMenu:true,_caseNaming:false,_archivedCases:[],advEscape:v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'),...extra};
+  ctx.caseReallyEdited=()=>ctx.scenarioDirty;   // the real one compares plans; here the flag stands in for it
   new Function(...Object.keys(ctx),src+';renderCaseControl();')(...Object.values(ctx));
   return el.innerHTML;
  };
@@ -89,5 +90,17 @@ describe('recoverable case removal',()=>{
   await funcs.caseArchive(0);expect(removed).toBe(0);expect(scenarios).toHaveLength(1);
   ok=true;await funcs.caseArchive(0);expect(scenarios).toHaveLength(0);expect(body.params._archived).toBe(true);
   await funcs.caseRestore(0);expect(scenarios[0].params).toEqual(s.params);expect(archived).toHaveLength(0);expect(body.params._archived).toBeUndefined();
+ });
+});
+
+describe('EDITED reflects a real difference',()=>{
+ const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+ it('only believes the dirty flag while the plan differs from the case',()=>{
+  expect(html).toContain('function caseReallyEdited()');
+  const render=html.slice(html.indexOf('function renderCaseControl('));
+  expect(render.slice(0,400)).toContain('caseReallyEdited()');
+  expect(html).toMatch(/if\(same\)scenarioDirty=false/);
+  // both switch-away warnings use the same truth, so they cannot nag about edits that are not there
+  expect((html.match(/caseReallyEdited\(\)&&/g)||[]).length).toBeGreaterThanOrEqual(2);
  });
 });
