@@ -3217,7 +3217,7 @@ function renderOverviewTab(R,P){
   document.getElementById('summaries').innerHTML='';
 }
 
-let _spend=null,_spendLoading=false,_syncStatus=null,_syncPoll=null;
+let _spend=null,_spendLoading=false,_spendRefreshPending=false,_syncStatus=null,_syncPoll=null;
 // The drift view is independent of the category period above it. Keep the chosen smoothing
 // window while the user moves around the app, without turning it into a plan assumption.
 let _spendDriftWindow=12;
@@ -3231,7 +3231,9 @@ function setSpendDriftWindow(months){
 
 async function loadSpending(){
   if(_demoMode)return;
-  if(_spendLoading)return;
+  // Import completion may arrive while an older rollup is still in flight. Queue
+  // one fresh read instead of losing that refresh and leaving old coverage on screen.
+  if(_spendLoading){_spendRefreshPending=true;return}
   _spendLoading=true;
   try{
     const [a,b]=await Promise.all([
@@ -3246,6 +3248,7 @@ async function loadSpending(){
     _spend=a;_syncStatus=b;
   }catch(e){_spend={error:e.message};}
   _spendLoading=false;
+  if(_spendRefreshPending){_spendRefreshPending=false;return loadSpending()}
   if(activeTab==='today'&&(_todayView==='spending'||_todayView==='budget'))render();
 }
 
