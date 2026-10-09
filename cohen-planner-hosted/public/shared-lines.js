@@ -21,7 +21,7 @@
     { key: 'household', label: 'Household & inflation', recommended: false,
       note: 'Same family timeline, spending inflation and one-off costs. With all non-housing groups shared, living costs stay on the NYC budget regardless of housing.',
       lines: ['oneoff'], params: ['planStartYear','numKids','kid1Birth','kid2Birth','kid3Birth','kid4Birth',
-        'expenseInflation','nycFamilyBudget','sharedBudgetIncome', ...Array.from({length:11},(_,i)=>'expenseAdjY'+i)] },
+        'masterBudget','expenseInflation','nycFamilyBudget','sharedBudgetIncome', ...Array.from({length:11},(_,i)=>'expenseAdjY'+i)] },
     { key: 'fixed', label: 'Fixed lines', recommended: true,
       note: 'Insurance, utilities & phone, transit, auto',
       lines: ['insurance', 'utilities', 'transit', 'auto'],
@@ -31,7 +31,7 @@
       lines: ['groceries', 'medical'], params: ['baseGroceries', 'baseMedical'] },
     { key: 'childcare', label: 'Childcare', recommended: true,
       note: 'The monthly rate and when it starts',
-      lines: [], params: ['childcareMonthly', 'childcareStartMonths'] },
+      lines: [], params: ['childcareMonthly', 'childcareStartMonths','childcareInflation'] },
     { key: 'tuition', label: 'Tuition', recommended: true,
       note: 'School ages and tuition inflation',
       lines: [], params: ['yeshivaStartAge', 'yeshivaEndAge', 'kid1YeshivaStartAge', 'tuitionInflation'] },
@@ -61,7 +61,7 @@
   // Normalised: every group present, a plain boolean each. Absent config means nothing shared.
   function config(src) {
     const c = src && src.sharedLines, groups = {};
-    for (const g of GROUPS) groups[g.key] = !!(c && c.groups && c.groups[g.key]);
+    for (const g of GROUPS) groups[g.key] = src?.masterBudget===true ? g.key!=='housing' : !!(c && c.groups && c.groups[g.key]);
     return { groups, any: Object.values(groups).some(Boolean) };
   }
   const restrict = (cfg, keys) => {

@@ -109,7 +109,7 @@
     if (!seg || seg.kind === 'model') return null;
     const infl = ((Number(P.expenseInflation) || 0) * 100).toFixed(1).replace(/\.0$/, '');
     if (seg.kind === 'pct' && M.commonHousehold(P) && category !== EMERGENCY)
-      return `${(seg.value * 100).toFixed(1)}% of the shared reference ${seg.basis === 'gross' ? 'gross' : 'net'} income schedule`;
+      return `${(seg.value * 100).toFixed(1).replace(/\.0$/, '')}% of the shared reference ${seg.basis === 'gross' ? 'gross' : 'net'} income schedule`;
     if (seg.kind === 'pct')
       return `${(seg.value * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.basis === 'gross' ? 'gross' : 'net'} income, every year`;
     const sized = seg.sized ? `${(seg.sized.pct * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.sized.basis === 'gross' ? 'gross' : 'net'} income in ${seg.from}, then ` : '';

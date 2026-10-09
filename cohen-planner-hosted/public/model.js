@@ -209,6 +209,7 @@ function nycKidCost(a){
   return Object.fromEntries(['g','d','s','c','m','x','e','v'].map((k,i)=>[k,b[i+1]]));
 }
 function commonHousehold(p){
+  if(p.masterBudget===true)return true;
   const g=p.sharedLines&&p.sharedLines.groups;
   return !!(g&&['household','fixed','essential','childcare','tuition','choice'].every(k=>g[k]));
 }
@@ -615,6 +616,13 @@ function run(p,rets,compiledGrants){
     const yIdx=yr-sy;
     let {cash:normCash,stock:normStock}=normComp(p,yIdx,grantLedger);
     let eqYear=grantLedger?(grantEngine.usesGrants(p,yr)?grantLedger.years[yr]:grantEngine.manualYear(p,yr,grantLedger.prices)):null;
+    const shock=p._annualStress?.[yr]||{};
+    const normScale=Math.max(0,Math.min(1,Number(shock.normIncomeScale??1)));
+    normCash*=normScale;normStock*=normScale;
+    if(eqYear&&normScale!==1){
+      const scale=o=>Object.fromEntries(Object.entries(o).map(([k,v])=>[k,['stock','cash','market','shares','arg','peg','qcaStock'].includes(k)&&typeof v==='number'?v*normScale:v]));
+      eqYear={...scale(eqYear),events:eqYear.events.map(scale)};
+    }
     const obs=yIdx===0?observedDay(p):null;
     let nancyGross,nancyIsSolo=false,nancySENet=0,nancyOH=0,nancyOffice=0;
     if(yIdx<4&&yr<p.nancyRampYear){nancyGross=p['nancyW2Y'+yIdx]??100000}
@@ -649,7 +657,7 @@ function run(p,rets,compiledGrants){
     // the first, and 1 in the first year too unless the plan says when it was observed.
     const stub=yIdx===0?yearRemaining(p):1;
     const ctcKids=kids.filter(k=>yr>=k&&(yr-k)<17).length;
-    const taxP={...p,_normW2:normW2,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0,_nancyOverhead:nancyIsSolo?nancyOH:0};
+    const taxP={...p,pretax401k:p.pretax401k*normScale,pretaxBenefits:p.pretaxBenefits*normScale,_normW2:normW2,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0,_nancyOverhead:nancyIsSolo?nancyOH:0};
     const tax=calcTax(grossIncome,taxP,yr,ctcKids);
     // tax.net nets ALL household tax out of ALL comp (cash + stock). Backing the stock
     // straight out leaves exactly the spendable figure:
@@ -692,7 +700,7 @@ function run(p,rets,compiledGrants){
     // Half-year convention: prior balance compounds a full year, this year's
     // contributions (deposited throughout the year) earn ~half a year of return.
     // Contributions are pro-rated too — the ones already made are inside k401Start.
-    k401=k401*(1+ret)+(p.pretax401k+p.company401kMatch)*stub*(1+ret/2);
+    k401=k401*(1+ret)+(p.pretax401k+p.company401kMatch)*normScale*stub*(1+ret/2);
     const sub=p.housingMode!=='rent'&&yr>=p.homePurchaseYear;
     // Property tax = rate × current home value (appreciates each year). Falls back
     // to legacy flat propTaxBase/homePrice for saved states without a rate.
@@ -743,6 +751,8 @@ function run(p,rets,compiledGrants){
     }
     const itemAdds=planItemsFor(p,yr);
     for(const k of Object.keys(itemAdds.lines))livRaw[k]+=itemAdds.lines[k];
+    const stressCost=Math.max(0,Number(shock.expenseMultiplier??1));
+    for(const k of LIV_KEYS)livRaw[k]*=stressCost;
     const roundParts=(o,f)=>{
       const out={};for(const k of LIV_KEYS)out[k]=Math.round(o[k]*f);
       // Shopping and clothing are one figure in two lines; round the pair together so scaling a
@@ -782,6 +792,7 @@ function run(p,rets,compiledGrants){
     // rather than recovered by dividing totE by stubFrac downstream: that division is off by
     // the rounding on four components, and a total that disagrees with the year beside it by
     // a few hundred dollars is exactly the kind of thing this table exists to rule out.
+    cc*=stressCost;
     const livFullParts=roundParts(livRaw,1);
     const hFull=h,livFull=liv,ccFull=cc;
     if(stub<1){h*=stub;cc*=stub}
@@ -794,6 +805,7 @@ function run(p,rets,compiledGrants){
       const startAge=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;
       if(a>=startAge&&a<=p.yeshivaEndAge)tu+=baseTuit(a)*(1+p.tuitionInflation)**(yr-sy); // C4 fix: yr-sy not yr-2026
     }
+    tu*=stressCost;
     const tuFull=tu;
     if(stub<1)tu*=stub;
     tT+=tu;
@@ -834,7 +846,7 @@ function run(p,rets,compiledGrants){
     const marketNet=eqYear?eqYear.market*(1-vestRate):normStockNet;
     const vestByQuarter=eqYear?Array.from({length:4},(_,q)=>futureEvents.filter(e=>e.quarter===q+1).reduce((s,e)=>s+e.market*(1-vestRate),0)):null;
     const markRate=yIdx>0?(grantLedger?grantLedger.prices[yr].tender/grantLedger.prices[yr-1].tender-1:simplePrices?simplePrices[yr].tender/simplePrices[yr-1].tender-1:0):0;
-    const saleBudget=liquidityModule.raisableInYear(yr,{heldValue:lotsValue(lots)*(1+markRate),vestPerQuarter:normStockNet/4,vestByQuarter},p);
+    const saleBudget=shock.stripeSalesBlocked?0:liquidityModule.raisableInYear(yr,{heldValue:lotsValue(lots)*(1+markRate),vestPerQuarter:normStockNet/4,vestByQuarter},p);
     // Only the vests still AHEAD of the observation date are in play. The ones that already
     // landed were sold or kept months ago, and either way their effect is inside the opening
     // balances — offering them to the waterfall again would fund the rest of the year twice.

@@ -5,7 +5,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const M = require('../public/model.js');
 const B = require('../public/bridge.js');
-const { createHoldingsBridge } = require('../holdings-bridge.js');
+const { createMonarchHoldings } = require('../monarch-holdings.js');
 const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const cockpit = fs.readFileSync(new URL('../public/cockpit.js', import.meta.url), 'utf8');
 const D = vm.runInNewContext('(' + html.match(/const D=(\{[\s\S]*?\n\});/)[1] + ')');
@@ -107,32 +107,27 @@ describe('rolling the year forward', () => {
   });
 });
 
-// ── One upstream request, not one per page load ──────────────────────────
-describe('the holdings bridge', () => {
-  const make = (counter) => createHoldingsBridge({
-    db: { query: async () => ({ rows: [{ data: {} }] }) },
-    env: { NORMOS_URL: 'https://normos.example.com', PLANNER_BRIDGE_TOKEN: 't' },
-    fetchImpl: async () => { counter.n++; return { ok: true, status: 200,
-      json: async () => ({ holdings: [{ ticker: 'VOO', value: 100 }], asOf: new Date().toISOString() }) }; },
-  });
-
-  it('coalesces concurrent callers into one upstream request', async () => {
+// ── Direct Monarch holdings ─────────────────────────────────────────────
+describe('the holdings reader', () => {
+  function make(counter) {
+    const fetchImpl = async function () {
+      counter.n += 1;
+      return { ok: true, status: 200, json: async function () {
+        return { data: { portfolio: { aggregateHoldings: { edges: [
+          { node: { id: 'h', quantity: 1, totalValue: 100, security: { ticker: 'VOO', name: 'Vanguard', type: 'etf' } } }
+        ] } } } };
+      } };
+    };
+    return createMonarchHoldings({ db: { query: async function () { return { rows: [] }; } }, env: { MONARCH_TOKEN: 'test' }, fetchImpl });
+  }
+  it('coalesces concurrent direct requests', async () => {
     const c = { n: 0 }, h = make(c);
     await Promise.all([h('1M'), h('1M'), h('1M')]);
     expect(c.n).toBe(1);
   });
-
-  it('serves the window NormOS itself honours, instead of re-asking every page load', async () => {
-    // The overview endpoint abandons this call at 1.5s while the bridge allows 60s; uncached,
-    // that paid for an upstream read on every load and threw the answer away.
+  it('caches a period and separates periods', async () => {
     const c = { n: 0 }, h = make(c);
-    await h('1M'); await h('1M'); await h('1M');
-    expect(c.n).toBe(1);
-  });
-
-  it('keeps periods apart', async () => {
-    const c = { n: 0 }, h = make(c);
-    await h('1M'); await h('3M');
+    await h('1M'); await h('1M'); await h('3M');
     expect(c.n).toBe(2);
   });
 });

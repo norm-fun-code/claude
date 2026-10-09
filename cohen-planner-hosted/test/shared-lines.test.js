@@ -8,7 +8,7 @@ const S=require('../public/shared-lines.js');
 const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
 const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
 const D=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
-const plan=(o)=>({...D,planStartYear:2026,observedOn:null,...o});
+const plan=(o)=>({...D,masterBudget:false,planStartYear:2026,observedOn:null,...o});
 const on=(...g)=>({groups:Object.fromEntries(g.map(k=>[k,true]))});
 const at=(R,y)=>R.find(r=>r.yr===y);
 

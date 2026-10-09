@@ -160,15 +160,22 @@ async function initSchema() {
     );
   `);
 
-  // A credential kept after the code that used it is gone is a credential nobody is
-  // watching. The planner no longer authenticates to Monarch at all — balances come from
-  // the NormOS account bridge — so the stored Monarch OAuth grant and any session cached
-  // beside the bridge snapshot are deleted here rather than left behind in the database.
-  //
-  // 'monarch_bridge' itself stays: it holds the last account snapshot and the paused flag,
-  // which are data, not credentials. Only the `token` key inside it goes.
+  // Migrate only saved observations and pause preference; never read the retired bridge again.
   await pool.query("DELETE FROM oauth_tokens WHERE key = 'monarch'");
-  await pool.query("UPDATE oauth_tokens SET data = data - 'token' WHERE key = 'monarch_bridge' AND data ? 'token'");
+  await pool.query(`INSERT INTO oauth_tokens (key,data)
+    SELECT 'monarch_accounts_cache',data-'token' FROM oauth_tokens WHERE key='monarch_bridge'
+    ON CONFLICT (key) DO NOTHING`);
+  await pool.query("DELETE FROM oauth_tokens WHERE key='monarch_bridge'");
+  // Preserve the live plan's income reference before sharing percentage budget rules.
+  const saved=(await pool.query('SELECT state FROM planner_state WHERE id=1')).rows[0]?.state;
+  if(saved?.P&&saved.P.masterBudget!==true){
+    const P=require('./public/plan-migrate').migrateP(saved.P);
+    let refs=P.sharedBudgetIncome;
+    if(!refs||!Object.keys(refs).length)refs=Object.fromEntries(require('./public/model').run(P).R.map(r=>[r.yr,{net:r.netTC,gross:r.gross}]));
+    await pool.query(`UPDATE planner_state SET state=jsonb_set(state,'{P}',$1::jsonb)
+      WHERE id=1 AND state->'P'=$2::jsonb`,[JSON.stringify({...saved.P,masterBudget:true,sharedBudgetIncome:refs}),JSON.stringify(saved.P)]);
+  }
+
 }
 
 module.exports = { pool, query: (...args) => pool.query(...args), initSchema };

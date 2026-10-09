@@ -141,6 +141,8 @@ function renderCockpit(R){
     _cpDeltaCtx.gapParts=gapParts;
   }
 
+  const cash=PlannerStress.cashMetrics(current,available?Number(s.accessible)||0:Number(P.startingLiquid)||0);
+  const _flowMonthly=current.flowMonthly; // modeled monthly rate used by every margin surface
   const metric=(title,value,detail,action)=>`<button class="cp-metric" onclick="cockpitGo('${action}')"><span>${title}</span><strong>${value}</strong><small>${detail}</small></button>`;
   // The hero must never render a dash. When accounts are unreachable the PLAN still
   // knows a net worth, so show that and let the provenance chip carry the doubt.
@@ -178,10 +180,11 @@ function renderCockpit(R){
       })()
       }${metric('Vested Stripe',available?money(s.stripeVested):money(selected.sEnd),'Private equity · sale windows apply','stripe')
       }${metric('Retirement',available?money(s.byClass?.retirement?.total):money(selected.k401),cockpitExRet?'Locked until 59½ · NOT in the figure above':available?'Locked until retirement age':'Projected · accounts unavailable','holdings')
-      }${metric(`${current.yr} monthly margin`,money(current.flowMonthly),'All after-tax pay less all spending','cashflow')}</div>
+      }${metric(`${current.yr} cash margin /month`,money(cash.cashMargin),'Cash pay after tax less spending · excludes unsold stock','cashflow')}</div>
     </section>
     </section>
 
+    <section class="cp-card" aria-label="Cash runway and required Stripe sales"><div class="cp-metrics">${metric('Liquid runway · no income',cash.runwayMonths===null?'—':cash.runwayMonths.toFixed(1)+' months','Cash + taxable ÷ modeled monthly spending · no investment growth','overview')}${metric(`${current.yr} projected Stripe sales`,money(cash.stripeGrossSales),`Gross sales ${cash.periodMonths<12?'for the remaining year':'for the year'} · funding needs and chosen policy`,'stripe')}</div><p>Cash margin uses whole-year pay and spending divided by 12. Runway assumes all income stops; taxable investments can fluctuate. Retirement and private stock are excluded.</p></section>
     <div class="cp-workspace"><div class="cp-main-column">
       <section class="cp-register" data-tense="ahead">
         <div class="cp-register-head">

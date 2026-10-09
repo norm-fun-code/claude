@@ -76,7 +76,7 @@
     //
     // This used to drop every parent, on the assumption that the children were in the data.
     // Nothing set that flag and nothing checked it, so when the feed carries parents only —
-    // which is what the NormOS bridge delivers — the money left the totals in silence. It
+    // which is what the direct Monarch sync delivers — the money left the totals in silence. It
     // showed up as one category short: rent $37,494 against Monarch's $43,189, everything
     // else agreeing to the cent, and no line anywhere saying $5,695 had been set aside.
     //

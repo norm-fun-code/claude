@@ -334,7 +334,7 @@
 @media(max-width:760px){.cp-chart{height:240px}.cp-pins{gap:5px}}
 
 /* ═══ HEADER ═══
-   It showed "Waiting for NormOS account sync", "Enable NormOS Sync" and "✓ Synced" at the
+   It showed "Waiting for Monarch account sync", "Enable Monarch Sync" and "✓ Synced" at the
    same moment — three contradictory claims about one thing. One status object now, and
    the buttons beside it recede so the brand and the page headline carry the weight. */
 .hdr-right{align-items:center;gap:var(--sp-1)}

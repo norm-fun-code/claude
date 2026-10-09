@@ -23,11 +23,14 @@ const Model = require('./public/model.js');
 const { run: runModel } = Model;
 const { migrateP } = require('./public/plan-migrate.js');
 const { createMonarchLive } = require('./monarch-live');
-const monarchLive = createMonarchLive({ db });
+const monarchClient = require('./monarch-client').createMonarchClient({db});
+const monarchLive = createMonarchLive({ db,client:monarchClient });
+const readHoldings = require('./monarch-holdings').createMonarchHoldings({db,client:monarchClient});
 const { createMonarchSync } = require('./monarch-sync');
 // Transaction imports read Monarch directly; balance and holding transports are independent.
-const monarchTransactions = require('./monarch-transactions').createMonarchTransactions({ db });
+const monarchTransactions = require('./monarch-transactions').createMonarchTransactions({ db,client:monarchClient });
 const monarchSync = createMonarchSync({ db, live: monarchTransactions });
+const monarchJobs=require('./monarch-jobs').createMonarchJobs({db,live:monarchLive,holdings:readHoldings,sync:monarchSync});
 const Spending = require('./public/spending.js');
 const Accounts = require('./public/accounts.js');
 const Snapshots = require('./public/snapshots.js');
@@ -378,7 +381,7 @@ app.get('/model.js', requireAuthOrDemo, (req, res) => {
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
-for (const asset of ['planner-time.js', 'stripe-grants.js', 'stripe-grants-ui.js', 'cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'year-end.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js', 'demo-data.js', 'rent-buy.js', 'income-share.js', 'budget.js', 'suggest.js', 'shared-lines.js']) {
+for (const asset of ['planner-time.js', 'stripe-grants.js', 'stripe-grants-ui.js', 'cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'year-end.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js', 'demo-data.js', 'rent-buy.js', 'income-share.js', 'budget.js', 'suggest.js', 'shared-lines.js', 'stress-tests.js']) {
   app.get('/' + asset, requireAuthOrDemo, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -492,17 +495,10 @@ app.get('/api/debug/db', requireDebug, async (req, res) => {
   }
 });
 
-// The planner holds no Monarch credential of any kind. What stood here was the retired MCP
-// OAuth flow — dynamic client registration, an authorize/callback pair, a refresh-token
-// rotation guard and a JSON-RPC transport — all of it keeping a Monarch session in
-// oauth_tokens and speaking to api.monarch.com directly. Balances come from the NormOS
-// account bridge now, so none of it has anything left to authenticate.
-
-
-
+// All financial reads share one server-side Monarch session.
 app.get('/api/monarch-status', requireAuth, async (req, res) => {
   try { res.set('Cache-Control', 'no-store').json(await monarchLive.status()); }
-  catch { res.status(503).json({ connected: false, error: 'NormOS connection unavailable' }); }
+  catch { res.status(503).json({ connected: false, error: 'Monarch connection unavailable' }); }
 });
 app.post('/api/monarch-enable', requireAuth, async (req, res) => {
   try { await monarchLive.setEnabled(true); res.json({ ok: true }); }
@@ -520,14 +516,14 @@ app.post('/api/monarch-disconnect', requireAuth, async (req, res) => {
 let backfillJob = null;
 let incrementalRunning = false;
 app.post('/api/monarch/sync/backfill', requireAuth, async (req, res) => {
-  if (backfillJob || incrementalRunning) return res.status(409).json({ error: 'An import is already running.', running: true });
+  if (backfillJob || incrementalRunning || monarchJobs.running) return res.status(409).json({ error: 'An import is already running.', running: true });
   const today = PlannerTime.day();
   const months = Math.min(60, Math.max(1, Number(req.body?.months) || 24));
   const start = PlannerTime.day(new Date(Date.now() - months * 30.44 * 864e5));
   const startDate = req.body?.startDate || start;
   const endDate = req.body?.endDate || today;
 
-  backfillJob = (async () => {
+  backfillJob = monarchJobs.execute(async () => {
     try {
       // Categories first: without group.type every transaction classifies as an expense,
       // which would silently count transfers and card payments as spending.
@@ -536,18 +532,17 @@ app.post('/api/monarch/sync/backfill', requireAuth, async (req, res) => {
       try { await monarchSync.syncBudgets({ startDate, endDate }); } catch (e) { /* budgets are optional */ }
       return r;
     } finally { backfillJob = null; }
-  })();
+  });
   backfillJob.catch(() => {}); // errors are reported through status, not an unhandled rejection
 
   res.status(202).json({ started: true, startDate, endDate });
 });
 
 app.post('/api/monarch/sync/incremental', requireAuth, async (req, res) => {
-  if (backfillJob || incrementalRunning) return res.status(409).json({ error: 'An import is already running.', running: true });
+  if (backfillJob || incrementalRunning || monarchJobs.running) return res.status(409).json({ error: 'An import is already running.', running: true });
   incrementalRunning = true;
   try {
-    await monarchSync.syncCategories();
-    res.json(await monarchSync.incremental({ lookbackDays: Number(req.body?.lookbackDays) || 45 }));
+    res.json(await monarchJobs.execute(async()=>{await monarchSync.syncCategories();return monarchSync.incremental({lookbackDays:Number(req.body?.lookbackDays)||45});}));
   } catch (err) { res.status(503).json({ error: err.message }); }
   finally { incrementalRunning = false; }
 });
@@ -555,8 +550,8 @@ app.post('/api/monarch/sync/incremental', requireAuth, async (req, res) => {
 app.get('/api/monarch/sync/status', requireAuth, async (req, res) => {
   try {
     const st = await monarchSync.status();
-    res.json({ ...st, running: !!backfillJob || incrementalRunning });
-  } catch (err) { res.status(503).json({ error: err.message, running: !!backfillJob || incrementalRunning }); }
+    res.json({ ...st, automatic:await monarchJobs.status(), running: !!backfillJob || incrementalRunning || monarchJobs.running });
+  } catch (err) { res.status(503).json({ error: err.message, running: !!backfillJob || incrementalRunning || monarchJobs.running }); }
 });
 
 // Classified, aggregated spending. The accounting lives in public/spending.js and runs the
@@ -646,7 +641,7 @@ app.get('/api/accounts/overview', requireAuth, async (req, res) => {
       holdings=portfolio.holdings;
       caps.holdings={available:true,detail:`${holdings.length} positions${portfolio.stale?' · last saved snapshot':''}`,asOf:portfolio.asOf};
     } catch {
-      caps.holdings={available:false,detail:'Individual holdings could not be refreshed from NormOS.',asOf:null};
+      caps.holdings={available:false,detail:'Individual holdings could not be refreshed from Monarch.',asOf:null};
     }
 
     res.json({
@@ -802,7 +797,7 @@ app.get('/api/monarch-diagnostics', requireAuth, async (req, res) => {
   }
 });
 
-const readHoldings = require('./holdings-bridge').createHoldingsBridge({db});
+
 app.get('/api/monarch-investments', requireAuth, async (req,res) => {
   res.set('Cache-Control','no-store');
   const period=req.query.period||'1M';
@@ -830,7 +825,7 @@ async function getMonarchAdvisorTools() {
   const status = await monarchLive.status();
   return status.connected ? [{
     name: 'monarch_GetAccounts',
-    description: 'Read the latest Monarch account balances through NormOS. Report the asOf time and stale/warning fields; these are last-observed balances, not real-time bank updates. Account types are not provided. Do not invent holdings or transactions.',
+    description: 'Read the latest Monarch account balances directly from Monarch. Report the asOf time and stale/warning fields; these are last-observed balances, not real-time bank updates. Account types come from Monarch. Do not invent holdings or transactions.',
     input_schema: { type: 'object', properties: {}, required: [] },
   }] : [];
 }
@@ -1021,7 +1016,7 @@ function extractCashflowTotal(obj) {
 
 // YTD cash flow (Jan 1 → today): income and expense totals
 app.get('/api/monarch-cashflow', requireAuth, (req, res) => {
-  res.status(503).json({ error: 'YTD cash flow is not available through the NormOS account sync. No estimate has replaced it.' });
+  res.status(503).json({ error: 'YTD cash flow is not available through the Monarch account sync. No estimate has replaced it.' });
 });
 
 // ── Snapshots (annual history) ──────────────────────────────────────────────
@@ -1751,7 +1746,7 @@ app.post('/api/advisor/stream', requireAuth, advisorLimiter, async (req, res) =>
 
   try {
     // Give the advisor live read-only access to Monarch when the user has connected it.
-    const accessToken = true; // NormOS bridge handles server-side authentication.
+    const accessToken = true; // The shared Monarch client handles server-side authentication.
     const monarchTools = await withTimeout(getMonarchAdvisorTools(accessToken), 7000, []);
     const nowISO = PlannerTime.day();
     const grounding = advisorGrounding(nowISO, TaxRules.staleness(nowISO));
@@ -1919,7 +1914,7 @@ Workflow: understand what he's asking → set_param for each change → run_proj
 
   // Live read-only Monarch access (same tools as the normal chat) so the AI can ground
   // its proposals in real balances, spending and holdings — not just plan assumptions.
-  const monarchAccessToken = true; // NormOS bridge handles server-side authentication.
+  const monarchAccessToken = true; // The shared Monarch client handles server-side authentication.
   const monarchTools = await withTimeout(getMonarchAdvisorTools(monarchAccessToken), 7000, []);
   const fullSystemPrompt = agenticSystemPrompt + (monarchTools.length ? `
 
@@ -2178,6 +2173,7 @@ async function initSchemaWithRetry(retries = 5, delayMs = 3000) {
       // household, housing, account or other scenario assumptions.
       const compUpdate = await require('./audited-comp-scenarios').applyAuditedCompScenarios(db.pool);
       console.log('DB schema ready; audited comp scenarios:', JSON.stringify(compUpdate));
+      monarchJobs.start();
       return;
     } catch (err) {
       console.error(`DB schema init attempt ${i + 1}/${retries} failed:`, err.message);
