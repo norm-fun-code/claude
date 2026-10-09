@@ -26,7 +26,8 @@ const { createMonarchLive } = require('./monarch-live');
 const monarchLive = createMonarchLive({ db });
 const { createMonarchSync } = require('./monarch-sync');
 // Transaction imports read Monarch directly; balance and holding transports are independent.
-const monarchSync = createMonarchSync({ db, live: require('./monarch-transactions').createMonarchTransactions({ db }) });
+const monarchTransactions = require('./monarch-transactions').createMonarchTransactions({ db });
+const monarchSync = createMonarchSync({ db, live: monarchTransactions });
 const Spending = require('./public/spending.js');
 const Accounts = require('./public/accounts.js');
 const Snapshots = require('./public/snapshots.js');
@@ -150,6 +151,23 @@ function requireAuth(req, res, next) {
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Not authenticated' });
   res.redirect('/login');
 }
+
+// One-time Monarch verification stays behind the planner login and a session-bound nonce.
+app.get('/monarch-reconnect', requireAuth, (req,res)=>{
+  req.session.monarchVerificationNonce=require('node:crypto').randomBytes(32).toString('hex');
+  res.set('Cache-Control','no-store').type('html').send(fs.readFileSync(path.join(__dirname,'public','monarch-reconnect.html'),'utf8').replace('__NONCE__',req.session.monarchVerificationNonce));
+});
+const monarchVerificationLimiter=rateLimit({windowMs:15*60*1000,max:5,message:{error:'Too many verification attempts. Try again in 15 minutes.'},standardHeaders:true,legacyHeaders:false});
+app.post('/api/monarch-session/verify', requireAuth, monarchVerificationLimiter, async(req,res)=>{
+  if(!req.session.monarchVerificationNonce||req.body?.nonce!==req.session.monarchVerificationNonce)return res.status(403).json({error:'Open the secure Monarch reconnection screen again.'});
+  try {
+    await monarchTransactions.verifySession(req.body?.code,req.body?.method);
+    delete req.session.monarchVerificationNonce;
+    let importError=null;
+    try {await monarchSync.syncCategories();const result=await monarchSync.incremental({lookbackDays:45});importError=result.error||null;}catch(e){importError=e.message;}
+    res.set('Cache-Control','no-store').json({verified:true,importError});
+  }catch(e){res.status(400).set('Cache-Control','no-store').json({error:e.message});}
+});
 
 // Debug/introspection endpoints are off by default; set ENABLE_DEBUG_ENDPOINTS=1
 // to expose them (they leak schema/host info and shouldn't run in production).

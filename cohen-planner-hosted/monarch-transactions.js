@@ -61,6 +61,6 @@ function createMonarchTransactions({db,env=process.env,fetchImpl=fetch}={}) {
       throw new Error('Monarch returned no usable categories.');
     return data.categories;
   }
-  return {transactionsPage,categories,PAGE_SIZE,source:'monarch-direct'};
+  return {transactionsPage,categories,PAGE_SIZE,source:'monarch-direct',verifySession:session.verify};
 }
 module.exports={createMonarchTransactions,PAGE_SIZE};

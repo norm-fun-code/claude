@@ -6,6 +6,16 @@ const {createMonarchTransactions}=require('../monarch-transactions');
 const env={MONARCH_TOKEN:'expired',MONARCH_EMAIL:'example@example.com',MONARCH_PASSWORD:'secret'};
 function database(){let data;return {query:vi.fn(async(sql,args)=>{if(sql.startsWith('SELECT'))return {rows:data?[{data}]:[]};data=JSON.parse(args[1]);return {rows:[]}})}}
 const ok=body=>({ok:true,status:200,json:async()=>body});
+it('accepts one-time verification on the same trusted device without storing or returning the code',async()=>{
+ const db=database();const fetchImpl=vi.fn(async(url,opts)=>JSON.parse(opts.body).email_otp?ok({token:'verified'}):{status:403,ok:false,json:async()=>({error_code:'email_otp_required'})});
+ const session=createMonarchSession({db,env,fetchImpl});await expect(session.renew(0)).rejects.toThrow('account verification');
+ expect(await session.verify('123456','email')).toEqual({verified:true});
+ expect(fetchImpl.mock.calls[1][1].headers['device-uuid']).toBe(fetchImpl.mock.calls[0][1].headers['device-uuid']);
+ expect(JSON.parse(fetchImpl.mock.calls[1][1].body).email_otp).toBe('123456');
+ expect(db.query.mock.calls.filter(([sql])=>sql.startsWith('INSERT')).map(([,args])=>args[1]).join('')).not.toContain('123456');
+ expect((await createMonarchSession({db,env,fetchImpl}).current()).headers.Authorization).toBe('Token verified');
+ await expect(session.verify('invalid')).rejects.toThrow('six-digit');expect(fetchImpl).toHaveBeenCalledTimes(2);
+});
 it('renews a rejected request once, retries it and preserves the session across restarts',async()=>{
  const db=database();const fetchImpl=vi.fn(async(url,opts)=>{
   if(url.endsWith('/auth/login/'))return ok({token:'renewed'});

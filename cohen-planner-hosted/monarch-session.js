@@ -34,12 +34,12 @@ function createMonarchSession({db,env=process.env,fetchImpl=fetch,now=Date.now}=
     } else throw new Error('Direct Monarch import is not configured. Set MONARCH_TOKEN or MONARCH_COOKIE on the planner service.');
     return {headers,generation};
   }
-  async function renew(rejectedGeneration) {
+  async function renew(rejectedGeneration,verification) {
     await load();
     if(rejectedGeneration!==generation)return;
     if(renewing)return renewing;
     if(!env.MONARCH_EMAIL||!env.MONARCH_PASSWORD)throw new Error('Monarch session expired; automatic renewal needs the planner’s saved Monarch login.');
-    if(state.lastAttempt!=null&&now()-state.lastAttempt<COOLDOWN)throw new Error((state.lastFailure||'Monarch automatic renewal was recently attempted.')+' Automatic retry is paused for five minutes.');
+    if(!verification&&state.lastAttempt!=null&&now()-state.lastAttempt<COOLDOWN)throw new Error((state.lastFailure||'Monarch automatic renewal was recently attempted.')+' Automatic retry is paused for five minutes.');
     renewing=(async()=>{
       const deviceUuid=state.deviceUuid||randomUUID();
       await save({...state,deviceUuid,lastAttempt:now()});
@@ -47,7 +47,7 @@ function createMonarchSession({db,env=process.env,fetchImpl=fetch,now=Date.now}=
       let response;
       try {
         response=await fetchImpl(LOGIN,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','Client-Platform':'web','device-uuid':deviceUuid,Origin:'https://app.monarch.com'},
-          body:JSON.stringify({username:env.MONARCH_EMAIL,password:env.MONARCH_PASSWORD,trusted_device:true,supports_mfa:true,supports_email_otp:true}),
+          body:JSON.stringify({username:env.MONARCH_EMAIL,password:env.MONARCH_PASSWORD,trusted_device:true,supports_mfa:true,supports_email_otp:true,...(verification?{[verification.method==='totp'?'totp':'email_otp']:verification.code}:{})}),
           cache:'no-store',redirect:'error',signal:AbortSignal.timeout(20000)});
       } catch {return fail('Monarch automatic renewal could not reach Monarch. Saved transactions were kept.');}
       if(response.status===429)return fail('Monarch rate-limited automatic renewal. Saved transactions were kept; retry later.');
@@ -62,6 +62,11 @@ function createMonarchSession({db,env=process.env,fetchImpl=fetch,now=Date.now}=
     })().finally(()=>{renewing=null});
     return renewing;
   }
-  return {current,renew};
+  async function verify(code,method='email') {
+    if(!/^[0-9]{6}$/.test(code||'')||!['email','totp'].includes(method))throw new Error('Enter a valid six-digit Monarch verification code.');
+    await renew(generation,{code,method});
+    return {verified:true};
+  }
+  return {current,renew,verify};
 }
 module.exports={createMonarchSession};
