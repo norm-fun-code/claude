@@ -31,7 +31,7 @@ it('does not retry failed verification repeatedly, persists the cooldown, or exp
  const db=database();const fetchImpl=vi.fn(async()=>({status:403,ok:false,json:async()=>({error_code:'email_otp_required',message:'secret'})}));
  const session=createMonarchSession({db,env,fetchImpl,now:()=>100});
  await expect(session.renew(0)).rejects.toThrow('account verification');
- const restart=createMonarchSession({db,env,fetchImpl,now:()=>101});await expect(restart.renew(0)).rejects.toThrow('five minutes');expect(fetchImpl).toHaveBeenCalledTimes(1);
+ const restart=createMonarchSession({db,env,fetchImpl,now:()=>101});await expect(restart.renew(0)).rejects.toThrow('account verification');expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
 it('does not enter a login loop when the renewed session is also rejected',async()=>{
  const db=database();const fetchImpl=vi.fn(async(url)=>url.endsWith('/auth/login/')?ok({token:'bad'}):{status:401,ok:false});

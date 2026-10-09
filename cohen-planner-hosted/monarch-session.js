@@ -39,21 +39,22 @@ function createMonarchSession({db,env=process.env,fetchImpl=fetch,now=Date.now}=
     if(rejectedGeneration!==generation)return;
     if(renewing)return renewing;
     if(!env.MONARCH_EMAIL||!env.MONARCH_PASSWORD)throw new Error('Monarch session expired; automatic renewal needs the planner’s saved Monarch login.');
-    if(state.lastAttempt!=null&&now()-state.lastAttempt<COOLDOWN)throw new Error('Monarch automatic renewal is waiting after a recent attempt. Saved transactions were kept; retry in five minutes.');
+    if(state.lastAttempt!=null&&now()-state.lastAttempt<COOLDOWN)throw new Error((state.lastFailure||'Monarch automatic renewal was recently attempted.')+' Automatic retry is paused for five minutes.');
     renewing=(async()=>{
       const deviceUuid=state.deviceUuid||randomUUID();
       await save({...state,deviceUuid,lastAttempt:now()});
+      async function fail(message) { await save({...state,lastFailure:message});throw new Error(message); }
       let response;
       try {
         response=await fetchImpl(LOGIN,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','Client-Platform':'web','device-uuid':deviceUuid,Origin:'https://app.monarch.com'},
           body:JSON.stringify({username:env.MONARCH_EMAIL,password:env.MONARCH_PASSWORD,trusted_device:true,supports_mfa:true,supports_email_otp:true}),
           cache:'no-store',redirect:'error',signal:AbortSignal.timeout(20000)});
-      } catch {throw new Error('Monarch automatic renewal could not reach Monarch. Saved transactions were kept.');}
-      if(response.status===429)throw new Error('Monarch rate-limited automatic renewal. Saved transactions were kept; retry later.');
+      } catch {return fail('Monarch automatic renewal could not reach Monarch. Saved transactions were kept.');}
+      if(response.status===429)return fail('Monarch rate-limited automatic renewal. Saved transactions were kept; retry later.');
       const body=await response.json().catch(()=>null);
       if(!response.ok||!body?.token) {
-        const verification=body?.mfa_required||body?.email_otp_required||/mfa|otp|verification|two.factor/i.test(String(body?.error_code||''));
-        throw new Error(verification?'Monarch requires account verification before automatic renewal can continue. Saved transactions were kept.':'Monarch rejected automatic session renewal. Account verification or a corrected saved login may be needed. Saved transactions were kept.');
+        const verification=body?.mfa_required||body?.email_otp_required||/mfa|otp|verification|two.factor/i.test(JSON.stringify([body?.error_code,body?.error,body?.detail]));
+        return fail(verification?'Monarch requires account verification before automatic renewal can continue. Saved transactions were kept.':'Monarch rejected automatic session renewal (HTTP '+response.status+'). Account verification or a corrected saved login may be needed. Saved transactions were kept.');
       }
       if(typeof body.token!=='string'||!body.token.trim())throw new Error('Monarch renewal returned no usable session.');
       // Persist before exposing the session; it survives deploys and process restarts.
