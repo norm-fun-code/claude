@@ -84,6 +84,19 @@ describe('A monitor that cannot run says so',()=>{
     expect(out.skipped.some(s=>/3 complete months/.test(s.missing))).toBe(true);
   });
 
+  it('compares spending with the whole planned year, not the part of it still ahead',()=>{
+    // Observed in October, the first projection row only carries the last months of the year, so totE/12
+    // read as a quarter of the real plan and flagged a huge overspend.
+    const ctx=base();
+    ctx.R=[{...ctx.R[0],totE:36000,totEFull:144000}];
+    ctx.spending={completeMonths:['2026-04','2026-05','2026-06','2026-07','2026-08','2026-09'],monthlyExpense:12500};
+    const out=M0.divergence(ctx);
+    expect(out.alerts.filter(a=>a.key.includes('spending'))).toEqual([]);
+    ctx.spending.monthlyExpense=20000;
+    const hot=M0.divergence(ctx).alerts.find(a=>a.key.includes('spending'));
+    expect(hot.title).toContain('$96,000/yr above plan');
+  });
+
   it('counts a crashed check as unknown, never as clear',()=>{
     // A getter that throws stands in for any monitor blowing up on odd data.
     const ctx=base();

@@ -251,14 +251,16 @@
       skipped.push(skip(KIND.DIVERGENCE,SKIP.NO_DATA,'at least 3 complete months of transactions',
         'Spending cannot be compared to plan without a few full months to average.'));
     } else if(R&&R.length&&num(spending.monthlyExpense)!=null){
-      const plannedMonthly=num(R[0].totE)/12;
+      // The first projection row is a part-year once balances are observed mid-year: totE is only what is
+      // left of it. Compare against the whole year, which is what the monthly actuals are an average of.
+      const plannedMonthly=num(R[0].totEFull!=null?R[0].totEFull:R[0].totE)/12;
       const actualMonthly=num(spending.monthlyExpense);
       const delta=(actualMonthly-plannedMonthly)*12;
       if(plannedMonthly>0&&Math.abs(delta)>=materialAbs&&Math.abs(delta)/(plannedMonthly*12)>=materialPct){
         alerts.push(alert(KIND.DIVERGENCE,SEVERITY.WARNING,
           keyOf(KIND.DIVERGENCE,'spending',delta>0?'above':'below'),
           `Spending is running ${usd(Math.abs(delta))}/yr ${delta>0?'above':'below'} plan`,
-          [ev('Plan',usd(plannedMonthly)+'/mo','projection totE ÷ 12'),
+          [ev('Plan',usd(plannedMonthly)+'/mo','full-year projected spending ÷ 12'),
            ev('Actual',usd(actualMonthly)+'/mo',`${spending.completeMonths.length} complete months of transactions`),
            ev('Months averaged',spending.completeMonths.join(', '),'transaction ledger'),
            ev('Annualised difference',usd(delta),'computed')],
