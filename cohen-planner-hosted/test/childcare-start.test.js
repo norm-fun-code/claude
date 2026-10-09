@@ -9,7 +9,7 @@ const T = require('../public/advisor-tools.js');
 const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const D = vm.runInNewContext('(' + html.match(/const D=(\{[\s\S]*?\n\});/)[1] + ')');
 // One child, born 2027, starting school at 3 — so childcare is 2027, 2028, 2029.
-const plan = (over) => ({ ...D, planStartYear: 2026, observedOn: null,
+const plan = (over) => ({ ...D, planStartYear: 2026, observedOn: null, expenseInflation: 0,
   numKids: 1, kid1Birth: 2027, kid1YeshivaStartAge: 3, childcareMonthly: 2800, ...over });
 const care = (over) => Object.fromEntries(M.run(plan(over)).R.filter(r => r.yr <= 2031).map(r => [r.yr, r.cc]));
 

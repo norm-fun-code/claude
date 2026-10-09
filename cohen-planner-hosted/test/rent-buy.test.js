@@ -10,10 +10,10 @@ const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8
 const D=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
 const plan={...D,observedOn:null,planStartYear:2026,planEndYear:2045,homePurchaseYear:2030};
 describe('rent versus buy',()=>{
- it('preserves legacy buy projections and ignores rental inflation in buy mode',()=>{
-  const legacy={...plan};delete legacy.housingMode;delete legacy.rentInflation;
-  expect(M.run(plan)).toEqual(M.run(legacy));
-  expect(M.run({...plan,rentInflation:.09})).toEqual(M.run(plan));
+ it('supports explicitly preserving legacy flat rent before buying',()=>{
+  const legacy={...plan,rentInflatesBeforePurchase:false};delete legacy.housingMode;delete legacy.rentInflation;
+  expect(M.run({...plan,rentInflatesBeforePurchase:false})).toEqual(M.run(legacy));
+  expect(M.run({...plan,rentInflation:.09,rentInflatesBeforePurchase:false})).toEqual(M.run(legacy));
  });
  it('compounds rent through peak years without purchase costs or equity',()=>{
   const p={...plan,housingMode:'rent',nycRent:6000,rentInflation:.03};

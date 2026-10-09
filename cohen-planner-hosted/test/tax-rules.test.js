@@ -133,7 +133,9 @@ describe('The four discrepancies this validation actually found',()=>{
     const y0=M.calcTax(500000,p,2026,0);
     const y20=M.calcTax(500000,p,2046,0);
     // Same nominal income 20 years later: federal falls (indexed brackets), New York does not.
-    expect(y20.state).toBe(y0.state);
+    // The final enacted 0.1-point cut arrives in 2027; thresholds then stay fixed.
+    expect(y20.state).toBe(M.calcTax(500000,p,2027,0).state);
+    expect(y20.state).toBe(y0.state); // fully recaptured at this income
     expect(y20.city).toBe(y0.city);
     expect(y20.federal).toBeLessThan(y0.federal);
   });

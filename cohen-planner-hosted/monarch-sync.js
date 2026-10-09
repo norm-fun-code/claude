@@ -231,7 +231,12 @@ function createMonarchSync({ db, live, now = Date.now }) {
   async function syncCategories() {
     needFeed('categories');
     await initSchema();
-    const cats = await live.categories();
+    let cats;
+    try { cats = await live.categories(); }
+    catch (err) {
+      await saveState({ lastError: { at: new Date(now()).toISOString(), message: err.message, window: 'categories' } });
+      throw err;
+    }
     for (const c of cats) {
       await db.query(
         `INSERT INTO monarch_categories (id,name,group_id,group_name,group_type,system_category,is_disabled,synced_at)

@@ -113,6 +113,13 @@ describe('monthChunks', () => {
 
 describe('transaction sync', () => {
   let db, sync;
+  it('persists category-fetch failures for detached import status without erasing transactions', async () => {
+    db = fakeDb();
+    sync = createMonarchSync({ db, live: { categories: async () => { throw new Error('Categories unavailable'); } } });
+    await expect(sync.syncCategories()).rejects.toThrow('Categories unavailable');
+    expect((await sync.status()).lastError).toMatchObject({ message: 'Categories unavailable', window: 'categories' });
+    expect(db.tx.size).toBe(0);
+  });
   const setup = (rows, opts) => { db = fakeDb(); sync = createMonarchSync({ db, live: fakeLive(rows, opts) }); };
 
   it('pages through a window rather than reading only the first page', async () => {

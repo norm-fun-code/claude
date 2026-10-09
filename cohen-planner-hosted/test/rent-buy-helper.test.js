@@ -17,7 +17,8 @@ describe('rent-or-buy helper',()=>{
   expect(s.buy.rentInflatesBeforePurchase).toBe(true);
   expect(plan.rentInflatesBeforePurchase).toBeUndefined();
   const flat=M.run(plan).R.find(r=>r.yr===2029),risen=M.run(s.buy).R.find(r=>r.yr===2029);
-  expect(risen.hFull).toBeGreaterThan(flat.hFull);
+  expect(risen.hFull).toBe(flat.hFull);
+  expect(risen.hFull).toBeGreaterThan(plan.nycRent*12);
   // Before the purchase the two cases are the same household.
   const c=RB.compare(plan,M.run);
   for(const r of c.rows.filter(r=>r.yr<2030)){expect(r.buy).toBe(r.rent);expect(r.buyOut).toBe(r.rentOut)}

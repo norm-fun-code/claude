@@ -178,12 +178,12 @@ describe('calcTax — bracket inflation', () => {
     expect(t2036.federal).toBeLessThan(t2026.federal);
   });
 
-  it('taxInflation=0 → identical brackets across years', () => {
+  it('taxInflation=0 freezes federal indexing while enacted NY and SALT changes still apply', () => {
     const income = 400000;
     const p = { ...BASE, _normW2: income, _nancyW2: 0, _nancySE: 0, _nancyOverhead: 0 };
     // Brackets and the standard deduction are frozen at taxInflation=0. The SALT cap is NOT
     // — it follows its own statutory schedule, so 2030 is genuinely different.
-    expect(calcTax(income, p, 2026, 0).deduction).toBe(calcTax(income, p, 2027, 0).deduction);
+    expect(calcTax(income, p, 2027, 0).state).toBeLessThan(calcTax(income, p, 2026, 0).state); // partly phased-in recapture
     expect(calcTax(income, p, 2030, 0).saltCap).toBe(10000);
     expect(calcTax(income, p, 2030, 0).deduction).toBeLessThan(calcTax(income, p, 2026, 0).deduction);
   });

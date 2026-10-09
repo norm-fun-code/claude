@@ -5632,7 +5632,7 @@ function runGoalsRiskAnalysis(){
       <div class="pf-quad">
         ${stat('Liquid floor (P10)',fmt(mc.liqFloorP10),'lowest liquid, bad case',floorCol)}
         ${stat('Cash-crunch risk',ruin.toFixed(0)+'%',ruin<5?'very unlikely':ruin<15?'watch closely':'elevated',ruinCol)}
-        ${dpFail!=null?stat('Down-payment risk',dpFail.toFixed(0)+'%',`can't cover ${P.homePurchaseYear} DP`,dpCol):stat('Down-payment risk','—','no purchase set','var(--t3)')}
+        ${dpFail!=null?stat('Closing-cash gap',dpFail.toFixed(0)+'%',`prior-year liquid savings below ${P.homePurchaseYear} cash to close; excludes Stripe sales`,dpCol):stat('Down-payment risk','—','no purchase set','var(--t3)')}
         ${stat('Volatility',Math.round((mc.vol)*100)+'%','annual std dev','var(--t3)')}
       </div>
       <div style="font-size:9px;color:var(--t3);margin-top:8px;line-height:1.5">${mc.mode==='historical'?'Historical bootstrap: each trial replays a real contiguous run of actual annual S&P 500 returns (1928–2023, dividends included), preserving how bad decades cluster.':`Lognormal returns calibrated so the simulated compounded growth matches your ${Math.round((P.investReturn||.06)*100)}% assumption.`} "Cash-crunch risk" = share of scenarios where liquid goes negative at any point; "down-payment risk" = share where liquid can't cover the down payment the year before purchase.</div>

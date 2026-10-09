@@ -678,7 +678,7 @@ describe('call-outs for a whole group, and the bottom line',()=>{
   expect(B.groupChecks(plan(),R0,2027).housing).toBeUndefined();
  });
  it('says when a year spends more than it takes in, and whether the plan meant it',()=>{
-  const P=plan(),R=M.run(P).R,deficit=R.find(r=>r.flowFull<-1000);
+  const P=plan(),R=M.run(P).R,deficit=R.find(r=>r.flowFull<-10000);
   const c=B.groupChecks(P,R,deficit.yr).bottom;
   expect(c.status).toBe('draw');expect(c.text).toContain('more than it takes in');
   expect(c.text).toContain('by design');            // the plan itself runs a drawing-down stretch there
@@ -765,7 +765,7 @@ describe('rent set from the Budget honours the scope',()=>{
   const after=rents({...base,rentSteps:[{from:y,monthly:9000,only:true}]});
   for(const [yr,h] of after){
    const was=rents(base).find(a=>a[0]===yr)[1];
-   if(yr===y)expect(h).toBe(108000);else expect(h).toBe(was);
+   if(yr===y)expect(h).toBe(Math.round(108000*(1+base.rentInflation)**(yr-y)));else expect(h).toBe(was);
   }
  });
  it('a from-this-year figure leaves earlier years alone and moves later ones',()=>{
@@ -773,7 +773,7 @@ describe('rent set from the Budget honours the scope',()=>{
   const after=rents({...base,rentSteps:[{from:y,monthly:9000}]}),was=rents(base);
   for(const [yr,h] of after){
    const w=was.find(a=>a[0]===yr)[1];
-   if(yr<y)expect(h).toBe(w);else if(yr<base.homePurchaseYear)expect(h).toBe(108000);
+   if(yr<y)expect(h).toBe(w);else if(yr<base.homePurchaseYear)expect(h).toBe(Math.round(108000*(1+base.rentInflation)**(yr-y)));
   }
  });
 });

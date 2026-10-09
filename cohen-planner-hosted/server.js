@@ -518,8 +518,9 @@ app.post('/api/monarch-disconnect', requireAuth, async (req, res) => {
 // so it runs detached and reports through /status. One at a time: two concurrent backfills
 // would interleave writes over the same windows for no benefit.
 let backfillJob = null;
+let incrementalRunning = false;
 app.post('/api/monarch/sync/backfill', requireAuth, async (req, res) => {
-  if (backfillJob) return res.status(409).json({ error: 'A history import is already running.', running: true });
+  if (backfillJob || incrementalRunning) return res.status(409).json({ error: 'An import is already running.', running: true });
   const today = PlannerTime.day();
   const months = Math.min(60, Math.max(1, Number(req.body?.months) || 24));
   const start = PlannerTime.day(new Date(Date.now() - months * 30.44 * 864e5));
@@ -542,17 +543,20 @@ app.post('/api/monarch/sync/backfill', requireAuth, async (req, res) => {
 });
 
 app.post('/api/monarch/sync/incremental', requireAuth, async (req, res) => {
+  if (backfillJob || incrementalRunning) return res.status(409).json({ error: 'An import is already running.', running: true });
+  incrementalRunning = true;
   try {
-    await monarchSync.syncCategories().catch(() => {});
+    await monarchSync.syncCategories();
     res.json(await monarchSync.incremental({ lookbackDays: Number(req.body?.lookbackDays) || 45 }));
   } catch (err) { res.status(503).json({ error: err.message }); }
+  finally { incrementalRunning = false; }
 });
 
 app.get('/api/monarch/sync/status', requireAuth, async (req, res) => {
   try {
     const st = await monarchSync.status();
-    res.json({ ...st, running: !!backfillJob });
-  } catch (err) { res.status(503).json({ error: err.message, running: !!backfillJob }); }
+    res.json({ ...st, running: !!backfillJob || incrementalRunning });
+  } catch (err) { res.status(503).json({ error: err.message, running: !!backfillJob || incrementalRunning }); }
 });
 
 // Classified, aggregated spending. The accounting lives in public/spending.js and runs the

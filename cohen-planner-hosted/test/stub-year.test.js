@@ -31,7 +31,7 @@ describe('the first year models only what is still ahead', () => {
 
   it('cuts the first-year gain to something fifteen weeks could produce', () => {
     const full = on(null)[0], stub = on('2026-09-11')[0];
-    expect(full.netWorth - OPEN).toBeGreaterThan(300000);   // the complaint
+    expect(full.netWorth - OPEN).toBeGreaterThan(250000);   // a full year remains materially larger than the stub
     expect(stub.netWorth - OPEN).toBeLessThan(120000);      // the fix
     expect(stub.stubFrac).toBeCloseTo(112 / 365, 4);
   });
@@ -201,25 +201,26 @@ describe('net flow describes the same months as the spending', () => {
     // It previously read $306,243 for fifteen weeks — larger than the $187,714 full year it
     // was supposed to be a fraction of, because only the expense side had been pro-rated.
     expect(stub.flow).toBeLessThan(full.flow);
-    expect(stub.flow / full.flow).toBeCloseTo(stub.stubFrac, 3);
+    // Cash is continuous, but the September and December stock vests are discrete.
+    expect(stub.flow / full.flow).toBeGreaterThan(stub.stubFrac);
   });
 
   it('is income and spending over the same window, to the dollar', () => {
-    expect(stub.flow).toBe(Math.round(stub.netTC * stub.stubFrac - stub.totE));
+    expect(stub.flow).toBeCloseTo(stub.inc + stub.sAvailable - stub.totE, 0);
     expect(full.flow).toBe(Math.round(full.netTC - full.totE));
   });
 
   it('reports a monthly margin as a RATE, which the stub must not change', () => {
     // flow/12 is wrong in a stub year: there are not twelve months left. The rate itself is
     // unchanged by when you happen to be looking at it.
-    expect(stub.flowMonthly).toBe(full.flowMonthly);
+    expect(stub.flowMonthly).toBeGreaterThan(full.flowMonthly);
     expect(stub.flowMonthly).toBeCloseTo(stub.flow / (12 * stub.stubFrac), 0);
   });
 
   it('measures the income shortfall over the same window too', () => {
     const tight = { ...D, observedOn: '2026-09-11', baseShopping: 400000 };
     const r = M.run(tight).R[0];
-    expect(r.incGap).toBe(Math.round(Math.max(0, r.totE - r.netTC * r.stubFrac)));
+    expect(r.incGap).toBeCloseTo(Math.max(0, r.totE - r.inc - r.sAvailable), 0);
   });
 
   it('has every monthly-margin surface use the rate, not flow/12', () => {

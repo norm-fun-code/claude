@@ -11,6 +11,8 @@ const FED_BR_2026=[[24800,.10],[100800,.12],[211400,.22],[403550,.24],[512450,.3
 // (Part A), which cut each of the five lowest rates by 0.1 point for 2026 (a further 0.1
 // point lands in 2027). Confirmed against NYS-50-T-NYS (1/26).
 const NYS_BR_2026=[[17150,.0390],[23600,.0440],[27900,.0515],[161550,.0540],[323200,.0590],[2155350,.0685],[5e6,.0965],[25e6,.103],[1e15,.109]];
+const NYS_BR_2027=[[17150,.0380],[23600,.0430],[27900,.0505],[161550,.0530],[323200,.0580],[2155350,.0685],[5e6,.0965],[25e6,.103],[1e15,.109]];
+const NYS_BR_2033=[...NYS_BR_2027.slice(0,6),[1e15,.0882]];
 const NYC_BR_2026=[[21600,.03078],[45000,.03762],[90000,.03819],[1e15,.03876]];
 const SS_CAP_2026=184500;
 const SALT_BASE_2026=40400;
@@ -26,10 +28,25 @@ function bracketTax(income,brackets){
   return t;
 }
 
+// NY Tax Law 601(d-5), (d-6), (d-7): joint resident filers also pay
+// supplemental tax that recaptures lower-bracket benefits as AGI rises.
+function nyRecapture(taxable,agi,yr,tableTax,f=1){
+  if(agi<=107650*f)return 0;
+  if(yr<2033&&agi>25000000*f)return Math.max(0,.109*taxable-tableTax);
+  const cut=yr>=2027;
+  const bands=yr>=2033
+    ?[[27900,161550,0,333,107650],[161550,323200,333,808,161550],[323200,2155350,1141,3393,323200],[2155350,Infinity,4534,42461,2155350]]
+    :[[27900,161550,0,333,107650],[161550,323200,333,cut?808:807,161550],[323200,2155350,cut?1141:1140,cut?3393:3071,323200],[2155350,5000000,cut?4534:4211,60350,2155350],[5000000,25000000,cut?64884:64561,32500,5000000]];
+  if(taxable<=27900*f)return Math.max(0,(cut?.053:.054)*taxable-tableTax)*Math.min(1,(agi-107650*f)/(50000*f));
+  const b=bands.find(([lo,hi])=>taxable>lo*f&&taxable<=hi*f);
+  if(!b)return 0;
+  return b[2]*f+b[3]*f*Math.max(0,Math.min(1,(agi-b[4]*f)/(50000*f)));
+}
+
 function calcTax(grossIncome,p,yr,numKids){
   const sy=p.planStartYear||2026;
   const taxInf=p.taxInflation??0.025;
-  const f=(1+taxInf)**(yr-sy);
+  const f=(1+taxInf)**(yr-2026);
 
   const FED_BR=_scaleBr(FED_BR_2026,f);
   // The federal schedule is indexed by statute. New York's is NOT: § 601 and the NYC
@@ -39,7 +56,7 @@ function calcTax(grossIncome,p,yr,numKids){
   // later year. `indexStateBrackets` exists only so a saved plan can reproduce the old
   // behaviour on request; the default follows the law.
   const sf=(p.indexStateBrackets??false)?f:1;
-  const NYS_BR=_scaleBr(NYS_BR_2026,sf);
+  const NYS_BR=_scaleBr(yr>=2033?NYS_BR_2033:yr>=2027?NYS_BR_2027:NYS_BR_2026,sf);
   const NYC_BR=_scaleBr(NYC_BR_2026,sf);
   const ssCap=Math.round(SS_CAP_2026*f);
   // F4. The OBBBA cap is NOT indexed to general inflation: it grows 1%/yr through 2029 and
@@ -77,11 +94,13 @@ function calcTax(grossIncome,p,yr,numKids){
   // federal itemised total, so there is no circularity in computing it first — and it has to
   // be first, because the SALT deduction is a deduction for taxes actually PAID.
   const nysTaxable=Math.max(0,agi-16050);
-  const stateT=bracketTax(nysTaxable,NYS_BR);
+  const stateTable=bracketTax(nysTaxable,NYS_BR);
+  const stateT=stateTable+nyRecapture(nysTaxable,agi,yr,stateTable,sf);
   const cityT=bracketTax(nysTaxable,NYC_BR);
 
   // ── Itemized deductions ──
-  const saltPhaseout=Math.max(0,(agi-505000)*0.30);
+  const saltThreshold=505000*1.01**Math.max(0,Math.min(2029,yr)-2026);
+  const saltPhaseout=Math.max(0,(agi-saltThreshold)*0.30);
   const saltCap=Math.max(10000,saltBase-saltPhaseout);
   // F4. § 164(a) allows a deduction for eligible taxes PAID OR ACCRUED, and § 164(b)(6) then
   // LIMITS it. Deducting the cap itself handed a household with $2,154 of state and city tax
@@ -94,7 +113,7 @@ function calcTax(grossIncome,p,yr,numKids){
   const saltPaid=stateT+cityT+propertyTaxPaid;
   const saltDeduction=Math.min(saltPaid,saltCap);
   let mortInt=0,deductibleMortInt=0;
-  if(p.housingMode!=='rent'&&yr>=p.homePurchaseYear){
+  if(p.housingMode!=='rent'&&yr>=p.homePurchaseYear&&yr<p.homePurchaseYear+30){
     const mortAmt=p.homePrice*(1-p.downPctg/100);
     const mr=p.mortgageRate/100/12;const n=360;
     // F3. At a zero rate the annuity formula divides by zero and every downstream figure
@@ -117,17 +136,20 @@ function calcTax(grossIncome,p,yr,numKids){
   // ── QBI ──
   let qbi=0;
   if(nancySE>0){
-    const qbiBase=Math.max(0,nancySE-seTaxHalf)*p.nancyQBIRate;
-    // Rev. Proc. 2025-32 § 3.26: the 2026 MFJ band runs 403,500 → 553,500. The previous
-    // 383,900 → 483,900 was the 2024 band, and it was $150K wide, not $100K.
-    const qbiPhaseBase=403500*f;
-    const qbiPhaseTop=553500*f;
-    const qbiBandWidth=(553500-403500)*f;
-    if(agi<qbiPhaseBase)qbi=qbiBase;
-    // Phaseout band width must scale with `f` too (qbiPhaseTop-qbiPhaseBase), not stay
-    // flat at $100K — otherwise the phaseout runs too fast in later (inflated) years and
-    // can drive qbi negative, which would perversely *increase* taxable income.
-    else if(agi<qbiPhaseTop)qbi=Math.max(0,qbiBase*(1-(agi-qbiPhaseBase)/qbiBandWidth));
+    const businessQBI=Math.max(0,nancySE-seTaxHalf);
+    const qbiBase=businessQBI*p.nancyQBIRate;
+    // IRC 199A uses taxable income BEFORE QBI, not AGI. Nancy's solo health
+    // practice is an SSTB with no employee wages or qualified depreciable assets:
+    // first limit the eligible SSTB share, then phase in the wage/property limit.
+    const beforeQBI=Math.max(0,agi-deduction);
+    const threshold=403500*f, band=150000;
+    const eligible=Math.max(0,Math.min(1,1-(beforeQBI-threshold)/band));
+    qbi=Math.min(qbiBase*eligible*eligible,.20*beforeQBI);
+    // Active qualified business minimum introduced for 2026. Above the SSTB
+    // cutoff there is no qualifying business income and thus no minimum either.
+    if(p.nancyQBIRate>0&&businessQBI*eligible>=1000*f)
+      qbi=Math.max(qbi,400*f);
+
   }
 
   const fedTaxable=Math.max(0,agi-deduction-qbi);
@@ -135,7 +157,7 @@ function calcTax(grossIncome,p,yr,numKids){
   if(numKids>0){
     const ctcPerKid=2200*f; // also index CTC
     let ctc=numKids*ctcPerKid;
-    const ctcPhaseBase=400000*f;
+    const ctcPhaseBase=400000; // statutory phaseout is not inflation-indexed
     if(agi>ctcPhaseBase)ctc=Math.max(0,ctc-Math.ceil((agi-ctcPhaseBase)/1000)*50);
     federal=Math.max(0,federal-ctc);
   }
@@ -594,21 +616,27 @@ function run(p,rets,compiledGrants){
     let {cash:normCash,stock:normStock}=normComp(p,yIdx,grantLedger);
     let eqYear=grantLedger?(grantEngine.usesGrants(p,yr)?grantLedger.years[yr]:grantEngine.manualYear(p,yr,grantLedger.prices)):null;
     const obs=yIdx===0?observedDay(p):null;
-    let nancyGross,nancyIsSolo=false,nancySENet=0,nancyOH=0;
+    let nancyGross,nancyIsSolo=false,nancySENet=0,nancyOH=0,nancyOffice=0;
     if(yIdx<4&&yr<p.nancyRampYear){nancyGross=p['nancyW2Y'+yIdx]??100000}
     else{
       nancyIsSolo=p.nancySoloPractice===1;
       const yrsIn=yr-p.nancyRampYear;
       let cl=yrsIn<0?0:yrsIn>=p.nancyRampYears?p.nancyMaxClients:p.nancyRampClients+(p.nancyMaxClients-p.nancyRampClients)*(yrsIn/p.nancyRampYears);
       nancyGross=Math.round(cl*p.nancyHourlyRate*p.nancyWeeksPerYear);
-      if(nancyIsSolo){nancyOH=p.nancyPracticeOverhead+(p.housingMode!=='rent'&&yr>=p.homePurchaseYear?p.nancyHomeOfficeDeduct:0);nancySENet=Math.max(0,nancyGross-nancyOH)}
+      if(nancyIsSolo){
+        nancyOH=p.nancyPracticeOverhead;
+        // The office allocates housing costs already charged below; it is a deduction,
+        // not a second cash expense on top of the same home's running costs.
+        nancyOffice=p.housingMode!=='rent'&&yr>=p.homePurchaseYear?p.nancyHomeOfficeDeduct:0;
+        nancySENet=Math.max(0,nancyGross-nancyOH-nancyOffice);
+      }
     }
     const uncappedGross=normCash+normStock+nancyGross;
     const cap=Number(p.combinedIncomeCap)||0;
     const incomeScale=cap>0&&uncappedGross>cap?cap/uncappedGross:1;
     if(incomeScale<1){
       normCash*=incomeScale;normStock*=incomeScale;nancyGross*=incomeScale;
-      if(nancyIsSolo)nancySENet=Math.max(0,nancyGross-nancyOH);
+      if(nancyIsSolo)nancySENet=Math.max(0,nancyGross-nancyOH-nancyOffice);
       if(eqYear){
         const scaled=o=>Object.fromEntries(Object.entries(o).map(([k,v])=>[k,['stock','cash','market','shares','arg','peg','qcaStock'].includes(k)&&typeof v==='number'?v*incomeScale:v]));
         eqYear={...scaled(eqYear),events:eqYear.events.map(scaled),incomeCapScale:incomeScale};
@@ -642,7 +670,7 @@ function run(p,rets,compiledGrants){
     const qcaRemaining=futureEvents?.reduce((s,e)=>s+e.cash,0)||0;
     const cashAvail=(tax.net-normStockNet-qcaCash*(1-qcaRate))*stub+qcaRemaining*(1-qcaRate);
     const futureStockIncome=eqYear?futureEvents.reduce((s,e)=>s+e.stock,0):normStock*(yIdx===0?stripeVestRemaining(p):1);
-    const remainingNetComp=eqYear?cashAvail+futureStockIncome*(1-vestRate):tax.net*stub;
+    const remainingNetComp=cashAvail+futureStockIncome*(1-vestRate);
     const inc=cashAvail;
     // ── The same year, stated as a WHOLE year ──
     // The stub exists because the months before the observation date are already inside the
@@ -673,11 +701,9 @@ function run(p,rets,compiledGrants){
     const ptax=sub?ptRate*homeVal:0;
     const rentGrowth=Math.max(0,Number(p.rentInflation??0.03)||0);
   const rentCap=Number(p.rentCap)>0?Number(p.rentCap):Infinity;
-  // A buy plan deliberately keeps its legacy flat rent before the purchase. A rent-versus-buy
-  // comparison cannot: rent rises whether or not you buy later, and charging the buy side
-  // today's rent for the years it still rents hands buying money it never earned. The
-  // comparison sets this flag; the saved plan never does, so its projection is unchanged.
-  const inflateRent=p.housingMode==='rent'||p.rentInflatesBeforePurchase===true;
+  // Rent rises while waiting to buy too. An explicit false can reproduce a legacy
+  // flat-rent assumption, but merely choosing buy must not switch off rent inflation.
+  const inflateRent=p.housingMode==='rent'||p.rentInflatesBeforePurchase!==false;
   // Rent you set from a year on, or for one year only (Budget → Housing). A one-year figure is exactly
   // what was typed; a from-this-year-on figure restarts the rent there and then grows the way it always did.
   const rentSteps=Array.isArray(p.rentSteps)?p.rentSteps.filter(x=>x&&Number.isFinite(Number(x.from))&&Number(x.monthly)>=0&&Number(x.from)<=yr):[];
@@ -685,7 +711,8 @@ function run(p,rets,compiledGrants){
   const rentRoll=rentSteps.filter(x=>!x.only).reduce((m,x)=>!m||Number(x.from)>=Number(m.from)?x:m,null);
   const rentBase=rentRoll?Number(rentRoll.monthly):Number(p.nycRent||0),rentFrom=rentRoll?Number(rentRoll.from):sy;
   const monthlyRent=rentPin?Number(rentPin.monthly):Math.min(rentCap,rentBase*(inflateRent?(1+rentGrowth)**(yr-rentFrom):1));
-  let h=sub?am+ptax+(p.maintBase+insuranceFor(p.homePrice,p))*1.02**(yr-p.homePurchaseYear):monthlyRent*12;
+  const mortgagePayment=sub&&yr<p.homePurchaseYear+30?am:0;
+  let h=sub?mortgagePayment+ptax+(p.maintBase+insuranceFor(p.homePrice,p))*1.02**(yr-p.homePurchaseYear):monthlyRent*12;
     const inf=(1+p.expenseInflation)**(yr-sy);
     let gr=p.baseGroceries*inf,di=p.baseDining*inf,sh=p.baseShopping*inf,va=(nk>0?p.postKidVacations:p.baseVacations)*inf;
     let au=p.baseAuto*inf,ins=p.baseInsurance*inf,mi=p.baseMisc*inf,en=p.baseEntertainment*inf;
@@ -744,7 +771,7 @@ function run(p,rets,compiledGrants){
       // none in the birth year and 6 in the next.
       if(a>=0&&a<startAge){
         const months=Math.max(0,Math.min(12,(a+1)*12-(Number(p.childcareStartMonths)||0)));
-        cc+=(p.childcareMonthly??2800)*months*(p.nycFamilyBudget?inf:1);
+        cc+=(p.childcareMonthly??2800)*months*(1+(p.childcareInflation??p.expenseInflation))**(yr-sy);
       }
     }
     // Spending already incurred this year is behind the observation date and is already
@@ -876,10 +903,9 @@ function run(p,rets,compiledGrants){
     tSNew+=marketNet;tSSold+=stripeSold;tSRet+=stripeRetained;
     tSHold+=holdSold;tSGainTax+=holdTax+newSaleTax;
     let hv=0,mb=0,eq=0;
-    // yo = years of ownership elapsed. 0 in the purchase year itself (just closed,
-    // no appreciation/paydown yet) — matches the property-tax calc above and the
-    // mortgage-interest amortization in calcTax(), both of which start at 0 elapsed years.
-    if(sub){const yo=yr-p.homePurchaseYear;hv=p.homePrice*(1+p.homeAppreciation)**yo;mb=mBal(ma,p.mortgageRate/100,yo);eq=hv-mb}
+    // Housing charges a full year's payments, so year-end equity includes those
+    // payments too. Tax uses the opening balance to compute that year's interest.
+    if(sub){const yo=yr-p.homePurchaseYear;hv=p.homePrice*(1+p.homeAppreciation)**yo;mb=mBal(ma,p.mortgageRate/100,yo+(yo===0?stub:1));eq=hv-mb}
     const kiy=kids.filter((k,ki)=>{const a=yr-k;const sa=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;return a>=sa&&a<=p.yeshivaEndAge}).length;
     // Revolving balance carried, held FLAT across every year. This is float, not term debt:
     // cards cleared in full each month always leave roughly one month of spending
@@ -1159,7 +1185,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
     ? HIST_SP500_RETURNS.reduce((a,b)=>a*(1+b),1)**(1/HIST_SP500_RETURNS.length)-1
     : Math.exp(logDrift)-1; // expected compounded annual growth
   const nwPaths=[],liqPaths=[],exRetPaths=[],finalNW=[],floorLiq=[];let ruin=0,dpFail=0;
-  const dpYr=p.homePurchaseYear,dpNeed=p.homePrice*(p.downPctg/100),dpIdx=dpYr-sy;
+  const dpYr=p.homePurchaseYear,dpNeed=cashToClose(p.homePrice,p).total,dpIdx=dpYr-sy;
   const mcGrants=grantEngine.active(p)?grantEngine.compile(p):null;
   for(let t=0;t<trials;t++){
     const rets=isHist?drawHistoricalBlock(nYears):Array.from({length:nYears},drawRet);
@@ -1193,7 +1219,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
   return{band,bandExRet,trials,vol,geomMean,mode,
     finalP10:pct(finalNW,.10),finalP50:pct(finalNW,.50),finalP90:pct(finalNW,.90),
     ruinPct:ruin/trials*100,
-    dpFailPct:p.housingMode!=='rent'&&dpIdx>=1?dpFail/trials*100:null,
+    dpFailPct:p.housingMode!=='rent'&&dpIdx>=1&&dpIdx<nYears?dpFail/trials*100:null,
     liqFloorP10:pct(floorLiq,.10)};
 }
 
