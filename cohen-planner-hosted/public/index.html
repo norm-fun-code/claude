@@ -4364,15 +4364,10 @@ function renderSpendingTab(R,P){
         a.net+=c.net;a.gross+=c.gross;a.refunds+=c.refunds;a.count+=c.count;a.months.add(m.month);
       }
     }
-    // Per-month divides by months ELAPSED, not months listed: counting a month that is 53%
-    // through as a whole one would report a run rate about half again too low.
-    //
-    // Except when the scope IS one month. Dividing a part-month by the share of it that has
-    // passed answers "at this pace, the whole month" — the right answer for a year-to-date
-    // average and the wrong one here, where the reader asked what September has cost and
-    // would be shown a figure September has not spent.
+    // Actual average per calendar month represented in the selected records.
+    // A current-month bill (rent paid on the first) is counted once, never extrapolated.
     const singleMonth=_spendScope.kind==='month'&&complete.length===1;
-    const n=singleMonth?1:((closedScoped.length+(partialInScope?(Number(cov.fractionElapsed)||1):0))||1);
+    const n=PlannerSpending.calendarMonthCount(complete)||1;
     // Trend compares the most recent three complete months against the three before them.
     // With fewer than six there is nothing to compare, so no trend is claimed at all.
     const recent=closedScoped.slice(-3),prior=closedScoped.slice(-6,-3);
@@ -4426,11 +4421,11 @@ function renderSpendingTab(R,P){
     const driftToggle=`<div class="spend-scope spend-drift-scope" role="group" aria-label="Averaging window for run-rate drift">
       ${[3,6,12].map(n=>`<button class="spend-scope-chip${_spendDriftWindow===n?' is-on':''}" aria-pressed="${_spendDriftWindow===n}" onclick="setSpendDriftWindow(${n})">${n}M</button>`).join('')}
     </div>`;
-    const scopeNote=`Imported records for ${advEscape(spendScopeLabel(completeAll,asOf,months))}${singleMonth?'':partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}`;
+    const scopeNote=`Imported records for ${advEscape(spendScopeLabel(completeAll,asOf,months))}${singleMonth?'':partialInScope?' · per-month figures average calendar months':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}`;
 
 
     const detailsHtml=`<details class="spend-details"><summary>Exact amounts & refunds</summary>
-      <div style="font-size:10px;color:var(--t2);margin-bottom:10px">${singleMonth?`${advEscape(monthLabel(complete[0].month))} alone, net of refunds${partialInScope?` — still running, ${Math.round((Number(cov.fractionElapsed)||1)*100)}% elapsed, so these are the totals so far rather than a whole month`:''}.`:`${closedScoped.length} past month${closedScoped.length===1?'':'s'} with imported records, net of refunds${partialInScope?` · plus ${advEscape(monthLabel(cov.partial||asOf.slice(0,7)))} in progress, counted as ${Math.round((Number(cov.fractionElapsed)||1)*100)}% of a month`:cov.partial?` · ${cov.partial} excluded as partial`:''}.`} ${canTrend?'Trend compares the last 3 months with the 3 before; unverified coverage can affect the comparison.':'Six consecutive months of records are needed for a trend.'}</div>
+      <div style="font-size:10px;color:var(--t2);margin-bottom:10px">${singleMonth?`${advEscape(monthLabel(complete[0].month))} alone, net of refunds${partialInScope?` — still running, ${Math.round((Number(cov.fractionElapsed)||1)*100)}% elapsed, so these are the totals so far rather than a whole month`:''}.`:`${closedScoped.length} past month${closedScoped.length===1?'':'s'} with imported records, net of refunds${partialInScope?` · plus ${advEscape(monthLabel(cov.partial||asOf.slice(0,7)))} in progress, counted once in the recorded monthly average (no extrapolation)`:cov.partial?` · ${cov.partial} excluded as partial`:''}.`} ${canTrend?'Trend compares the last 3 months with the 3 before; unverified coverage can affect the comparison.':'Six consecutive months of records are needed for a trend.'}</div>
       ${rows.length?`<div class="tw" style="max-height:none"><table style="font-size:11px">
         <thead><tr><th style="text-align:left">Category</th><th>Per month</th><th>Total</th><th>Share</th>${canTrend?'<th>Trend</th>':''}<th>Rows</th></tr></thead>
         <tbody>${shown.map(r=>{

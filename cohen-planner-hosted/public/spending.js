@@ -314,7 +314,12 @@
   function observedAverage(months,n,today){
     return rollingAverage((months||[]).map(m=>({...m,coverageVerified:true})),n,null,today);
   }
-  const api={KIND,indexCategories,classify,summarize,coverage,rollingAverage,rollingSeries,observedAverage,budgetStatus,monthKey,spendOf};
+  // Recorded monthly averages count a bill's calendar month once. They do not
+  // extrapolate payments already made at the beginning of a partial month.
+  function calendarMonthCount(months){
+    return new Set((months||[]).map(m=>m.month).filter(Boolean)).size;
+  }
+  const api={calendarMonthCount,KIND,indexCategories,classify,summarize,coverage,rollingAverage,rollingSeries,observedAverage,budgetStatus,monthKey,spendOf};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerSpending=api;
 })(typeof window!=='undefined'?window:this);

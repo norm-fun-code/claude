@@ -450,13 +450,12 @@ describe('the year-to-date scope', () => {
   it('says which of the two is happening, from the scope rather than its name', () => {
     // "current month excluded" is true whenever the partial month is out of range — including
     // when year-to-date falls back for want of records this year — and false when it is in.
-    expect(src).toContain("${singleMonth?'':partialInScope?' · per-month figures divide by months elapsed':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}");
+    expect(src).toContain("${singleMonth?'':partialInScope?' · per-month figures average calendar months':(cov.partial&&!['month','year'].includes(_spendScope.kind))?' · current month excluded':''}");
   });
 
-  it('divides per-month figures by months ELAPSED, not months listed', () => {
-    // 53% of September counted as a whole month would report the run rate about half again
-    // too low — the one way including the partial month could mislead.
-    expect(src).toContain('const n=singleMonth?1:((closedScoped.length+(partialInScope?(Number(cov.fractionElapsed)||1):0))||1);');
+  it('averages actual payments across represented calendar months', () => {
+    // The chart describes recorded spending, not a forecast of the unfinished month.
+    expect(src.includes('const n=PlannerSpending.calendarMonthCount(complete)||1;')).toBe(true);
   });
 
   it('offers the chip even before a month of the year has closed', () => {
@@ -624,14 +623,13 @@ describe('the month in progress is selectable', () => {
   });
 
   it('does not extrapolate a part month to a whole one', () => {
-    // Dividing by the share elapsed answers "at this pace, the whole month" — right for a
-    // year-to-date average, wrong when the reader asked what September has cost.
+    // Monthly bills paid on the first remain actual amounts in every scope.
     expect(src).toContain("const singleMonth=_spendScope.kind==='month'&&complete.length===1;");
-    expect(src).toContain('const n=singleMonth?1:((closedScoped.length+(partialInScope?(Number(cov.fractionElapsed)||1):0))||1);');
+    expect(src.includes('const n=PlannerSpending.calendarMonthCount(complete)||1;')).toBe(true);
   });
 
   it('drops the per-month caption that would no longer be true', () => {
-    expect(src).toContain("${singleMonth?'':partialInScope?' · per-month figures divide by months elapsed'");
+    expect(src).toContain("${singleMonth?'':partialInScope?' · per-month figures average calendar months'");
     expect(src).toContain('still running, ${Math.round((Number(cov.fractionElapsed)||1)*100)}% elapsed, so these are the totals so far rather than a whole month');
   });
 
@@ -659,4 +657,15 @@ describe('stock pay logged as a paycheck still counts as income', () => {
     expect(totals.income).toBe(20000);
     expect(totals.investment).toBe(0);
   });
+});
+
+// A bill paid in full on the first must not be extrapolated through a partial month.
+describe('recorded calendar-month averages',()=>{
+ it('counts October once alongside nine prior rent payments',()=>{
+  const months=Array.from({length:10},(_,i)=>({month:`2026-${String(i+1).padStart(2,'0')}`,expense:5000}));
+  expect(S.calendarMonthCount(months)).toBe(10);
+  expect(months.reduce((n,m)=>n+m.expense,0)/S.calendarMonthCount(months)).toBe(5000);
+  expect(S.calendarMonthCount([months[9]])).toBe(1);
+  expect(S.calendarMonthCount([...months,months[9]])).toBe(10);
+ });
 });
