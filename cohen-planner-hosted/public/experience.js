@@ -638,7 +638,7 @@ function experienceLocation(){
  document.getElementById('locationBar')?.remove();
  const c=P.locationConfig||{},deal=c.mode==='deal',year=c.moveYear??P.homePurchaseYear??2031;
  const el=document.createElement('section');el.id='locationBar';el.className='ex-location-bar';
- const number=(label,key,value,suffix='',step=1)=>`<label>${label}<span><input type="number" aria-label="${label}" value="${value}" step="${step}" min="0" onchange="locationEdit('${key}',this.value)">${suffix}</span></label>`;
+ const number=(label,key,value,suffix='',step=1)=>`<label>${label}<span><input type="number" aria-label="${label}" value="${Number(Number(value).toFixed(4))}" step="${step}" min="0" onchange="locationEdit('${key}',this.value)">${suffix}</span></label>`;
  const factor=(label,key)=>number(label,'factor:'+key,Math.round((c.factors?.[key]??DEAL_SPENDING_FACTORS[key])*100),'%');
  const signature=JSON.stringify(P);
  if(locationComparisonCache.signature!==signature){
