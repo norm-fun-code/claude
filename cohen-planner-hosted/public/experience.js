@@ -174,6 +174,7 @@ function experienceCashPath(rows,selected,mode='cash'){
 function experienceInvestableAssets(row){
   return Number.isFinite(row.nwExRetHome)?row.nwExRetHome:(row.liq||0)+(row.sEnd||0)+(row.otherAssets||0)-(row.otherDebt||0);
 }
+function experienceTimelineWealth(row){return typeof cockpitExRet!=='undefined'&&cockpitExRet?(row.nw??row.netWorth-(row.k401||0)):row.netWorth;}
 function lifeOpenYear(year){lifeYear=year;_projView='life';experienceUtility('projection');}
 function renderLifeTimeline(R){
   destroyCharts();
@@ -181,21 +182,22 @@ function renderLifeTimeline(R){
   lifeContext={R};
   const events=cockpitMilestones(R,P);
   const floor=R.reduce((a,b)=>b.liq<a.liq?b:a),peak=R.reduce((a,b)=>b.tuFull>a.tuFull?b:a);
-  const value=lifeMode==='wealth'?'Year-end wealth':'Monthly surplus / shortfall before equity sales';
+  const value=lifeMode==='wealth'?(cockpitExRet?'Year-end wealth · excludes retirement':'Year-end wealth · includes retirement'):'Monthly surplus / shortfall before equity sales';
   document.getElementById('chartArea').innerHTML=`<div class="life-workspace">
     ${experienceHeader('FUTURE / LIFE TIMELINE','Your life. In perspective.','Follow the years, see the pressure points, and understand how your choices shape the path.')}
     <section class="ex-panel life-chart-panel"><div class="ex-panel-head"><div><span class="ex-kicker">${value}</span><h3 id="lifeChartValue"></h3><p>Projected · ${experienceEscape(scenarios[activeScenarioIdx]?.name||'Working plan')} · ${inflationView?'today’s dollars ('+P.planStartYear+')':'future dollars'}</p></div>
       <div class="ex-segments" aria-label="Timeline chart mode"><button aria-pressed="${lifeMode==='wealth'}" onclick="lifeSetMode('wealth')">Wealth</button><button aria-pressed="${lifeMode==='cash'}" onclick="lifeSetMode('cash')">Cash flow</button></div></div>
+    ${lifeMode==='wealth'?`<label class="cp-basis"><input type="checkbox" ${cockpitExRet?'':'checked'} onchange="cockpitSetExRet(!this.checked)"><span>Include retirement</span></label>`:''}
     <div class="life-chart"><canvas id="lifeChart" role="img" aria-label="Projected wealth or annual cash flow across your life timeline"></canvas></div>
     <div class="life-legend" id="lifeLegend"></div>
     <div class="life-scrubber"><button onclick="lifeSelectYear(lifeYear-1)" aria-label="Previous year">‹</button><output id="lifeYearLabel">${lifeYear}</output><input id="lifeYearRange" type="range" min="${R[0].yr}" max="${R.at(-1).yr}" value="${lifeYear}" aria-label="Explore a year" oninput="lifeSelectYear(Number(this.value))"><button onclick="lifeSelectYear(lifeYear+1)" aria-label="Next year">›</button></div>
     <div class="life-jumps"><span>Jump to</span><button onclick="lifeSelectYear(${floor.yr})">Lowest liquidity · ${floor.yr}</button><button onclick="lifeSelectYear(${peak.yr})">Peak tuition · ${peak.yr}</button>${P.housingMode!=='rent'&&R.some(r=>r.yr===P.homePurchaseYear)?`<button onclick="lifeSelectYear(${P.homePurchaseYear})">Home purchase · ${P.homePurchaseYear}</button>`:''}</div></section>
     <section class="ex-panel life-year-panel"><div class="ex-panel-head"><div><span class="ex-kicker">THE SELECTED YEAR</span><h3 id="lifeChapter"></h3></div><span class="ex-context-pill" id="lifeHome"></span></div><div id="lifeFamily" class="life-family"></div><div id="lifeMetrics" class="ex-answer-band"></div><div id="lifeCashBridge" class="ex-cash-bridge"></div><div id="lifeInsight" class="life-insight"></div><div class="life-year-actions"><button class="ui-btn" onclick="_budgetYear=lifeYear;experienceUtility('today','budget')">Inspect this year’s budget ↗</button><button class="ui-btn" onclick="decisionYear=lifeYear;_homeView='explore';experienceUtility('home')">Test a decision ↗</button><button class="ui-btn" onclick="cockpitQuestion('Review '+lifeYear+' in my current plan. Explain cash pay, spending, required asset sales and the assumptions most worth checking.')">Ask the advisor ↗</button></div></section>
     <details class="ex-detail"><summary>All life milestones</summary><div class="ex-detail-body life-events">${events.map(e=>`<button onclick="lifeSelectYear(${e.yr})"><strong>${e.yr}</strong><span>${experienceEscape(e.label)}${e.extra?' +'+e.extra:''}</span></button>`).join('')}</div></details>
-    <details class="ex-detail"><summary>What this projection includes</summary><div class="ex-detail-body"><p>Year-end wealth includes diversified liquid investments, vested Stripe, home equity, other modeled assets and retirement, less debt. Cash flow shows whole-year after-tax cash pay and spending; equity sales can fund a shortfall. First-year balances grow only for the period after the opening observation. Returns are assumptions. Employment and contributions continue through the modeled horizon; this is not a retirement withdrawal simulation.</p><button class="ui-btn" onclick="setSubView('table')">Open annual table</button></div></details></div>`;
+    <details class="ex-detail"><summary>What this projection includes</summary><div class="ex-detail-body"><p>Year-end wealth includes diversified liquid investments, vested Stripe, home equity, other modeled assets and, when selected, retirement, less debt. Cash flow shows whole-year after-tax cash pay and spending; equity sales can fund a shortfall. First-year balances grow only for the period after the opening observation. Returns are assumptions. Employment and contributions continue through the modeled horizon; this is not a retirement withdrawal simulation.</p><button class="ui-btn" onclick="setSubView('table')">Open annual table</button></div></details></div>`;
   const colors={total:'#315c45',liquid:'#829575',cash:'#366855',spend:'#a47f50'};
   const datasets=lifeMode==='wealth'?[
-    {label:'Total net worth · incl. retirement',data:R.map(r=>deflate(r.netWorth,r.yr)),borderColor:colors.total,fill:true,backgroundColor:ctx=>{const ch=ctx.chart,area=ch.chartArea;if(!area)return 'rgba(72,106,76,.06)';const g=ch.ctx.createLinearGradient(0,area.top,0,area.bottom);g.addColorStop(0,'rgba(72,106,76,.18)');g.addColorStop(1,'rgba(72,106,76,0)');return g;}},
+    {label:cockpitExRet?'Net worth · excludes retirement':'Total net worth · incl. retirement',data:R.map(r=>deflate(experienceTimelineWealth(r),r.yr)),borderColor:colors.total,fill:true,backgroundColor:ctx=>{const ch=ctx.chart,area=ch.chartArea;if(!area)return 'rgba(72,106,76,.06)';const g=ch.ctx.createLinearGradient(0,area.top,0,area.bottom);g.addColorStop(0,'rgba(72,106,76,.18)');g.addColorStop(1,'rgba(72,106,76,0)');return g;}},
     {label:'Investable assets · incl. Stripe',data:R.map(r=>deflate(experienceInvestableAssets(r),r.yr)),borderColor:colors.liquid,borderDash:[4,4]}]:[
     {label:'Annual after-tax cash pay',data:R.map(r=>deflate(r.incFull,r.yr)),borderColor:colors.cash},
     {label:'Annual spending',data:R.map(r=>deflate(r.totEFull,r.yr)),borderColor:colors.spend,fill:'-1',backgroundColor:'rgba(164,127,80,.06)'}];
@@ -217,7 +219,7 @@ function lifeSelectYear(year){
   lifeYear=Math.max(R[0].yr,Math.min(R.at(-1).yr,Number(year)));const r=R.find(x=>x.yr===lifeYear);if(!r)return;
   document.getElementById('lifeYearRange').value=lifeYear;document.getElementById('lifeYearLabel').textContent=lifeYear;
   const cash=(r.incFull-r.totEFull)/12;
-  document.getElementById('lifeChartValue').textContent=lifeMode==='wealth'?experienceMoney(deflate(r.netWorth,r.yr)):experienceMoney(deflate(cash,r.yr))+' / month';
+  document.getElementById('lifeChartValue').textContent=lifeMode==='wealth'?experienceMoney(deflate(experienceTimelineWealth(r),r.yr)):experienceMoney(deflate(cash,r.yr))+' / month';
   const milestone=PlannerDecisions.milestones(P,R).filter(x=>x.yr===lifeYear);
   document.getElementById('lifeChapter').textContent=lifeYear+(milestone.length?' · '+milestone.map(x=>x.label).join(' / '):' · Your household');
   const bought=P.housingMode!=='rent'&&lifeYear>=P.homePurchaseYear;

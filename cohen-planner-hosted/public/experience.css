@@ -546,3 +546,24 @@ body,body.home-view{background:radial-gradient(ellipse at 75% -20%,#2c2749 0,tra
  .life-legend button[aria-pressed="false"] { opacity:.45; }
  .life-legend button:focus-visible { outline:2px solid #365c43; outline-offset:2px; }
 }
+
+/* Overview trajectory must remain ivory even under legacy mobile card rules. */
+@media screen {
+ .cp-card.cp-trajectory { background:#f8f7ef!important; color:#274631; padding:24px!important; border:1px solid #cbd5be!important; }
+ .cp-trajectory h3,.cp-chart-summary strong { color:#274631; }
+ .cp-trajectory .cp-section-head button { color:#365c43; }
+ .cp-chart-summary>span,.cp-chart-summary>div>span { color:#596f4d; }
+ .cp-trajectory .cp-pins button { background:#eef0e5; border-color:#cbd5be; color:#365c43; }
+ .cp-trajectory .cp-pins button:hover { background:#e5ecdc; }
+ .cp-basis { color:#365c43; background:#eef0e5; border-color:#cbd5be; }
+ .cp-basis input { accent-color:#365c43; }
+ .cp-stub { color:#8f682e; }
+}
+@media screen and (max-width:760px) {
+ .cp-card.cp-trajectory { padding:20px 16px!important; }
+ .cp-trajectory .cp-section-head { flex-wrap:wrap; gap:8px; }
+ .cp-chart-summary { display:block; }
+ .cp-chart-summary>span { display:block; text-align:left; margin:12px 0; font-size:11px; line-height:1.5; }
+ .cp-basis { padding:10px 12px; }
+ .cp-trajectory .cp-pins button { border-radius:9px; font-size:11px; padding:8px 10px; }
+}

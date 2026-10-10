@@ -135,3 +135,27 @@ describe('timeline legend isolation',()=>{
   t.ctx.render=()=>{};t.call('lifeIsolateSeries(1)');t.call("lifeSetMode('cash')");expect(t.call('lifeIsolated')).toBe(null);
  });
 });
+
+describe('shared wealth basis',()=>{
+ it('uses the same retirement selection as Overview without changing asset components',()=>{
+  const t=presentation();t.ctx.asset={liq:500000,sEnd:2000000,eq:1000000,k401:700000,nw:3500000,netWorth:4200000,nwExRetHome:2500000};
+  t.ctx.cockpitExRet=true;expect(t.call('experienceTimelineWealth(asset)')).toBe(3500000);
+  t.ctx.cockpitExRet=false;expect(t.call('experienceTimelineWealth(asset)')).toBe(4200000);
+  expect(t.call('experienceInvestableAssets(asset)')).toBe(2500000);
+ });
+});
+
+describe('Overview and Future chart reconciliation',()=>{
+ it('plots the same year-end wealth and Stripe-inclusive asset values in either retirement basis',()=>{
+  const t=presentation();vm.runInContext(fs.readFileSync(new URL('../public/cockpit.js',import.meta.url),'utf8'),t.ctx);
+  t.ctx.P={planStartYear:2026,startingLiquid:100,startingStripeEquity:200,otherAssets:40,otherDebt:10,k401Start:50};
+  t.ctx.R=[{yr:2026,liq:110,sEnd:220,otherAssets:40,otherDebt:10,k401:55,nw:360,netWorth:415,nwExRetHome:360,eq:0}];
+  t.ctx.cockpitMilestones=()=>[];t.ctx.runMonteCarlo=()=>{throw Error('no band')};t.ctx.inflationView=false;t.ctx.charts={};
+  t.ctx.document={getElementById:()=>({innerHTML:''})};t.ctx.Chart=class{constructor(el,config){this.data=config.data;}};
+  for(const ex of [false,true]){t.ctx.cockpitExRet=ex;t.call('cockpitDrawChart(R,P,2026)');
+   const ds=t.ctx.charts.cockpit.data.datasets;
+   expect(ds[0].data[1]).toBe(t.call('experienceTimelineWealth(R[0])'));
+   expect(ds[1].data).toEqual([330,t.call('experienceInvestableAssets(R[0])')]);
+  }
+ });
+});

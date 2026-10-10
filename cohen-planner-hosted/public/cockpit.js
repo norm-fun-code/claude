@@ -330,7 +330,7 @@ function cockpitDrawChart(R,P,year){
   // at different places on different values, which is most of what "they don't line up"
   // looked like even before the figures were compared.
   const sy=P.planStartYear||2026;
-  const opening=Math.round((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.k401Start||0)
+  const opening=Math.round((P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.otherAssets||0)+(P.k401Start||0)
     -Math.abs(Number(P.otherDebt||0)));
   const labels=[sy-1,...R.map(r=>r.yr)];
   const pins=cockpitMilestones(R,P);
@@ -345,7 +345,7 @@ function cockpitDrawChart(R,P,year){
   const band=_cpBand?(cockpitExRet?_cpBand.exRet:_cpBand.total):null;
   const note=document.getElementById('cp-band-note');
   if(note)note.innerHTML=band
-    ? `Median of 250 simulated paths<br>Shaded band spans the 10th to 90th percentile${inflationView?`<br>${sy} purchasing power`:''}`
+    ? `Planned returns · ${cockpitExRet?'excludes':'includes'} retirement<br>Shaded band: 10th–90th percentile of 250 simulated paths${inflationView?`<br>${sy} purchasing power`:''}`
     : `${cockpitExRet?'Excludes retirement':'Includes retirement'}<br>${inflationView?sy+' purchasing power':'Future dollars'} · assumed returns`;
 
   const ds=[];
@@ -361,7 +361,7 @@ function cockpitDrawChart(R,P,year){
     data:[cockpitExRet?opening-Math.abs(Number(P.k401Start||0)):opening,...R.map(r=>deflate(cpNw(r),r.yr))],
     borderColor:'#3e765c',backgroundColor:'transparent',fill:false,
     pointRadius:0,pointHoverRadius:5,borderWidth:2.5,tension:.25});
-  ds.push({label:'Liquid investments',data:[P.startingLiquid||0,...R.map(r=>deflate(r.liq,r.yr))],
+  ds.push({label:'Investable assets · incl. Stripe',data:[(P.startingLiquid||0)+(P.startingStripeEquity||0)+(P.otherAssets||0)-Math.abs(P.otherDebt||0),...R.map(r=>deflate(experienceInvestableAssets(r),r.yr))],
     borderColor:'#839574',borderDash:[4,4],pointRadius:0,borderWidth:1.8,tension:.25});
 
   charts.cockpit=new Chart(document.getElementById('cockpitTrajectory'),{
@@ -374,9 +374,9 @@ function cockpitDrawChart(R,P,year){
       animation:_reduceMotion()?false:{x:{from:0,duration:900,easing:'easeOutCubic'},y:{duration:0}},
       interaction:{mode:'index',intersect:false},
       plugins:{
-        legend:{position:'bottom',labels:{color:'#acb9cc',boxWidth:14,font:{size:12},
+        legend:{position:'bottom',labels:{color:'#596f4d',boxWidth:14,font:{size:12},
           filter:i=>!/percentile/.test(i.text)}},
-        tooltip:{callbacks:{
+        tooltip:{backgroundColor:'#193b2c',titleColor:'#fbf8ec',bodyColor:'#e5ecdc',callbacks:{
           label:c=>/percentile/.test(c.dataset.label)?null:`${c.dataset.label}: ${UI.money(c.raw)}`,
           afterBody:items=>{
             const yr=Number(items[0].label);
@@ -387,8 +387,8 @@ function cockpitDrawChart(R,P,year){
         cpMilestones:{pins},
       },
       scales:{
-        x:{grid:{display:false},ticks:{color:'#899ab1',maxTicksLimit:6}},
-        y:{grid:{color:'rgba(167,190,221,.07)'},ticks:{color:'#899ab1',callback:v=>UI.money(v)}},
+        x:{grid:{display:false},ticks:{color:'#62715b',maxTicksLimit:6}},
+        y:{grid:{color:'rgba(41,70,45,.10)'},ticks:{color:'#62715b',callback:v=>UI.money(v)}},
       },
     },
     plugins:[cpMilestonePlugin],
@@ -432,7 +432,7 @@ function cockpitSelectYear(year){
 
   set('cp-grid-head',year+' year-end · projected, not what you hold today');
   const grid=document.getElementById('cp-year-grid');
-  if(grid)grid.innerHTML=[['Liquid investments',row.liq],['Vested Stripe',row.sEnd],
+  if(grid)grid.innerHTML=[['Cash + taxable investments',row.liq],['Vested Stripe',row.sEnd],
     ['Home equity',row.eq]].map(([label,value])=>
     `<div><span>${label}</span><strong class="ui-num">${UI.money(deflate(value,row.yr))}</strong></div>`).join('');
 
@@ -554,7 +554,7 @@ function mountSpendingCharts({rows,months,asOf,verified,driftWindow=12}){
   const dollars=v=>fmtF(Math.round(v));
   charts.spendingMonths=new Chart(document.getElementById('spendMonthlyChart'),{type:'bar',data:{labels:months.map(m=>monthLabel(m.month)+(m.month===asOf.slice(0,7)?' · partial':verified.includes(m.month)?'':' *')),datasets:[
     {label:'Income',data:months.map(m=>m.income||0),backgroundColor:'#72cbb0',borderRadius:4},
-    {label:'Spending',data:months.map(m=>m.expense||0),backgroundColor:'#a798ef',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#bdc9dc',font:{size:12}}},tooltip:{callbacks:{label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}`}}},scales:{x:{ticks:{color:'#aabbd0',maxRotation:60,minRotation:45,autoSkipPadding:12,font:{size:11}},grid:{display:false}},y:{ticks:{color:'#aabbd0',callback:v=>fmt(v)},grid:{color:'#27364b'}}}}});
+    {label:'Spending',data:months.map(m=>m.expense||0),backgroundColor:'#a798ef',borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#bdc9dc',font:{size:12}}},tooltip:{backgroundColor:'#193b2c',titleColor:'#fbf8ec',bodyColor:'#e5ecdc',callbacks:{label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}`}}},scales:{x:{ticks:{color:'#aabbd0',maxRotation:60,minRotation:45,autoSkipPadding:12,font:{size:11}},grid:{display:false}},y:{ticks:{color:'#aabbd0',callback:v=>fmt(v)},grid:{color:'#27364b'}}}}});
 
   // ── Drift: a selectable trailing run rate, on its own ──
   // A separate chart rather than lines over the bars. A single month is noise at this scale and
@@ -595,7 +595,7 @@ function mountSpendingCharts({rows,months,asOf,verified,driftWindow=12}){
         line('expense',`Spending · trailing ${windowMonths}-month average`,'#a798ef')]},
         options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
           plugins:{legend:{labels:{color:'#bdc9dc',font:{size:12}}},
-            tooltip:{callbacks:{title:c=>`${windowMonths} months to ${c[0].label}`,label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}/mo`}}},
+            tooltip:{backgroundColor:'#193b2c',titleColor:'#fbf8ec',bodyColor:'#e5ecdc',callbacks:{title:c=>`${windowMonths} months to ${c[0].label}`,label:c=>c.raw==null?null:`${c.dataset.label}: ${dollars(c.raw)}/mo`}}},
           scales:{x:{ticks:{color:'#aabbd0',maxRotation:60,minRotation:45,autoSkipPadding:12,font:{size:11}},grid:{display:false}},
             y:{ticks:{color:'#aabbd0',callback:v=>fmt(v)},grid:{color:'#27364b'}}}}});
     }
