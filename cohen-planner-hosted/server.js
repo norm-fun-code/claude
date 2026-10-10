@@ -381,7 +381,7 @@ app.get('/model.js', requireAuthOrDemo, (req, res) => {
 // Keep every new planner asset behind the same session gate as the existing UI.
 // liquidity.js was referenced by index.html but never listed here, so it 404'd in
 // production while working locally under the preview server's plain static handler.
-for (const asset of ['planner-time.js', 'stripe-grants.js', 'stripe-grants-ui.js', 'cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'year-end.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js', 'demo-data.js', 'rent-buy.js', 'income-share.js', 'budget.js', 'suggest.js', 'shared-lines.js', 'stress-tests.js']) {
+for (const asset of ['planner-time.js', 'stripe-grants.js', 'stripe-grants-ui.js', 'cockpit.js', 'cockpit.css', 'ui.js', 'ui.css', 'experience.js', 'experience.css', 'decisions.js', 'decision-room.js', 'decision-room.css', 'plan-migrate.js', 'spending.js', 'accounts.js', 'bridge.js', 'opening.js', 'year-end.js', 'snapshots.js', 'liquidity.js', 'tax-rules.js', 'monitors.js', 'tax-plan.js', 'inbox-state.js', 'advisor-tools.js', 'pace.js', 'demo-data.js', 'rent-buy.js', 'income-share.js', 'budget.js', 'suggest.js', 'shared-lines.js', 'stress-tests.js']) {
   app.get('/' + asset, requireAuthOrDemo, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', asset));
   });
@@ -1888,7 +1888,7 @@ Per-year income (Y0=the plan's start year, Y1=+1yr, … Y10=+10yr — see "PER-Y
 • normCashY0 through normCashY10 — Norm's CASH compensation for each of the next 11 years.
 • normStockY0 through normStockY10 — manual stock income estimates. When stripeGrants.enabled is true these are inactive; the shared engine calculates vest-date stock compensation from ARG, PEG and QCA schedules. Use the Stripe tab to change those awards. normCashY inputs are a baseline adjusted for any QCA already included and calculated QCA cash.
   Cash and stock are both ordinary W-2 income at vest, so moving a dollar between them does not change his tax by a cent. What it changes is CASH FLOW and ASSETS: cash is spendable, stock arrives as Stripe equity and is only spendable if sold. Never treat retained stock as available cash, and never treat Stripe equity as part of the diversified portfolio.
-• nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3 — Nancy's W2 income in each of the next 4 years (only actually used for years before nancyRampYear — see below)
+• nancyW2Y0, nancyW2Y1, and subsequent nancyW2Y# keys — Nancy's annual W2 gross income, indexed from planStartYear, for every year before nancyRampYear. Later unentered years carry the last entered amount. Practice can start in any year from planStartYear onward.
 Beyond Y10 each stream compounds on its own: cash at normGrowth, stock at normStockGrowth (no year-specific key needed). Nancy's income beyond nancyRampYear is computed from nancyHourlyRate × client ramp (nancyRampClients→nancyMaxClients over nancyRampYears), not from a per-year field.
 
 STRIPE EQUITY KEYS — a pool entirely separate from the diversified portfolio:

@@ -182,6 +182,13 @@
     // of freezing it or injecting a spurious $0.
     out.nancyW2Y0=P.nancyW2Y1;out.nancyW2Y1=P.nancyW2Y2;out.nancyW2Y2=P.nancyW2Y3;
     out.nancyW2Y3=Math.round(P.nancyW2Y3*(1+(P.expenseInflation??0.03)));
+    // Preserve every additional explicit pre-practice year when the plan rolls forward.
+    const nancyLast=Math.max(3,...Object.keys(P).filter(k=>/^nancyW2Y\d+$/.test(k)).map(k=>Number(k.slice(8))));
+    if(nancyLast>3){
+      for(let i=3;i<nancyLast;i++)out['nancyW2Y'+i]=P['nancyW2Y'+(i+1)]??P['nancyW2Y'+i];
+      out['nancyW2Y'+nancyLast]=P['nancyW2Y'+nancyLast];
+    }
+
     // The observation date belonged to the year just rolled past. Carrying it into the new
     // start year would leave the engine computing a stub from a date that is now BEFORE the
     // plan opens — which reads as "the whole year is ahead", silently undoing the roll's

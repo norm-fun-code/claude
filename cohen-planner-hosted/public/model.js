@@ -239,16 +239,25 @@ function normComp(p,yIdx,ledger){
     const base=yIdx<NORM_COMP_YEARS?cashAt(yIdx):cashAt(last)*(1+(p.normGrowth??0.01))**(yIdx-last);
     return {cash:Math.max(0,base-grantEngine.award(p,yr).cashAlreadyIncluded)+eq.cash,stock:eq.stock,qcaCash:eq.cash};
   }
-  if(yIdx<NORM_COMP_YEARS)return{cash:cashAt(yIdx),stock:stockAt(yIdx)};
-  const year=(p.planStartYear||2026)+yIdx, entries=p.stripeManualLater||{};
+  const sy=p.planStartYear||2026, cutoff=Number.isInteger(p.normManualThroughYear)?p.normManualThroughYear:Infinity;
+  const baseLast=Math.max(0,Math.min(last,cutoff-sy));
+  if(yIdx<=baseLast)return{cash:cashAt(yIdx),stock:stockAt(yIdx)};
+  const year=sy+yIdx, entries=Object.fromEntries(Object.entries(p.stripeManualLater||{}).filter(([y])=>Number(y)<=cutoff));
   if(entries[year])return {...entries[year]};
   const prior=Object.keys(entries).map(Number).filter(y=>y<year&&y>(p.planStartYear||2026)+last).sort((a,b)=>b-a)[0];
   if(prior!=null)return {cash:entries[prior].cash*(1+(p.normGrowth??.01))**(year-prior),stock:entries[prior].stock*(1+(p.normStockGrowth??p.normGrowth??.01))**(year-prior)};
-  const n=yIdx-last;
+  const n=yIdx-baseLast;
   return{
-    cash:cashAt(last)*(1+(p.normGrowth??0.01))**n,
-    stock:stockAt(last)*(1+(p.normStockGrowth??p.normGrowth??0.01))**n,
+    cash:cashAt(baseLast)*(1+(p.normGrowth??0.01))**n,
+    stock:stockAt(baseLast)*(1+(p.normStockGrowth??p.normGrowth??0.01))**n,
   };
+}
+
+// W-2 income remains active for every year before private practice starts.
+// Unentered later years carry the last entered annual amount until edited.
+function nancyW2Income(p,i){
+  for(let j=i;j>=0;j--){const v=p['nancyW2Y'+j];if(Number.isFinite(v)&&v>=0)return v;}
+  return 100000;
 }
 
 // ── Stripe equity ──────────────────────────────────────────────────────────
@@ -625,7 +634,7 @@ function run(p,rets,compiledGrants){
     }
     const obs=yIdx===0?observedDay(p):null;
     let nancyGross,nancyIsSolo=false,nancySENet=0,nancyOH=0,nancyOffice=0;
-    if(yIdx<4&&yr<p.nancyRampYear){nancyGross=p['nancyW2Y'+yIdx]??100000}
+    if(yr<p.nancyRampYear){nancyGross=nancyW2Income(p,yIdx)}
     else{
       nancyIsSolo=p.nancySoloPractice===1;
       const yrsIn=yr-p.nancyRampYear;
@@ -1238,7 +1247,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={nycKidCost,commonHousehold,bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,nancyW2Income,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

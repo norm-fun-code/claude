@@ -143,7 +143,7 @@ tr:hover td{background:var(--s2)}
 /* Stripe keeps a distinct violet identity everywhere it appears, so equity never reads
    as part of the diversified portfolio. */
 .comp-in.comp-stock{border-color:rgba(103,114,229,.35);background:rgba(103,114,229,.05);color:#4c3fd6}
-.comp-in.comp-stock:focus{border-color:#6772e5;box-shadow:0 0 0 2px rgba(103,114,229,.15)}
+.comp-in.comp-stock:focus{border-color:var(--link);box-shadow:0 0 0 2px rgba(103,114,229,.15)}
 .comp-tot{font-size:8.5px;font-weight:600;color:var(--t2);text-align:right;font-variant-numeric:tabular-nums}
 .stripe-chip{display:inline-flex;align-items:center;gap:4px;background:rgba(103,114,229,.08);border:1px solid rgba(103,114,229,.25);border-radius:5px;padding:5px 7px;font-size:8px;line-height:1.45;color:var(--t2);width:100%;margin-bottom:4px}
 @media(max-width:900px){.layout{grid-template-columns:1fr}.kpi-grid{grid-template-columns:repeat(3,1fr)}.sg{grid-template-columns:1fr}}
@@ -425,6 +425,7 @@ body{background:transparent}
 <link rel="stylesheet" href="/decision-room.css">
 <link rel="stylesheet" href="/cockpit.css">
 <link rel="stylesheet" href="/ui.css">
+<link rel="stylesheet" href="/experience.css">
 <script src="/ui.js"></script>
 <script src="/cockpit.js"></script>
 </head>
@@ -519,7 +520,7 @@ const D={
   taxInflation:.025,
   planEndYear:2058,
 };
-let P={...D,masterBudget:true};let scenarios=[];let compareMode=false;let _demoMode=false;let _livePlanParams=null;
+let P={...D,masterBudget:true,normManualThroughYear:2037};let scenarios=[];let compareMode=false;let _demoMode=false;let _livePlanParams=null;
 // Which saved case is loaded, and whether it has been edited since. These are deliberately
 // separate: editing a case must NOT eject you from it, or there is no way to save back into
 // the case you are working in — the only offer left would be "save as new".
@@ -665,7 +666,7 @@ function savePlannerState(){
   setSyncStatus('saving');
   const revision=++_saveRevision;
   const livePlanParams=typeof _livePlanParams!=='undefined'?_livePlanParams:null;
-  const payload=JSON.stringify({state:{P,livePlanParams,compareMode,activeTab,_projView,_todayView,_homeView,cockpitNwBasis:cockpitExRet?'exRetirement':'total',activeScenarioIdx,activeScenarioId:scenarios[activeScenarioIdx]?.id||null,scenarioDirty,monarchSnapshot,experienceVersion:7}});
+  const payload=JSON.stringify({state:{P,livePlanParams,compareMode,activeTab,_projView,_todayView,_homeView,cockpitNwBasis:cockpitExRet?'exRetirement':'total',activeScenarioIdx,activeScenarioId:scenarios[activeScenarioIdx]?.id||null,scenarioDirty,monarchSnapshot,experienceVersion:8}});
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Serialize writes so a slower earlier request cannot overwrite newer state.
@@ -685,7 +686,7 @@ function savePlannerState(){
 
 // Saved-state migration lives in /plan-migrate.js so it can be unit-tested in Node and
 // shared with roll-forward. See that file for the generation-by-generation chain.
-function migrateP(raw){return PlanMigrate.migrateP(raw)}
+function migrateP(raw){return {...PlanMigrate.migrateP(raw),normManualThroughYear:2037}}
 
 async function loadFromServer(){
   try{
@@ -704,6 +705,7 @@ async function loadFromServer(){
       if(s._projView!==undefined)_projView=s._projView;
       if(s._todayView!==undefined)_todayView=s._todayView;
       if(s._homeView!==undefined)_homeView=s._homeView;
+      if((s.experienceVersion||0)<8){activeTab='cockpit';_projView='life';}
       if(s.cockpitNwBasis!==undefined)cockpitExRet=s.cockpitNwBasis!=='total';
       if(s.activeScenarioIdx!==undefined)activeScenarioIdx=s.activeScenarioIdx;
       loadedCaseId=s.activeScenarioId;
@@ -1123,9 +1125,9 @@ function printPDF(){
     const surpColor=r.flow>=0?'#1a8754':'#cd3d64';
     return `<tr style="background:${rowBg}">
       <td style="font-weight:700;color:#0a2540${isHome?';background:#fef3c7':''}">${r.yr}</td>
-      <td style="color:#0073e6">${fmt(r.normCash)}</td>
-      <td style="color:#6772e5">${r.normStock>0?fmt(r.normStock):'—'}</td>
-      <td style="color:#7c3aed">${fmt(r.nancyG)}</td>
+      <td style="color:var(--b)">${fmt(r.normCash)}</td>
+      <td style="color:var(--link)">${r.normStock>0?fmt(r.normStock):'—'}</td>
+      <td style="color:var(--p)">${fmt(r.nancyG)}</td>
       <td>${fmt(r.gross)}</td>
       <td style="color:#cd3d64">${fmt(r.tax)}</td>
       <td style="color:#bf6900">${(r.effRate*100).toFixed(1)}%</td>
@@ -1133,8 +1135,8 @@ function printPDF(){
       <td>${fmt(r.totE)}</td>
       <td style="color:${surpColor};font-weight:600">${r.flow>=0?'+':'−'}${fmt(Math.abs(r.flow))}</td>
       <td>${r.tu>0?fmt(r.tu):'—'}</td>
-      <td style="color:#0073e6">${fmt(r.liq)}</td>
-      <td style="color:#6772e5">${r.sEnd>0?fmt(r.sEnd):'—'}</td>
+      <td style="color:var(--b)">${fmt(r.liq)}</td>
+      <td style="color:var(--link)">${r.sEnd>0?fmt(r.sEnd):'—'}</td>
       <td style="color:#1a8754;font-weight:600">${fmt(r.nw)}</td>
     </tr>`;
   }).join('');
@@ -1372,7 +1374,7 @@ function toggleSection(key,full){_collapsedSections.has(key)?_collapsedSections.
 
 let _controlBodies=null;
 function buildControls(){
-  const s=(l,k,mn,mx,st,fn)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span><span class="sv" id="v_${k}">${fn?fn(P[k]):P[k]}</span></div><input type="range" id="s_${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}" oninput="U('${k}',this.value)"></div>`;
+  const s=(l,k,mn,mx,st,fn)=>`<div class="sr"><div class="sh"><span class="sl">${l}</span><span class="sv" id="v_${k}">${fn?fn(P[k]):P[k]}</span></div><input type="range" id="s_${k}" min="${mn}" max="${mx}" step="${st}" value="${P[k]}" oninput="${k==='nancyRampYear'?'Upeek':'U'}('${k}',this.value)"${k==='nancyRampYear'?` onchange="U('${k}',this.value)"`:''}></div>`;
   // Free-typed dollar amount (vs. a slider) — for fields where the exact number matters
   // more than quick relative adjustment. Commits on blur/Enter, not per-keystroke, so
   // partial input while typing ("5","50","500"...) doesn't trigger a render each time.
@@ -1449,10 +1451,10 @@ function buildControls(){
     </div>`;
   }
   if(StripeGrants.active(P))normBody+=`<p class="sg-note">${Number.isFinite(StripeGrants.throughYear(P))?'Calculated through '+StripeGrants.throughYear(P)+' · Manual from '+(StripeGrants.throughYear(P)+1):'All years calculated from Stripe awards'}. Grant-year cash inputs are the pre-QCA baseline. Manual-year inputs include all cash and stock compensation.</p>`;
-  normBody+=`<p class="sg-note" style="margin:0 0 8px">Year-by-year cash and stock compensation is on the <strong>Compensation</strong> tab, above. These are the assumptions around it.</p>`;
+  normBody+=`<p class="sg-note" style="margin:0 0 8px">Set annual cash and stock compensation below. Growth rates apply to later years without a manual override.</p>`;
   normBody+=`<div style="height:1px;background:var(--bd);margin:7px 0 5px"></div>`;
-  normBody+=s('Cash growth ('+(sy+11)+'+)','normGrowth',0,.10,.005,v=>(v*100).toFixed(1)+'%');
-  if(!StripeGrants.active(P)||Number.isFinite(StripeGrants.throughYear(P)))normBody+=s('Stock growth ('+(sy+11)+'+)','normStockGrowth',0,.20,.005,v=>(v*100).toFixed(1)+'%');
+  normBody+=s('Cash growth (2038+)','normGrowth',0,.10,.005,v=>(v*100).toFixed(1)+'%');
+  if(!StripeGrants.active(P)||Number.isFinite(StripeGrants.throughYear(P)))normBody+=s('Stock growth (2038+)','normStockGrowth',0,.20,.005,v=>(v*100).toFixed(1)+'%');
   normBody+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
   normBody+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
   bodies.norm=normBody;
@@ -1506,12 +1508,12 @@ function buildControls(){
   // Nancy income
   let nancyBody='';
   if(sy<P.nancyRampYear){
-    const nancyW2Yrs=Math.min(4,P.nancyRampYear-sy);
+    const nancyW2Yrs=Math.max(0,Math.min(P.planEndYear||2058,P.nancyRampYear-1)-sy+1);
     nancyBody+=`<div style="font-size:7.5px;color:var(--t3);margin-bottom:3px">${sy}–${sy+nancyW2Yrs-1}: W2 gross</div>`;
-    for(let i=0;i<nancyW2Yrs;i++){const yr=sy+i;nancyBody+=s(yr,'nancyW2Y'+i,0,200000,5000,fmtF)}
+    for(let i=0;i<nancyW2Yrs;i++){const yr=sy+i;nancyBody+=`<div class="sr"><div class="sh"><label class="sl" for="s_nancyW2Y${i}">${yr}</label></div><input type="text" inputmode="numeric" id="s_nancyW2Y${i}" aria-label="Nancy ${yr} W-2 gross income" value="${fmtF(nancyW2Income(P,i))}" onchange="UTxt('nancyW2Y${i}',this.value,this)" onkeydown="if(event.key==='Enter')this.blur()" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--bd);border-radius:7px;background:var(--s1);color:var(--tx);font-size:14px;text-align:right"></div>`}
   }
-  nancyBody+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div><div style="font-size:7.5px;color:var(--t3);margin-bottom:3px">2030+: Practice builder</div>`;
-  nancyBody+=s('Rate','nancyHourlyRate',200,500,25,v=>'$'+v+'/hr')+s('Start year','nancyRampYear',2028,2036,1)+s('Starting clients/wk','nancyRampClients',0,10,1)+s('Max clients/wk','nancyMaxClients',5,25,1)+s('Years to max','nancyRampYears',2,10,1)+s('Weeks/yr','nancyWeeksPerYear',40,50,1);
+  nancyBody+=`<div style="height:1px;background:var(--bd);margin:4px 0"></div><div style="font-size:7.5px;color:var(--t3);margin-bottom:3px">${P.nancyRampYear}+: Practice builder</div>`;
+  nancyBody+=s('Rate','nancyHourlyRate',200,500,25,v=>'$'+v+'/hr')+s('Start year','nancyRampYear',Math.min(sy,P.nancyRampYear),Math.max(P.planEndYear||2058,P.nancyRampYear),1)+s('Starting clients/wk','nancyRampClients',0,10,1)+s('Max clients/wk','nancyMaxClients',5,25,1)+s('Years to max','nancyRampYears',2,10,1)+s('Weeks/yr','nancyWeeksPerYear',40,50,1);
   nancyBody+=s('Solo practice','nancySoloPractice',0,1,1,v=>v?'YES ✓':'No (W2)');
   if(P.nancySoloPractice){nancyBody+=`<div class="solo-box"><div style="font-size:7.5px;font-weight:600;color:var(--g);margin-bottom:3px">🏠 Solo Practice Deductions</div>`;nancyBody+=s('Overhead/yr','nancyPracticeOverhead',5000,40000,1000,fmtF)+s('Home office','nancyHomeOfficeDeduct',0,15000,1000,fmtF)+s('QBI rate','nancyQBIRate',0,.20,.01,v=>(v*100).toFixed(0)+'%');nancyBody+=`</div>`}
   nancyBody+=`<div id="nancy_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
@@ -1546,10 +1548,10 @@ function buildControls(){
   const retBody=s('Portfolio return','investReturn',.03,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Home appreciation','homeAppreciation',.01,.05,.005,v=>(v*100).toFixed(1)+'%')+sLinked('startingLiquid')+sLinked('k401Start')+sLinked('otherDebt')+s('Expense inflation','expenseInflation',.02,.05,.005,v=>(v*100).toFixed(1)+'%')+`<div style="font-size:7.5px;color:var(--t3);margin-top:4px">Cap gains: 34.5% · cost basis: 55% (NYC, hardcoded)</div>`;
   bodies.returns=retBody;
 
-  h+=ST('👶 Kids','kids',bodies.kids)+ST('📅 Plan Start Year','plan-start',planBody)+ST('👩‍⚕️ Nancy — Gross Income','nancy-income',nancyBody)+ST('📈 Returns & inflation','returns',bodies.returns);
+  h+=ST('👶 Kids','kids',bodies.kids)+ST('📅 Plan Start Year','plan-start',planBody)+`<section id="normCompensationSection" class="ex-compensation-section">${ST('Norm — Compensation','norm',normCompensationHtml()+bodies.norm)}</section>`+ST('👩‍⚕️ Nancy — Gross Income','nancy-income',nancyBody)+ST('📈 Returns & inflation','returns',bodies.returns);
   h+=`<div class="inputs-moved"><strong>Looking for something?</strong>
     <button type="button" onclick="_todayView='budget';setTab('today')">Expenses, housing, childcare, tuition →<small>Financial life → Budget</small></button>
-    <button type="button" onclick="setTab('stripe')">Compensation, Stripe equity and returns →<small>Stripe</small></button></div>`;
+    <button type="button" onclick="setTab('stripe')">Stripe holdings, valuation and sale policy →<small>Stripe</small></button></div>`;
   h+=`<div style="height:1px;background:var(--bd);margin:6px 0"></div>`;
   h+=`<button class="btn" onclick="resetAll()">↺ Reset All</button>`;
   h+=`<div style="display:flex;gap:4px;margin-top:4px"><button class="btn" onclick="exportJSON()" style="flex:1;font-size:8px">📤 Export</button><button class="btn" onclick="importJSON()" style="flex:1;font-size:8px">📥 Import</button></div>`;
@@ -1639,7 +1641,7 @@ function embedControls(key){
     .replace(/id="s_([A-Za-z0-9_]+)"/g,'data-s="$1"')
     .replace(/oninput="U\('([A-Za-z0-9_]+)',this\.value\)"/g,`oninput="Upeek('$1',this.value)" onchange="U('$1',this.value)"`);
 }
-function U(key,val){P[key]=parseFloat(val);sliderLabel(key);markDirty();if(key==='numKids'||key==='nancySoloPractice'||key==='planStartYear'||key==='childcareStartMonths')buildControls();render();savePlannerState()}
+function U(key,val){P[key]=parseFloat(val);sliderLabel(key);markDirty();if(key==='numKids'||key==='nancySoloPractice'||key==='nancyRampYear'||key==='planStartYear'||key==='childcareStartMonths')buildControls();render();savePlannerState()}
 function UTxt(key,val,el){const num=Math.max(0,parseFloat(String(val).replace(/[^0-9.-]/g,''))||0);P[key]=num;if(el)el.value=fmtF(num);markDirty();render();savePlannerState()}
 // ── One-off costs, by year ───────────────────────────────────────────────────
 // Every other expense control is a level or a rate that applies to every year. Setting one
@@ -2211,6 +2213,7 @@ function render(){
     return;
   }
   if(activeTab==='stripe'){renderStripeTab(R,P);return}
+  if(activeTab==='projection'&&_projView==='life'&&typeof renderLifeTimeline==='function'){renderLifeTimeline(R);return}
   if(activeTab==='projection'&&_projView==='table'){
     // Wide by necessity — this is the audit view. The .tw wrapper scrolls horizontally.
     // The expense components, beside the total they make. "$220K" with nothing inside it is
@@ -2238,7 +2241,7 @@ function render(){
       return `<tr style="background:${bg}">`+
         `<td style="font-weight:700;color:var(--tx);white-space:nowrap">${r.yr}${stub?` <span style="color:var(--a);font-weight:600" title="These figures cover the whole of ${r.yr}. The plan opened partway through it, so the closing balances grow from only the ${Math.round(r.stubFrac*100)}% after that date — the earlier months are already in your opening balances.">opened mid-yr</span>`:''}</td>`+
         `<td style="color:var(--b)">${fmt(r.normCash)}</td>`+
-        `<td style="color:#6772e5">${dash(r.normStock)}</td>`+
+        `<td style="color:var(--link)">${dash(r.normStock)}</td>`+
         `<td style="font-weight:600" title="Cash + stock — the W-2 figure taxes are computed on">${fmt(r.normG)}</td>`+
         `<td style="color:var(--p)">${fmt(r.nancyG)}</td>`+
         `<td>${fmt(r.gross)}</td>`+
@@ -2251,10 +2254,10 @@ function render(){
         `<td class="exp-cell"><button type="button" class="exp-toggle" aria-expanded="${open}" onclick="toggleExpRow(${r.yr})" title="What makes up ${r.yr}'s expenses">`+
           `<span>${fmt(r.totEFull)}</span><span class="exp-caret">${open?'▾':'▸'}</span></button></td>`+
         `<td style="color:${r.gapFull>0?'var(--a)':'var(--t3)'}" title="Shortfall against cash pay alone — how much of the year's vest must be sold">${r.gapFull>0?'−'+fmt(r.gapFull):'—'}</td>`+`<td style="color:${r.flowFull>=0?'var(--g)':'var(--r)'};font-weight:600" title="Total after-tax pay minus total spending, across the whole calendar year. Negative means the year genuinely draws on savings or held Stripe.">${(r.flowFull>=0?'+':'−')+fmt(Math.abs(r.flowFull))}</td>`+
-        `<td style="color:#6772e5">${dash(r.sSold)}</td>`+
-        `<td style="color:#6772e5;font-weight:600">${dash(r.sRet)}</td>`+
+        `<td style="color:var(--link)">${dash(r.sSold)}</td>`+
+        `<td style="color:var(--link);font-weight:600">${dash(r.sRet)}</td>`+
         `<td style="color:var(--b)">${fmt(r.liq)}</td>`+
-        `<td style="color:#6772e5;font-weight:600">${dash(r.sEnd)}</td>`+
+        `<td style="color:var(--link);font-weight:600">${dash(r.sEnd)}</td>`+
         `<td style="color:var(--p)">${dash(r.eq)}</td>`+
         `<td style="color:var(--g);font-weight:600">${fmt(r.nw)}</td>`+
       `</tr>`+(open?expDetailRow(r,cols.length,stub):'')}).join('')}</tbody></table></div>`;return}
@@ -2524,7 +2527,7 @@ function renderStripeTab(R,P){
   if(row.sHold>0){
     h+=`<div class="sc" style="margin-bottom:12px;border-color:rgba(103,114,229,.3)">
       <h3>◆ Held shares sold in ${yr}</h3>
-      <p style="line-height:1.6">This year's vest and the portfolio (down to its ${fmt(P.liquidReserveFloor??D.liquidReserveFloor)} reserve floor) still left ${fmt(row.need-row.sSold)} uncovered, so <strong style="color:#6772e5">${fmt(row.sHold)}</strong> of Stripe you already held was sold — realising <strong>${fmt(row.sGainTax)}</strong> of capital-gains tax, just <strong>${(row.sGainTax/row.sHold*100).toFixed(1)}%</strong> of the proceeds.
+      <p style="line-height:1.6">This year's vest and the portfolio (down to its ${fmt(P.liquidReserveFloor??D.liquidReserveFloor)} reserve floor) still left ${fmt(row.need-row.sSold)} uncovered, so <strong style="color:var(--link)">${fmt(row.sHold)}</strong> of Stripe you already held was sold — realising <strong>${fmt(row.sGainTax)}</strong> of capital-gains tax, just <strong>${(row.sGainTax/row.sHold*100).toFixed(1)}%</strong> of the proceeds.
       <br><br>That rate is low because the sale takes your <em>least appreciated</em> lots first: the newest shares carry almost no gain above their vest price, so they cost almost nothing in tax to sell. A sale at the vest-date FMV has no additional gain; this is the next cheapest thing.</p>
     </div>`;
   }
@@ -3692,7 +3695,7 @@ function budgetGridHtml(R,yr,allOv,series,mo){
     ${row('Savings',(r,i)=>series[i].saving.total,{cls:'grp',cat:B.EMERGENCY})}
     ${row('Investments',(r,i)=>series[i].investing.total,{cls:'grp'})}
   </tbody></table></div>
-  <p class="spend-caption" style="margin:10px 0 0">Future dollars. A dot marks a rule of yours (purple) or a figure you set for one year (amber). Click a year to budget it.</p>`;
+  <p class="spend-caption" style="margin:10px 0 0">Future dollars. A dot marks a rule of yours (green) or a figure you set for one year (amber). Click a year to budget it.</p>`;
 }
 // Rent for the years before a purchase (or every year, when renting). It honours the scope chips like every
 // other line: for one year only, or from this year on. The Home tab's slider still sets the rent for the whole plan.
@@ -3767,7 +3770,7 @@ function budgetChange(label,before,mutate){
   markDirty();buildControls();render();savePlannerState();
   budgetSnack(label,[]);
 }
-function budgetSuggestion(id){const yr=_budgetYear??PlannerTime.year();return PlannerSuggest.events(P,yr,40).find(e=>e.id===id)}
+function budgetSuggestion(id){const yr=_budgetYear??PlannerTime.year();return PlannerSuggest.events(P,Math.min(yr,P.planStartYear||yr),Math.max(40,yr-(P.planStartYear||yr)+40)).find(e=>e.id===id)}
 function budgetAddItem(id){
   const e=budgetSuggestion(id);if(!e||!e.item)return;
   const el=document.getElementById('sg_'+id);
@@ -3839,7 +3842,7 @@ function budgetReset(cat){
 }
 function budgetGo(where){
   if(where==='housing'){_homeView='housing';setTab('home')}
-  else if(where==='comp'){stripeWorkspaceSet('income');setTab('stripe')}
+  else if(where==='comp')experienceOpenCompensation();
   else if(where==='nancy')setTab('inputs');
 }
 // ── Same in every scenario ───────────────────────────────────────────────────
@@ -4055,7 +4058,7 @@ function renderBudgetTab(R,P){
   const actLine=act?(()=>{const v=B.variance(row.totEFull/12,act.perMonth);const word=v.status==='on'?'on pace with the budget':`${Math.abs(v.pct*100).toFixed(0)}% ${v.status==='over'?'above':'below'} the budget`;
     return `<p class="bd-actual-sum ${v.status}">Actual spending so far in ${yr}: <strong>${fmtF(Math.round(act.perMonth))}/mo</strong> across ${act.months} closed month${act.months===1?'':'s'}, against a budget of <strong>${fmtF(Math.round(row.totEFull/12))}/mo</strong> — <b class="bd-pill ${v.status}">${word}</b>.${act.unmappedTotal>0?` ${fmtF(Math.round(act.unmappedTotal/act.months))}/mo is in categories not matched to a line (see below).`:''}</p>`})():(yr===PlannerTime.year()&&_spendLoading?`<p class="spend-caption" style="margin:10px 0 0">Reading your imported spending…</p>`:'');
   const stockLine=f.stockShare>=0.05?`<p class="spend-caption" style="margin:10px 0 0">${_lensPct(f.stockShare)} of ${yr}'s spending is paid by selling Stripe stock, the part that moves with the share price.${f.fromSavings>0?` ${fmt(f.fromSavings)} comes from savings.`:''}</p>`:'';
-  h+=`<section class="cp-card bd-buckets"><div class="ps-head"><div><h3>Where ${yr}'s money goes</h3><p>${exHead}</p></div></div>
+  h+=`<section class="cp-card bd-buckets"><div class="ps-head"><div><h3>Where ${yr}'s money goes</h3><p>Spending, cash savings and retained equity are shown separately below.</p></div></div>
     ${bucketBar}${actLine}${stockLine}</section>`;
 
   // ── Where this year's money comes from ──
@@ -4069,7 +4072,7 @@ function renderBudgetTab(R,P){
     ${f.fromSavings>0?`<p class="bd-warn">${yr} draws ${fmt(f.fromSavings)} from savings.</p>`:''}</section>`;
 
   // ── Worth a look ──
-  const pend=PlannerSuggest.pending(P,yr,2);
+  const pend=typeof experiencePendingSuggestions==='function'?experiencePendingSuggestions(P,yr):PlannerSuggest.pending(P,yr,2);
   const sug=e=>{
     const rng=e.range?`typically ${fmt(e.range[0])}–${fmt(e.range[1])}${e.perYear?' a year':''}`:'';
     const act=e.kind==='item'
@@ -4133,7 +4136,7 @@ function renderBudgetTab(R,P){
     const shareKey=o.shareKey||PlannerShared.groupOf(k);
     const shared=shareKey&&PlannerShared.config(P).groups[shareKey];
     const tag=(src==='rule'?'<span class="bd-tag rule">Rule</span>':src==='pin'?'<span class="bd-tag pin">Pinned</span>':'')
-       +(shared?'<span class="bd-tag shared" title="The same in every scenario">Shared</span>':'')+(chk?`<span class="bd-tag chk ${chk.status}" title="${advEscape(chk.text)}">${chk.status==='low'?'Light':'High'} for the household</span>`:'');
+       ;
     const added=(row.livAdds||{})[k]||0;
     const m=modelParts[k],differs=(src==='rule'||src==='pin')&&m!=null&&Math.abs(m-value)>=1;
     const seg=src==='rule'?budgetSegment(P,k,yr):null;
@@ -4146,10 +4149,10 @@ function renderBudgetTab(R,P){
     const open=o.readonly&&_budgetEdit===k;
     const actions=o.readonly?`<button type="button" class="bd-link" onclick="budgetEdit('${k}')" aria-expanded="${open}">${open?'Close':'Edit'}</button>${k==='housing'?`<button type="button" class="bd-link" onclick="budgetGo('housing')">Rent or buy →</button>`:''}`
       :`${seg&&seg.kind==='pct'?`<button type="button" class="bd-link" onclick="budgetTie('${k}',false)">Fix in dollars</button>`:(commonHousehold(P)&&k!==PlannerBudget.EMERGENCY?'':`<button type="button" class="bd-link" onclick="budgetTie('${k}',true)">Tie to income</button>`)}${src!=='model'?`<button type="button" class="bd-link" onclick="budgetReset('${k}')">Reset</button>`:''}`;
-    return `<div class="bd-row" style="--tier:${o.color}">
+    return `<div class="bd-row" data-line="${k}" data-planned="${value}" style="--tier:${o.color}">
       <div class="cl-top"><span class="cl-name">${advEscape(label)}${tag}</span>${inputHtml}</div>
       <div class="cl-track"><i style="width:${Math.max(1.5,(o.max>0?value/o.max:0)*100).toFixed(1)}%"></i></div>
-      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord} income</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord} income"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord} income" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord} income</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${actualStrip(k,value,o.readonly)}${changeChips(k)}${chk?`<p class="bd-callout ${chk.status}"><b>${chk.status==='low'?'Looks light':'Looks high'}.</b> ${advEscape(chk.text)}</p>`:''}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${k==='housing'?budgetRentHtml(yr,row,unitWord,mo):''}${k==='housing'?embedControls('home').replace(/<div class="sr"><div class="sh"><span class="sl">Monthly rent<\/span>[\s\S]*?<\/div><input[^>]*><\/div>/,''):embedControls(k)}</div>`:''}`;
+      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord} income</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord} income"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord} income" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord} income</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${actualStrip(k,value,o.readonly)}${changeChips(k)}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${k==='housing'?budgetRentHtml(yr,row,unitWord,mo):''}${k==='housing'?embedControls('home').replace(/<div class="sr"><div class="sh"><span class="sl">Monthly rent<\/span>[\s\S]*?<\/div><input[^>]*><\/div>/,''):embedControls(k)}</div>`:''}`;
   };
   const living=row.livFullParts||{};
   const c=IS.compute(row,'net');
@@ -4203,7 +4206,7 @@ function renderBudgetTab(R,P){
     const spent=groupTotal(b.key),share=den>0?spent/den:0;
     const rows=b.key==='investing'?investRows():b.key==='saving'?savingRows():bucketRows(b.key);
     return `<div class="cl-group bd-sec" id="bd-g-${b.key}" style="--tier:${RM_COLOR[b.key]}"><div class="cl-ghead"><span><i></i>${advEscape(b.label)}</span><span class="cl-gtot">${_lensPct(share)} <small>${amtShort(spent)}${unitWord}</small></span></div>
-      <p class="cl-gnote">${advEscape(b.note)}</p>${callout(gc[b.key])}<div class="cl-list">${rows}</div></div>`;
+      <p class="cl-gnote">${advEscape(b.note)}</p><div class="cl-list">${rows}</div></div>`;
   });
   // ── The top of the page, the way a P&L starts: what comes in, what comes off, what is left to
   // allocate. Read-only here because income is set where it is earned (Stripe compensation, Nancy).
@@ -4229,7 +4232,7 @@ function renderBudgetTab(R,P){
   const baselines=`<details class="polish-fold refine-fold" ${bdFold('baselines')}><summary>Baselines the model starts from</summary><div>
     <p class="spend-caption" style="margin:0 0 10px">The yearly figure each line starts from in the plan's first year, before children, inflation and any rule or pin above. Changing one moves the model's own figure and keeps its growth; a rule above replaces a line outright.</p>
     ${embedControls('baselines')}</div></details>`;
-  h+=`<section class="cp-card bd-lines"><div class="ps-head"><div><h3>${yr} · line by line</h3><p>Type a dollar figure or a percentage over any line. A percentage is worked out against ${yr}'s ${basisWord} income and then held as dollars — or tie it to income and it follows income every year.</p></div>
+  h+=`<section class="cp-card bd-lines"><div class="ps-head"><div><h3>Your spending plan</h3><p>Household totals · ${yr} · edit a planned amount, or open a line for rules and scheduled changes. Living costs are shared across cases; housing follows each case.</p></div>
       </div>
     <div class="bd-tools bd-tools-m">${toolsInner}</div>
     ${groups}${oneOff}
@@ -4243,7 +4246,7 @@ function renderBudgetTab(R,P){
 }
 
 function renderSpendingTab(R,P){
-  let spendingViz=null;
+  let spendingViz=null;window.__spendingViz=null;
   const ca=document.getElementById('chartArea');
   destroyCharts();
   if(_spend===null&&!_spendLoading){loadSpending();}
@@ -4386,7 +4389,7 @@ function renderSpendingTab(R,P){
     }).sort((x,y)=>y.net-x.net);
     const shown=rows.slice(0,16),rest=rows.slice(16);
     const restNet=rest.reduce((s,r)=>s+r.net,0);
-    spendingViz={rows,months,asOf,verified:cov.completeMonths||[],driftWindow:_spendDriftWindow};
+    spendingViz={rows,months,asOf,verified:cov.completeMonths||[],driftWindow:_spendDriftWindow};window.__spendingViz=spendingViz;
     // The control sits with the chart it changes. Ranges wider than the history are hidden
     // rather than shown selected-but-identical, which would imply a longer view exists.
     const scopeChip=(kind,value,label,on)=>`<button class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}" onclick="setSpendScope('${kind}',${value==null?'null':`'${value}'`})">${label}</button>`;
@@ -4471,7 +4474,7 @@ function renderSpendingTab(R,P){
         <td style="font-family:'SF Mono',monospace;color:${net>=0?'var(--g)':'var(--r)'};font-weight:600">${net>=0?'+':'−'}${exact(Math.abs(net))}</td>
         <td style="font-family:'SF Mono',monospace;color:var(--t3)">${exact(m.transfer)}</td>
         <td style="font-family:'SF Mono',monospace;color:var(--t3)">${exact(m.cardPayment)}</td>
-        <td style="font-family:'SF Mono',monospace;color:#6772e5">${exact(m.investment)}</td>
+        <td style="font-family:'SF Mono',monospace;color:var(--link)">${exact(m.investment)}</td>
         <td style="color:var(--t3)">${m.count}${m.pending?` <span style="color:var(--a)">+${m.pending}p</span>`:''}</td>
       </tr>`}).join('')}</tbody></table></div></details>`;
 
@@ -4783,7 +4786,7 @@ function renderPortfolioTab(R,P){
 // Housing asks "how much can I afford"; this asks "should I buy at all". The plan is run once
 // buying and once renting for good, everything else identical, and the levers here move both
 // runs together. They explore — nothing is saved until "Apply to my plan".
-let _rbOv={},_rbLens='networth',_rbHorizon='end';
+let _rbOv={},_rbLens='networth',_rbHorizon='10';
 const RB_LEVERS=[
   // key, label, min, max, step, format, group
   ['investReturn','Portfolio return',0,.12,.0025,v=>(v*100).toFixed(2).replace(/\.?0+$/,'')+'%','market'],
@@ -5781,11 +5784,11 @@ function renderCompareTab(R,P){
     h+=`<td style="padding:7px 10px;color:var(--t2);font-weight:500;border-bottom:1px solid var(--bd);position:sticky;left:0;background:var(--s1);z-index:1">${m.label}</td>`;
     cols.forEach((c,ci)=>{
       const v=vals[mi][ci];
-      const isBest=best[mi][ci]==='best';
+      const isBest=false;
       const isWorst=worst[mi][ci]==='worst';
       const bg=isBest?'rgba(26,135,84,.07)':isWorst?'rgba(205,61,100,.05)':'';
       const clr=isBest?'var(--g)':isWorst?'var(--r)':c.isCurrent?'var(--tx)':c.color;
-      const badge=isBest?'<span style="font-size:7px;margin-left:3px;opacity:.7">▲best</span>':isWorst?'<span style="font-size:7px;margin-left:3px;opacity:.7">▼</span>':'';
+      const badge='';
       h+=`<td style="padding:7px 14px;text-align:right;border-bottom:1px solid var(--bd);font-family:'SF Mono',monospace;font-weight:${c.isCurrent?'700':'500'};background:${bg};color:${clr}">${m.fmt(v)}${badge}</td>`;
     });
     h+=`</tr>`;
@@ -5945,7 +5948,7 @@ function enterDemoMode(opts){
   // this used to start from it with a dozen keys overridden, so every other budget line still
   // showed the real household while presenting. Every money figure goes through the scrub now.
   const base=window.__SHARED_DEMO__?D:PlannerDemo.demoDefaults(D);
-  P={...base,...PlannerDemo.demoShape(year),childcareStartMonths:6};
+  P={...base,...PlannerDemo.demoShape(year),childcareStartMonths:6,normManualThroughYear:2037};
   // Everything a screen reads from the server, replaced — including what would otherwise
   // carry the owner's real history into the room: saved snapshots, advisor conversations, the
   // watchlist's last briefing.
@@ -6002,10 +6005,10 @@ let advPendingProposals=null; // {changes:[...], aiParams:{...}} from last agent
 // Which view of the projection is showing. Net worth, income, cash flow and the raw table
 // are four renderings of ONE dataset, so they are a view switch inside a single tab rather
 // than four top-level destinations competing in the nav.
-let _projView='nw';
+let _projView='life';
 // Two surfaces answered the same question from different angles, so each became one tab
 // with a view switch rather than several competing for space in the nav.
-let _todayView='overview';
+let _todayView='spending';
 // Whether the cockpit reports net worth excluding retirement. See the note in cockpit.js;
 // it lives here because savePlannerState() persists it with the rest of the view state.
 // Retirement is money you cannot reach for decades, so the cockpit leads with what you
@@ -6407,12 +6410,12 @@ INCOME (${planSY} base year)
 • Spendable cash after tax: ${fmt(y26.inc)} — this is cash comp + Nancy − all household tax − pretax − practice overhead. It EXCLUDES stock he retains. (Take-home if he sold every vesting share: ${fmt(y26.netTC)}.)
 • Pre-tax deductions: 401k ${fmt(P.pretax401k)} + benefits ${fmt(P.pretaxBenefits)} = ${fmt(P.pretax401k+P.pretaxBenefits)}
 
-${StripeGrants.active(P)?'GRANT MODEL ACTIVE: normStockY inputs are ignored; after stripeGrants.throughYear, stripeGrants.manualComp holds total annual cash and stock income. Edit manual years in Stripe → Compensation. Stock income comes from actual/estimated ARG and PEG cohorts plus QCA stock; quarterly FMV determines income. normCashY is the pre-QCA baseline with an explicit existing-QCA adjustment. Edit grant schedules in the Stripe tab.':''}
+${StripeGrants.active(P)?'GRANT MODEL ACTIVE: normStockY inputs are ignored; after stripeGrants.throughYear, stripeGrants.manualComp holds total annual cash and stock income. Edit manual years in Plan assumptions → Norm’s compensation. Stock income comes from actual/estimated ARG and PEG cohorts plus QCA stock; quarterly FMV determines income. normCashY is the pre-QCA baseline with an explicit existing-QCA adjustment. Edit grant schedules in the Stripe tab.':''}
 PER-YEAR INCOME INPUTS (editable via set_param)
 • Norm CASH comp, Y0-Y10 (${planSY}-${planSY+10}): ${Array.from({length:11},(_,i)=>fmt(P['normCashY'+i])).join(' · ')}  [keys: normCashY0 .. normCashY10]
 • Norm STRIPE STOCK grant, Y0-Y10: ${Array.from({length:11},(_,i)=>fmt(normComp(P,i).stock)).join(' · ')}  [keys: normStockY0 .. normStockY10]
 • Beyond ${planSY+10} each stream compounds on its own: cash at normGrowth (${((P.normGrowth??0.01)*100).toFixed(1)}%/yr), stock at normStockGrowth (${((P.normStockGrowth??P.normGrowth??0.01)*100).toFixed(1)}%/yr).
-• Nancy W2 (only used while yr<nancyRampYear=${P.nancyRampYear}): Y0 ${fmt(P.nancyW2Y0)} · Y1 ${fmt(P.nancyW2Y1)} · Y2 ${fmt(P.nancyW2Y2)} · Y3 ${fmt(P.nancyW2Y3)}  [keys: nancyW2Y0, nancyW2Y1, nancyW2Y2, nancyW2Y3]
+• Nancy W2 (before ${P.nancyRampYear}): ${Array.from({length:Math.max(0,P.nancyRampYear-planSY)},(_,i)=>`${planSY+i} ${fmt(nancyW2Income(P,i))} [nancyW2Y${i}]`).join(' · ')}
 
 EXPENSES (${planSY}${y26.stubFrac<1?`, part year — only the ${Math.round(y26.stubFrac*100)}% after ${String(P.observedOn||'').slice(0,10)}`:''})
 • Housing ${fmt(y26.h)} · Living ${fmt(y26.liv)} · Childcare ${fmt(y26.cc)} · Tuition ${fmt(y26.tu)}${y26.eAdj?` · One-off ${fmt(y26.eAdj)}`:''} = ${fmt(y26.totE)} total. These four (plus any one-off) sum to the total exactly.
@@ -7263,5 +7266,6 @@ window.onerror=function(msg,src,line,col,err){
   console.error('Global error:',err||msg);
 };
 </script>
+<script src="/experience.js"></script>
 </body>
 </html>

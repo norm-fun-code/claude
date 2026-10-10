@@ -154,7 +154,7 @@ function renderCockpit(R){
   const priorities=(_inbox?.priorities||[]).slice(0,3);
   document.getElementById('summaries').innerHTML='';
   document.getElementById('chartArea').innerHTML=`<div class="cockpit">
-    <header class="cp-heading"><div><h2>Financial command.</h2></div><button class="cp-button" onclick="cockpitRefresh()" ${_ovwLoading||_inboxLoading?'disabled':''}>Refresh overview ↻</button></header>
+    <header class="cp-heading"><div><h2>Your financial picture.</h2></div><button class="cp-button" onclick="cockpitRefresh()" ${_ovwLoading||_inboxLoading?'disabled':''}>Refresh overview ↻</button></header>
     <section class="cp-register" data-tense="now">
       <div class="cp-register-head">
         <span class="ui-eyebrow">Where you stand</span>
@@ -164,7 +164,7 @@ function renderCockpit(R){
       <div class="cp-wealth">
         <span class="cp-eyebrow">NET WORTH${cockpitExRet?' · EX-RETIREMENT':''}</span>
         <strong class="ui-hero-value" id="cp-hero" data-source="${hero.source}">${hero.value==null?'—':UI.money(hero.value)}</strong>
-        <div class="cp-hero-meta">${UI.prov(hero.source)}${hero.partial?cockpitGapPanel(s,d):''}</div>
+        <div class="cp-hero-meta">${hero.source==='observed'?'':UI.prov(hero.source)}${hero.partial?cockpitGapPanel(s,d):''}</div>
         <p>${e(hero.note)}</p>
         <button onclick="cockpitGo('overview')">See the composition <span>${UI.icon('arrow')}</span></button>
       </div>
@@ -205,7 +205,7 @@ function renderCockpit(R){
       <div class="cp-year-grid" id="cp-year-grid"></div>
       <div id="cp-bridge"></div>
       <div id="cp-year-end"></div>
-      <details class="cp-evidence"><summary>Show me why</summary><p>These are year-end estimates from your saved plan assumptions. Net worth here is modeled liquid investments, Stripe, home equity and retirement, less the revolving balance your plan carries. That balance is held flat rather than paid down — right for cards cleared monthly, wrong for a term loan, which would need its own amortisation. The account balances above are separate observations; this chart is not a historical performance record.</p><button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button></details></section>
+      <details class="cp-evidence"><summary>Show me why</summary><p>These are year-end estimates from your saved plan assumptions. Net worth here is modeled liquid investments, Stripe, home equity and retirement, less the revolving balance your plan carries. That balance is held flat rather than paid down — right for cards cleared monthly, wrong for a term loan, which would need its own amortisation. The account balances above are separate observations; this chart is not a historical performance record.</p><button onclick="cockpitGo('table')">Inspect the annual table ↗</button></details></section>
       </section>
     </div><aside class="cp-advisor">
       <section class="cp-register" data-tense="attention">
@@ -224,7 +224,7 @@ function renderCockpit(R){
   cockpitDrawChart(R,P,selected.yr);
   cockpitSelectYear(selected.yr);
   // One animated number on the page, once. Everything else is still.
-  if(hero.value!=null)UI.countUp(document.getElementById('cp-hero'),hero.value);
+  if(hero.value!=null)UI.countUp(document.getElementById('cp-hero'),hero.value,{instant:true});
 }
 // ── The trajectory, as an instrument ─────────────────────────────────────────
 // Three things separate a chart you read from one you use, and the old version had
@@ -353,16 +353,16 @@ function cockpitDrawChart(R,P,year){
     // Drawn as a filled region between two invisible lines: the reader should see an
     // area of uncertainty, not two more curves competing with the median.
     ds.push({label:'90th percentile',data:[null,...band.p90.map((v,i)=>deflate(v,R[i].yr))],borderColor:'transparent',
-      backgroundColor:'rgba(122,227,195,.09)',fill:'+1',pointRadius:0,borderWidth:0,tension:.25});
+      backgroundColor:'rgba(62,118,92,.09)',fill:'+1',pointRadius:0,borderWidth:0,tension:.25});
     ds.push({label:'10th percentile',data:[null,...band.p10.map((v,i)=>deflate(v,R[i].yr))],borderColor:'transparent',
       backgroundColor:'transparent',fill:false,pointRadius:0,borderWidth:0,tension:.25});
   }
   ds.push({label:cockpitExRet?'Net worth ex-retirement':'Net worth incl. retirement',
     data:[cockpitExRet?opening-Math.abs(Number(P.k401Start||0)):opening,...R.map(r=>deflate(cpNw(r),r.yr))],
-    borderColor:'#7ae3c3',backgroundColor:'transparent',fill:false,
+    borderColor:'#3e765c',backgroundColor:'transparent',fill:false,
     pointRadius:0,pointHoverRadius:5,borderWidth:2.5,tension:.25});
   ds.push({label:'Liquid investments',data:[P.startingLiquid||0,...R.map(r=>deflate(r.liq,r.yr))],
-    borderColor:'#b6a8ff',borderDash:[4,4],pointRadius:0,borderWidth:1.8,tension:.25});
+    borderColor:'#839574',borderDash:[4,4],pointRadius:0,borderWidth:1.8,tension:.25});
 
   charts.cockpit=new Chart(document.getElementById('cockpitTrajectory'),{
     type:'line',
@@ -499,7 +499,7 @@ function cockpitRenderYearEnd(R){
       :`<p class="cp-ye-verdict" data-dir="flat">${e((card&&card.reason)||'No scorecard for this year.')}</p>`}
     <div class="cp-ye-actions">
       <button class="cp-primary" onclick="cockpitRollForward(${due.closingYear})">Roll forward to ${due.closingYear+1}</button>
-      <button onclick="cockpitGo('table')">Inspect the yearly calculations ↗</button>
+      <button onclick="cockpitGo('table')">Inspect the annual table ↗</button>
     </div>
   </section>`;
 }

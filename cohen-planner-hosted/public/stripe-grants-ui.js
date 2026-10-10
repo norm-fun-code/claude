@@ -2,8 +2,17 @@
 let stripeWorkspace='overview';
 // Fields the reader enters in billions and the model stores in dollars.
 const STRIPE_BILLIONS=['referenceValuation','valuationCeiling'];
-function stripeWorkspaceSet(view){stripeWorkspace=['overview','prices','income','assumptions'].includes(view)?view:'overview';render();}
-function stripeWorkspaceNav(){return `<nav class="sg-nav" aria-label="Stripe workspace">${[['overview','Position'],['income','Compensation'],['prices','Valuation path'],['assumptions','Assumptions']].map(([v,l])=>`<button class="${stripeWorkspace===v?'active':''}" aria-current="${stripeWorkspace===v?'page':'false'}" onclick="stripeWorkspaceSet('${v}')">${l}</button>`).join('')}</nav>`;}
+function stripeWorkspaceSet(view){if(view==='income'){experienceOpenCompensation();return;}stripeWorkspace=['overview','prices','income','assumptions'].includes(view)?view:'overview';render();}
+function stripeWorkspaceNav(){return `<nav class="sg-nav" aria-label="Stripe workspace">${[['overview','Position'],['prices','Valuation path'],['assumptions','Assumptions']].map(([v,l])=>`<button class="${stripeWorkspace===v?'active':''}" aria-current="${stripeWorkspace===v?'page':'false'}" onclick="stripeWorkspaceSet('${v}')">${l}</button>`).join('')}<button class="sg-comp-shortcut" onclick="experienceOpenCompensation()">Edit compensation ↗</button></nav>`;}
+function normCompensationHtml(){
+  const sy=P.planStartYear||2026,ey=Math.min(P.planEndYear||2058,2037);
+  return `<section class="sc"><p>Cash includes salary, bonus and cash awards. Stock is gross compensation at vesting, including the upside you expect. These inputs feed every projection.</p><div class="sg-table-wrap"><table><thead><tr><th>Year</th><th title="Salary, bonus and cash awards">Cash compensation</th><th title="Gross stock compensation at vesting">Stock at vesting</th><th>Total</th></tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>{const n=normComp(P,i);return `<tr><th scope="row">${sy+i}</th>${['cash','stock'].map(k=>`<td><input id="sg-comp-${k}-${sy+i}" type="number" min="0" step="any" aria-label="${sy+i} ${k} compensation" value="${Math.round(n[k])}" onchange="stripeManualSet(${sy+i},'${k}',this.value)"></td>`).join('')}<td id="sg-total-${sy+i}">${fmt(n.cash+n.stock)}</td></tr>`;}).join('')}</tbody></table></div><p class="sg-note">From 2038 onward, cash and stock follow the growth controls below. Earlier saved annual overrides remain stored; entries after 2037 do not drive this forecast.</p></section>`;
+}
+function experienceOpenCompensation(){
+  _collapsedSections.delete('norm');
+  setTab('inputs');
+  document.getElementById('normCompensationSection')?.scrollIntoView({block:'start',behavior:'smooth'});
+}
 function stripeGrantIntro(){return '';}
 // Put 2037 onward (the years after the eleven explicit ones) back on the growth assumptions: forget every
 // figure typed into those rows, so they follow the last explicit year at the cash and stock growth rates again.
@@ -16,7 +25,7 @@ function stripeManualClear(){
   _laterBackup=had;
   delete P.stripeManualLater;
   markDirty();buildControls();savePlannerState();render();
-  showToast(`${from}+ now follows your assumptions. Undo is on the Compensation tab until you reload.`,'green');
+  showToast(`${from}+ now follows your assumptions. Undo is in Plan assumptions → Norm’s compensation until you reload.`,'green');
 }
 function stripeManualRestore(){
   if(!_laterBackup)return;
@@ -28,7 +37,7 @@ function stripeManualSet(year,key,value){
   const i=year-(P.planStartYear||2026), n=Number(value);
   if(i<11)P['norm'+(key==='cash'?'Cash':'Stock')+'Y'+i]=n;
   else P.stripeManualLater={...P.stripeManualLater,[year]:{...normComp(P,i),[key]:n}};
-  markDirty();buildControls();savePlannerState();
+  markDirty();if(activeTab!=='inputs')buildControls();savePlannerState();
   // Deliberately NOT render(). This fires on blur, once per cell, while you are working
   // down a column of thirty-three years — and a full re-render replaces the table, which
   // threw away its scroll position and the focus Tab had just moved on to. Every figure the
@@ -87,7 +96,7 @@ function renderStripeWorkspace(R){
     // vest withholding, the return path, and how much of each vest is sold. One definition, here.
     h+=`<section class="sc sg-assume">${embedControls('stripe')}</section>`;
   }else if(stripeWorkspace==='income'){
-    h+=`<section class="sc"><p>Cash includes salary, bonus and cash awards. Stock is gross compensation at vesting, including the upside you expect. These inputs feed every projection.</p>${Object.keys(P.stripeManualLater||{}).length?`<p class="sg-note">You have typed your own figures for ${sy+11} onward. <button type="button" class="bd-link" onclick="stripeManualClear()">Use my growth assumptions for ${sy+11}+ instead</button></p>`:_laterBackup?`<p class="sg-note">Back on your growth assumptions for ${sy+11}+. <button type="button" class="bd-link" onclick="stripeManualRestore()">Undo</button></p>`:''}<div class="sg-table-wrap"><table><thead><tr><th>Year</th><th>Cash compensation</th><th>Stock compensation at vesting</th><th>Total</th></tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>{const n=normComp(P,i);return `<tr><th>${sy+i}</th>${['cash','stock'].map(k=>`<td><input id="sg-comp-${k}-${sy+i}" type="number" min="0" step="any" aria-label="${sy+i} ${k} compensation" value="${Math.round(n[k])}" onchange="stripeManualSet(${sy+i},'${k}',this.value)"></td>`).join('')}<td id="sg-total-${sy+i}">${fmt(n.cash+n.stock)}</td></tr>`;}).join('')}</tbody></table></div><p class="sg-note">Years after ${sy+10} follow the growth assumptions unless you enter an annual amount. Previously calculated amounts have been preserved as manual inputs.</p></section>`;
+    h+=normCompensationHtml();
     h+=`<section class="sc sg-assume"><h3>Growth, 401(k) and benefits</h3>${embedControls('norm')}</section>`;
   }else{
     // Billions in, billions out. The field used to be labelled in dollars, so "160" — the
@@ -108,7 +117,7 @@ function renderStripeWorkspace(R){
         :v>=1e6?'$'+Math.round(v/1e6).toLocaleString('en-US')+'M'
         :'$'+Math.round(v).toLocaleString('en-US');
       h+=stripeGrantChart(Object.values(paths[0].prices).filter(p=>p.year>=sy&&p.year<=ey).map(p=>({year:p.year,value:p.valuation})),'Company valuation · current scenario',bn);
-      h+=`<details class="sc polish-fold refine-fold"><summary>Year-by-year scenario values</summary><div class="sg-table-wrap"><table><thead><tr><th>February</th>${paths.map(x=>`<th>${esc(x.name)}</th>`).join('')}</tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>`<tr><th>${sy+i}</th>${paths.map(x=>`<td>${bn(x.prices[sy+i].valuation)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
+      h+=`<details class="sc polish-fold refine-fold"><summary>Year-by-year scenario values</summary><div class="sg-table-wrap"><table><thead><tr><th>February</th>${paths.map(x=>`<th>${esc(x.name)}</th>`).join('')}</tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>`<tr><th scope="row">${sy+i}</th>${paths.map(x=>`<td>${bn(x.prices[sy+i].valuation)}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
     }else h+=`<section class="sc"><p>Enter a reference company valuation to see its projected value each year and compare your saved scenarios.</p></section>`;
     h+=`<details class="sc polish-fold"><summary>Edit growth assumptions · selected scenario</summary><div class="sg-fields">${Array.from({length:10},(_,i)=>`<label class="sg-field"><span>${sy+i} growth → Feb ${sy+i+1}</span><input type="number" min="-99" max="300" step="1" value="${((P['stripeRetY'+i]??.08)*100).toFixed(1)}" onchange="U('stripeRetY${i}',Number(this.value)/100)"></label>`).join('')}<label class="sg-field"><span>Long-term growth %</span><input type="number" min="-99" max="100" value="${((P.stripeLongTermReturn??.08)*100).toFixed(1)}" onchange="U('stripeLongTermReturn',Number(this.value)/100)"></label>${field('Annual dilution (0.01 = 1%)','dilutionRate',c.dilutionRate)}</div></details>`;
   }
@@ -121,7 +130,7 @@ function stripeGrantChart(points,label,format){
   // Every year of the path is readable, not just the three that fit as labels: the chart
   // carries its own points and reports whichever one the pointer is nearest.
   const hover=points.map((p,i)=>[String(p.year),format(p.value),Math.round(xy[i][1]*100)/100]);
-  return `<figure class="sg-chart"><figcaption>${label} <span class="sg-chart-read" data-idle="Projected · selected scenario">Projected · selected scenario</span></figcaption><svg viewBox="0 0 900 190" role="img" aria-label="${label}: ${format(points[0].value)} in ${points[0].year}, ${format(points.at(-1).value)} in ${points.at(-1).year}" data-pts='${JSON.stringify(hover)}' onpointermove="stripeChartHover(event,this)" onpointerleave="stripeChartLeave(this)"><line x1="40" y1="155" x2="860" y2="155" stroke="var(--bd)"/><line class="sg-cross" x1="40" y1="24" x2="40" y2="155" stroke="#8b80ff" stroke-width="1" stroke-dasharray="3 3" opacity="0"/><polyline points="${xy.map(p=>p.join(',')).join(' ')}" fill="none" stroke="#8b80ff" stroke-width="3"/>${marks.map(i=>`<circle cx="${xy[i][0]}" cy="${xy[i][1]}" r="4" fill="#8b80ff"/>`).join('')}<circle class="sg-hoverdot" r="6" fill="#8b80ff" stroke="var(--s1)" stroke-width="2" opacity="0"/></svg><div class="sg-chart-labels">${marks.map(i=>`<span>${points[i].year}<strong>${format(points[i].value)}</strong></span>`).join('')}</div></figure>`;
+  return `<figure class="sg-chart"><figcaption>${label} <span class="sg-chart-read" data-idle="Projected · selected scenario">Projected · selected scenario</span></figcaption><svg viewBox="0 0 900 190" role="img" aria-label="${label}: ${format(points[0].value)} in ${points[0].year}, ${format(points.at(-1).value)} in ${points.at(-1).year}" data-pts='${JSON.stringify(hover)}' onpointermove="stripeChartHover(event,this)" onpointerleave="stripeChartLeave(this)"><line x1="40" y1="155" x2="860" y2="155" stroke="var(--bd)"/><line class="sg-cross" x1="40" y1="24" x2="40" y2="155" stroke="#54784c" stroke-width="1" stroke-dasharray="3 3" opacity="0"/><polyline points="${xy.map(p=>p.join(',')).join(' ')}" fill="none" stroke="#54784c" stroke-width="3"/>${marks.map(i=>`<circle cx="${xy[i][0]}" cy="${xy[i][1]}" r="4" fill="#54784c"/>`).join('')}<circle class="sg-hoverdot" r="6" fill="#54784c" stroke="var(--s1)" stroke-width="2" opacity="0"/></svg><div class="sg-chart-labels">${marks.map(i=>`<span>${points[i].year}<strong>${format(points[i].value)}</strong></span>`).join('')}</div></figure>`;
 }
 // Nearest-year readout. The pointer never has to land on a point; it picks the closest.
 function stripeChartHover(e,svg){

@@ -407,7 +407,7 @@ describe('the Budget reads like a P&L, and every line can be set as a share of i
  it('sends income edits to where income is set',()=>{
   const go=html.slice(html.indexOf('function budgetGo('),html.indexOf('\n}\n',html.indexOf('function budgetGo('))+3);
   expect(go.length).toBeGreaterThan(60);
-  expect(go).toContain("stripeWorkspaceSet('income');setTab('stripe')");expect(go).toContain("setTab('inputs')");
+  expect(go).toContain("experienceOpenCompensation()");expect(go).toContain("setTab('inputs')");
  });
  it('puts an editable percentage of income on every line, always visible, and ignores a repeat',()=>{
   expect(ui).toContain('class="bd-pct"');
@@ -429,8 +429,8 @@ describe('the Budget reads like a P&L, and every line can be set as a share of i
   expect(M.budgetValue(shared,'dining',2030,income)).toBe(40000);           // spending still uses the shared reference
   expect(B.describe(shared,'emergency',2030,v=>'$'+v)).toBe('4% of net income, every year');
  });
- it('shows the call-outs, in words, under the lines they are about',()=>{
-  expect(ui).toContain('class="bd-callout ${chk.status}"');expect(ui).toContain("chk.status==='low'?'Looks light':'Looks high'");
+ it('keeps calibration checks available without repeating generic judgments on each row',()=>{
+  expect(ui).toContain('Suggestions for a family like yours');expect(ui).not.toContain('class="bd-callout ${chk.status}"');
   const S=require('../public/suggest.js');
   for(const line of ['dining','shopping','entertainment','vacations'])expect(S.BANDS[line]).toBeTruthy();
  });
@@ -707,9 +707,9 @@ describe('call-outs for a whole group, and the bottom line',()=>{
 describe('group call-outs and bigger targets on the Budget screen',()=>{
  const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
  const css=fs.readFileSync(new URL('../public/ui.css',import.meta.url),'utf8');
- it('shows a call-out under each group and under the bottom line, and a housing one on its row',()=>{
+ it('retains model checks for optional calibration while keeping group rows focused',()=>{
   expect(ui).toContain('const gc=B.groupChecks(P,R,yr);');
-  expect(ui).toContain("${callout(gc[b.key])}<div class=\"cl-list\">");
+  expect(ui).not.toContain("${callout(gc[b.key])}<div class=\"cl-list\">");
   expect(ui).toContain('${callout(gc.bottom)}</div>`;');
   expect(ui).toContain('if(gc.housing)checkByLine.housing=');
   expect(ui).toContain("c.status==='low'?'Looks light':c.status==='draw'?'Heads up':'Looks high'");
@@ -780,11 +780,6 @@ describe('rent set from the Budget honours the scope',()=>{
 
 describe('Stripe compensation: back to the assumptions for the later years',()=>{
  const ui=fs.readFileSync(new URL('../public/stripe-grants-ui.js',import.meta.url),'utf8');
- it('offers a reset only while typed figures exist, and undo after',()=>{
-  expect(ui).toContain('function stripeManualClear()');
-  expect(ui).toContain('delete P.stripeManualLater');
-  expect(ui).toMatch(/Object\.keys\(P\.stripeManualLater\|\|\{\}\)\.length\?[\s\S]*stripeManualClear\(\)[\s\S]*_laterBackup\?[\s\S]*stripeManualRestore\(\)/);
- });
  it('clearing the typed years returns the model to its growth formula',()=>{
   const typed=M.run(plan({stripeManualLater:{2037:{cash:900000,stock:900000}}})).R;
   const clean=M.run(plan({})).R;

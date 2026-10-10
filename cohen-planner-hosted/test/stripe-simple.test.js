@@ -41,15 +41,21 @@ describe('simplified Stripe',()=>{
 });
 function workspace(){
  const elements={chartArea:{innerHTML:''}},messages=[],p=PM.migrateP(plan());
- const ctx={P:p,StripeGrants:G,normComp:M.normComp,structuredClone,scenarios:[{name:'Conservative',params:{...p,stripeRetY0:.1}}],scenarioPlan:p=>p,fmt:n=>'$'+Math.round(n),document:{getElementById:id=>elements[id]},markDirty(){},buildControls(){},embedControls:()=>'',savePlannerState(){},showToast:m=>messages.push(m)};
+ const ctx={P:p,activeTab:'stripe',_collapsedSections:new Set(['norm']),setTab(tab){ctx.activeTab=tab;elements.chartArea.innerHTML=vm.runInContext('normCompensationHtml()',ctx)},StripeGrants:G,normComp:M.normComp,structuredClone,scenarios:[{name:'Conservative',params:{...p,stripeRetY0:.1}}],scenarioPlan:p=>p,fmt:n=>'$'+Math.round(n),document:{getElementById:id=>elements[id]},markDirty(){},buildControls(){},embedControls:()=>'',savePlannerState(){},showToast:m=>messages.push(m)};
  ctx.render=()=>vm.runInContext('renderStripeWorkspace([])',ctx);vm.createContext(ctx);vm.runInContext(fs.readFileSync(new URL('../public/stripe-grants-ui.js',import.meta.url),'utf8'),ctx);
  return {ctx,elements,messages,call:s=>vm.runInContext(s,ctx)};
 }
 describe('simple Stripe UI',()=>{
  it('renders compensation and valuation with no award controls and a readable scenario table',()=>{
-  const w=workspace();for(const t of ['income','prices']){w.call(`stripeWorkspaceSet('${t}')`);expect(w.elements.chartArea.innerHTML).not.toMatch(/NaN|undefined|Awards & elections|Use grant model through/);}
+  const w=workspace();for(const t of ['income','prices']){w.call(`stripeWorkspaceSet('${t}')`);if(t==='income'){expect(w.ctx.activeTab).toBe('inputs');expect(w.ctx._collapsedSections.has('norm')).toBe(false);}expect(w.elements.chartArea.innerHTML).not.toMatch(/NaN|undefined|Awards & elections|Use grant model through/);}
   expect(w.elements.chartArea.innerHTML).toContain('Conservative');expect(w.elements.chartArea.innerHTML).toContain('$176B');
   const pts=JSON.parse(w.elements.chartArea.innerHTML.match(/data-pts='([^']+)'/)[1]);expect(pts).toHaveLength(33);
+ });
+ it('shows annual compensation through 2037 and leaves later years to growth controls',()=>{
+  const w=workspace();w.call("stripeWorkspaceSet('income')");
+  expect(w.elements.chartArea.innerHTML).toContain('sg-comp-cash-2037');
+  expect(w.elements.chartArea.innerHTML).not.toContain('sg-comp-cash-2038');
+  expect(w.elements.chartArea.innerHTML).toContain('From 2038 onward');
  });
  it('edits the same first-eleven-year inputs and isolates later overrides',()=>{
   const w=workspace();w.call("stripeWorkspaceSet('income')");w.call("stripeManualSet(2026,'stock','123000')");expect(M.normComp(w.ctx.P,0).stock).toBe(123000);
@@ -90,7 +96,7 @@ describe('simple Stripe UI',()=>{
   expect(body).not.toMatch(/[^a-zA-Z]render\(\)/);
   expect(body).toContain('stripeRefreshComp()');
 
-  const w=workspace();w.call("stripeWorkspaceSet('income')");
+  const w=workspace();w.call("stripeWorkspaceSet('income')");w.ctx.buildControls=()=>{throw new Error('Rebuilt the active compensation table')};
   for(const y of [2032,2040])for(const k of ['cash','stock'])w.elements[`sg-comp-${k}-${y}`]={value:'',tagName:'INPUT'};
   for(const y of [2032,2040])w.elements['sg-total-'+y]={textContent:''};
   w.call("stripeManualSet(2032,'cash','333333')");
