@@ -122,3 +122,16 @@ describe('investable asset display',()=>{
   expect(t.call('experienceInvestableAssets(asset)')).toBe(2540000);
  });
 });
+
+describe('timeline legend isolation',()=>{
+ it('isolates, switches and restores datasets without changing the plan',()=>{
+  const t=presentation(),before=JSON.stringify(t.ctx.P),visible=[true,true],pressed=['true','true'];let updates=0;
+  t.ctx.charts={main:{data:{datasets:[{},{}]},setDatasetVisibility:(i,v)=>visible[i]=v,update:()=>updates++}};
+  t.ctx.document={querySelectorAll:()=>pressed.map((_,i)=>({setAttribute:(k,v)=>pressed[i]=v}))};
+  t.call('lifeIsolateSeries(1)');expect(visible).toEqual([false,true]);expect(pressed).toEqual(['false','true']);
+  t.call('lifeIsolateSeries(0)');expect(visible).toEqual([true,false]);
+  t.call('lifeIsolateSeries(0)');expect(visible).toEqual([true,true]);expect(pressed).toEqual(['true','true']);
+  expect(updates).toBe(3);expect(JSON.stringify(t.ctx.P)).toBe(before);
+  t.ctx.render=()=>{};t.call('lifeIsolateSeries(1)');t.call("lifeSetMode('cash')");expect(t.call('lifeIsolated')).toBe(null);
+ });
+});

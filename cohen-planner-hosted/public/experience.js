@@ -1,7 +1,7 @@
 'use strict';
 // Presentation layer. All values come from the existing model and import modules.
 let experienceHousingView='afford';
-let lifeYear=null,lifeMode='wealth',lifeContext=null;
+let lifeYear=null,lifeMode='wealth',lifeContext=null,lifeIsolated=null;
 let budgetRankMode='size';
 let budgetShowAll=false;
 let spendingStoryView='categories';
@@ -199,12 +199,19 @@ function renderLifeTimeline(R){
     {label:'Investable assets · incl. Stripe',data:R.map(r=>deflate(experienceInvestableAssets(r),r.yr)),borderColor:colors.liquid,borderDash:[4,4]}]:[
     {label:'Annual after-tax cash pay',data:R.map(r=>deflate(r.incFull,r.yr)),borderColor:colors.cash},
     {label:'Annual spending',data:R.map(r=>deflate(r.totEFull,r.yr)),borderColor:colors.spend,fill:'-1',backgroundColor:'rgba(164,127,80,.06)'}];
-  document.getElementById('lifeLegend').innerHTML=datasets.map(d=>`<span><i style="background:${d.borderColor}"></i>${d.label}</span>`).join('');
-  const cursor={id:'lifeCursor',afterDatasetsDraw(ch){const idx=R.findIndex(r=>r.yr===lifeYear),x=ch.scales.x.getPixelForValue(idx);const{ctx,chartArea:a}=ch;ctx.save();ctx.strokeStyle='#53714f';ctx.setLineDash([3,5]);ctx.beginPath();ctx.moveTo(x,a.top);ctx.lineTo(x,a.bottom);ctx.stroke();ctx.setLineDash([]);for(let i=0;i<datasets.length;i++){const point=ch.getDatasetMeta(i).data[idx];if(point){ctx.fillStyle=datasets[i].borderColor;ctx.beginPath();ctx.arc(point.x,point.y,5,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#f8f7ef';ctx.lineWidth=3;ctx.stroke();}}ctx.restore();}};
-  charts.main=new Chart(document.getElementById('lifeChart'),{type:'line',data:{labels:R.map(r=>String(r.yr)),datasets:datasets.map(d=>({...d,tension:.27,borderWidth:2.5,pointRadius:0,pointHitRadius:14}))},plugins:[cursor],options:{responsive:true,maintainAspectRatio:false,animation:_reduceMotion()?false:{duration:450},interaction:{mode:'index',intersect:false},onClick:(e,els,ch)=>{if(els.length)lifeSelectYear(R[els[0].index].yr);else{const idx=Math.max(0,Math.min(R.length-1,Math.round(ch.scales.x.getValueForPixel(e.x))));lifeSelectYear(R[idx].yr);}},plugins:{legend:{display:false},datalabels:{display:false},tooltip:{backgroundColor:'#193b2c',titleColor:'#f0f2f6',bodyColor:'#e5ecdc',padding:14,callbacks:{label:c=>c.dataset.label+': '+experienceMoney(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#62715b',maxTicksLimit:8,font:{size:12}}},y:{grid:{color:'rgba(41,70,45,.10)'},ticks:{color:'#62715b',callback:v=>experienceMoney(v),maxTicksLimit:5,font:{size:12}}}}}});
+  document.getElementById('lifeLegend').innerHTML=datasets.map((d,i)=>`<button type="button" data-series="${i}" aria-pressed="${lifeIsolated===null||lifeIsolated===i}" title="Click to isolate; click again to show both" onclick="lifeIsolateSeries(${i})"><i style="background:${d.borderColor}"></i>${d.label}</button>`).join('');
+  const cursor={id:'lifeCursor',afterDatasetsDraw(ch){const idx=R.findIndex(r=>r.yr===lifeYear),x=ch.scales.x.getPixelForValue(idx);const{ctx,chartArea:a}=ch;ctx.save();ctx.strokeStyle='#53714f';ctx.setLineDash([3,5]);ctx.beginPath();ctx.moveTo(x,a.top);ctx.lineTo(x,a.bottom);ctx.stroke();ctx.setLineDash([]);for(let i=0;i<datasets.length;i++){if(!ch.isDatasetVisible(i))continue;const point=ch.getDatasetMeta(i).data[idx];if(point){ctx.fillStyle=datasets[i].borderColor;ctx.beginPath();ctx.arc(point.x,point.y,5,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#f8f7ef';ctx.lineWidth=3;ctx.stroke();}}ctx.restore();}};
+  charts.main=new Chart(document.getElementById('lifeChart'),{type:'line',data:{labels:R.map(r=>String(r.yr)),datasets:datasets.map((d,i)=>({...d,hidden:lifeIsolated!==null&&lifeIsolated!==i,tension:.27,borderWidth:2.5,pointRadius:0,pointHitRadius:14}))},plugins:[cursor],options:{responsive:true,maintainAspectRatio:false,animation:_reduceMotion()?false:{duration:450},interaction:{mode:'index',intersect:false},onClick:(e,els,ch)=>{if(els.length)lifeSelectYear(R[els[0].index].yr);else{const idx=Math.max(0,Math.min(R.length-1,Math.round(ch.scales.x.getValueForPixel(e.x))));lifeSelectYear(R[idx].yr);}},plugins:{legend:{display:false},datalabels:{display:false},tooltip:{backgroundColor:'#193b2c',titleColor:'#f0f2f6',bodyColor:'#e5ecdc',padding:14,callbacks:{label:c=>c.dataset.label+': '+experienceMoney(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#62715b',maxTicksLimit:8,font:{size:12}}},y:{grid:{color:'rgba(41,70,45,.10)'},ticks:{color:'#62715b',callback:v=>experienceMoney(v),maxTicksLimit:5,font:{size:12}}}}}});
   lifeSelectYear(lifeYear);
 }
-function lifeSetMode(mode){lifeMode=mode;render();}
+function lifeIsolateSeries(index){
+  const chart=charts.main;if(!chart||!Number.isInteger(index)||index<0||index>=chart.data.datasets.length)return;
+  lifeIsolated=lifeIsolated===index?null:index;
+  chart.data.datasets.forEach((_,i)=>chart.setDatasetVisibility(i,lifeIsolated===null||lifeIsolated===i));
+  document.querySelectorAll('#lifeLegend button').forEach((button,i)=>button.setAttribute('aria-pressed',String(lifeIsolated===null||lifeIsolated===i)));
+  chart.update('none');
+}
+function lifeSetMode(mode){lifeMode=mode;lifeIsolated=null;render();}
 function lifeSelectYear(year){
   if(!lifeContext)return;const R=lifeContext.R;
   lifeYear=Math.max(R[0].yr,Math.min(R.at(-1).yr,Number(year)));const r=R.find(x=>x.yr===lifeYear);if(!r)return;

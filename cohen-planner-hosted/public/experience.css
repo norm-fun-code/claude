@@ -538,3 +538,11 @@ body,body.home-view{background:radial-gradient(ellipse at 75% -20%,#2c2749 0,tra
  .bd-chg.rule { border-color:#90a67e; }
  .bd-dot { background:#365c43; }
 }
+
+@media screen {
+ .life-legend button { display:inline-flex; align-items:center; gap:8px; border:1px solid transparent; border-radius:7px; padding:5px 7px; background:transparent; color:#596f4d; font:inherit; font-size:12px; cursor:pointer; }
+ .life-legend button i { width:18px; height:3px; border-radius:2px; }
+ .life-legend button:hover { background:#e5ecdc; border-color:#cbd5be; }
+ .life-legend button[aria-pressed="false"] { opacity:.45; }
+ .life-legend button:focus-visible { outline:2px solid #365c43; outline-offset:2px; }
+}
