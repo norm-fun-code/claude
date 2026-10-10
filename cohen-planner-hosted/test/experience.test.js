@@ -6,7 +6,7 @@ import Model from '../public/model.js';
 import Budget from '../public/budget.js';
 function presentation(){
  const P={planStartYear:2026,expenseInflation:.03,numKids:0,housingMode:'rent',planItems:[]};
- const ctx={P,SUB_VIEWS:{projection:{views:[]}},MORE_ACTIONS:[],_planLoaded:false,afParams(){},PlannerSuggest:Suggest,PlannerTime:{year:()=>2026},LIV_LABEL:{groceries:'Groceries',clothing:'Clothing'},UI:{escapeHtml:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),money:v=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(v)},render(){},renderHomeTab(){},renderCompareTab(){},deflate:v=>v,_reduceMotion:()=>true};
+ const ctx={P,_budgetScope:'year',SUB_VIEWS:{projection:{views:[]}},MORE_ACTIONS:[],_planLoaded:false,afParams(){},PlannerSuggest:Suggest,PlannerTime:{year:()=>2026},LIV_LABEL:{groceries:'Groceries',clothing:'Clothing'},UI:{escapeHtml:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),money:v=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(v)},render(){},renderHomeTab(){},renderCompareTab(){},deflate:v=>v,_reduceMotion:()=>true};
  vm.createContext(ctx);vm.runInContext(fs.readFileSync(new URL('../public/experience.js',import.meta.url),'utf8'),ctx);
  return {ctx,call:s=>vm.runInContext(s,ctx)};
 }
@@ -77,13 +77,29 @@ describe('focused spending and budget presentation',()=>{
    const t=presentation();t.ctx.P={...D,planStartYear:2026,observedOn:null,masterBudget:true,budgetRules:{shopping:[{from:2026,kind:'amount',value:amount}]}};
    const before=Model.run(t.ctx.P).R;t.ctx.row=before.find(r=>r.yr===year);
    const g=t.call("experienceBudgetGuide(P,row,'shopping')");expect(g.status).not.toBe('within');
-   const detail=t.call("experienceBudgetGuideHtml(P,row,'shopping')");expect(detail).toContain('Use ');expect(detail).toContain('for '+year);expect(detail).toContain('Changes this year only');
+   const detail=t.call("experienceBudgetGuideHtml(P,row,'shopping')");expect(detail).toContain('Use ');expect(detail).toContain('for '+year+' only');expect(detail).toContain('Changes '+year+' only');
    const edit=Budget.edit(t.ctx.P,{category:'shopping',year,scope:'year',input:{kind:'amount',annual:g.annual}});
    Object.assign(t.ctx.P,{budgetRules:edit.budgetRules},edit.pins);
    const after=Model.run(t.ctx.P).R;t.ctx.row=after.find(r=>r.yr===year);
    expect(t.call("experienceBudgetGuide(P,row,'shopping').status")).toBe('within');
    expect(t.call('experienceFutureChecks(P,row)').some(c=>c.line==='shopping')).toBe(false);
    expect(after.find(r=>r.yr===year+1).livFullParts.shopping).toBe(before.find(r=>r.yr===year+1).livFullParts.shopping);
+  }
+ });
+ it('honors the selected onward scope and can carry an existing one-year recommendation forward',()=>{
+  const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+  const D=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
+  for(const pinned of [false,true]){
+   const t=presentation();t.ctx.P={...D,planStartYear:2026,observedOn:null};t.ctx._budgetScope='onward';
+   if(pinned)t.ctx.P.livingClothingY2=6000;else t.ctx.P.livingClothingY2=100000;
+   t.ctx.run=Model.run;t.ctx.PlannerBudget=Budget;t.ctx.experienceBudgetReveal=()=>{};
+   let label='';t.ctx.budgetApply=(edit,l)=>{label=l;Object.assign(t.ctx.P,{budgetRules:edit.budgetRules});for(const [k,v]of Object.entries(edit.pins)){if(v==null)delete t.ctx.P[k];else t.ctx.P[k]=v;}};
+   t.ctx.row=Model.run(t.ctx.P).R.find(r=>r.yr===2028);
+   const guide=t.call("experienceBudgetGuideHtml(P,row,'clothing')");expect(guide).toContain(pinned?'Carry this amount forward from 2028':'from 2028 on');
+   t.call("experienceApplyBudgetGuide('clothing',2028)");expect(label).toContain('from 2028 on');
+   const R=Model.run(t.ctx.P).R,amount=R.find(r=>r.yr===2028).livFullParts.clothing;
+   expect(R.find(r=>r.yr===2029).livFullParts.clothing).toBe(Math.round(amount*(1+t.ctx.P.expenseInflation)));
+   expect(t.ctx.P.livingClothingY2).toBeUndefined();
   }
  });
  it('keeps an unaccepted ongoing camp cost visible in later camp years',()=>{

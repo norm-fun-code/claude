@@ -521,15 +521,20 @@ function experienceBudgetGuide(plan,row,key){
 }
 function experienceBudgetGuideHtml(plan,row,key){
   const g=experienceBudgetGuide(plan,row,key);if(!g)return '';
-  const flagged=g.status!=='within',name=experienceEscape(LIV_LABEL[key]||key);
-  return `<section class="ex-guide-recommendation"><span class="ex-kicker">${flagged?'ASSUMPTION TO REVIEW':'WITHIN HOUSEHOLD GUIDE'}</span><strong>${name}: ${experienceMoney(g.lo/12)}–${experienceMoney(g.hi/12)}/mo</strong><p>${row.yr} dollars · ${experienceEscape(PlannerSuggest.household(plan,row.yr))} · broad planning range, not measured NYC spending.</p>${flagged?`<p>Your plan is ${experienceMoney(g.value/12)}/mo. ${g.status==='high'?'Consider reducing':'Consider allowing'} it to <strong>${experienceMoney(g.annual/12)}/mo</strong> to bring it within the guide.</p><button class="ui-btn ui-btn-primary" onclick="experienceApplyBudgetGuide('${key}',${row.yr})">Use ${experienceMoney(g.annual/12)}/mo for ${row.yr}</button><small>Changes this year only, across shared cases. Undo is available.</small>`:''}</section>`;
+  const onward=_budgetScope==='onward',flagged=g.status!=='within',carry=onward&&row.livSrc?.[key]==='pin';
+  const name=experienceEscape(LIV_LABEL[key]||key),when=onward?'from '+row.yr+' on':'for '+row.yr+' only';
+  const action=flagged||carry;
+  return `<section class="ex-guide-recommendation"><span class="ex-kicker">${flagged?'ASSUMPTION TO REVIEW':'WITHIN HOUSEHOLD GUIDE'}</span><strong>${name}: ${experienceMoney(g.lo/12)}–${experienceMoney(g.hi/12)}/mo</strong><p>${row.yr} dollars · ${experienceEscape(PlannerSuggest.household(plan,row.yr))} · broad planning range, not measured NYC spending.</p>${flagged?`<p>Your plan is ${experienceMoney(g.value/12)}/mo. ${g.status==='high'?'Consider reducing':'Consider allowing'} it to <strong>${experienceMoney(g.annual/12)}/mo</strong> to bring it within the guide.</p>`:''}${action?`<button class="ui-btn ui-btn-primary" onclick="experienceApplyBudgetGuide('${key}',${row.yr})">${flagged?'Use '+experienceMoney(g.annual/12)+'/mo '+when:'Carry this amount forward from '+row.yr}</button><small>${onward?'Applies from '+row.yr+', growing with expense inflation. Later overrides stay intact.':'Changes '+row.yr+' only.'} Shared across cases. Undo is available.</small>`:''}</section>`;
 }
 function experienceApplyBudgetGuide(key,year){
   const row=run(P).R.find(r=>r.yr===year);if(!row)return;
-  const g=experienceBudgetGuide(P,row,key);if(!g||g.status==='within')return;
-  const edit=PlannerBudget.edit(P,{category:key,year,scope:'year',input:{kind:'amount',annual:g.annual},basis:'net',income:{net:row.netTC,gross:row.gross}});
+  const g=experienceBudgetGuide(P,row,key);if(!g)return;
+  const scope=_budgetScope==='onward'?'onward':'year';
+  if(g.status==='within'&&!(scope==='onward'&&row.livSrc?.[key]==='pin'))return;
+  const annual=g.status==='within'?g.value:g.annual;
+  const edit=PlannerBudget.edit(P,{category:key,year,scope,input:{kind:'amount',annual},basis:'net',income:{net:row.netTC,gross:row.gross}});
   if(!edit.ok){showToast(edit.error,'red');return;}
-  budgetApply(edit,`${LIV_LABEL[key]||key} → ${experienceMoney(g.annual/12)}/mo, ${year} only`);
+  budgetApply(edit,`${LIV_LABEL[key]||key} → ${experienceMoney(annual/12)}/mo, ${scope==='onward'?'from '+year+' on':year+' only'}`);
   experienceBudgetReveal(key);
 }
 function experienceFutureChecks(plan,row){
