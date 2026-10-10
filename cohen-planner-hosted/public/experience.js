@@ -5,17 +5,53 @@ let lifeYear=null,lifeMode='wealth',lifeContext=null;
 let budgetRankMode='size';
 let budgetShowAll=false;
 let spendingStoryView='categories';
-let overviewIncomeView='income';
+// Optional liquidity lens only: never modifies the underlying compensation or equity.
+let overviewIncomeView='flex';
 function setOverviewIncomeView(mode){
-  if(!['income','cash'].includes(mode))return;
+  if(!['income','cash','flex'].includes(mode))return;
   overviewIncomeView=mode;render();
 }
-function experienceIncomeReadout(rows,mode='income'){
-  const income=r=>mode==='cash'?r.incFull:r.netTC;
-  const margin=r=>income(r)-r.totEFull;
-  const pressure=rows.reduce((a,b)=>margin(b)<margin(a)?b:a);
-  const gaps=rows.filter(r=>margin(r)<0);
-  return {pressure,gaps,monthly:Math.abs(margin(pressure))/12};
+const OVERVIEW_ARG_LEVELS={
+  conservative:[[2028,80000],[2030,100000]],
+  base:[[2028,80000],[2029,100000],[2035,150000]],
+  optimistic:[[2028,100000],[2033,150000]]
+};
+function overviewArgScenario(){
+  const name=typeof scenarios!=='undefined'&&activeScenarioIdx>=0?
+    String(scenarios[activeScenarioIdx]?.name||''):'Base Case';
+  if(/^conservative(?: case| scenario| plan)?$/i.test(name))return 'conservative';
+  if(/^optimistic(?: case| scenario| plan)?$/i.test(name))return 'optimistic';
+  return 'base';
+}
+function overviewArgAvailability(r){
+  const year=Number(r.yr),stock=Math.max(0,Number(r.normStock)||0);
+  if(year<2028||!stock)return{gross:0,net:0,retain:0};
+  const levels=OVERVIEW_ARG_LEVELS[overviewArgScenario()];
+  const tier=levels.filter(v=>year>=v[0]).at(-1);
+  const gross=Math.min(stock,tier?tier[1]:0);
+  const vest=Number(r.sVestRate);
+  const retain=Number.isFinite(vest)?Math.max(0,Math.min(1,1-vest)):
+    (stock?Math.max(0,Math.min(1,(Number(r.sIncomeNet)||0)/stock)):0);
+  return{gross,net:gross*retain,retain};
+}
+function overviewIncomeRow(r,mode='flex'){
+  const cash=Number(r.incFull)||0,total=Number(r.netTC)||0,spent=Number(r.totEFull)||0;
+  const arg=overviewArgAvailability(r);
+  // The optional cash election RECLASSIFIES after-tax equity; it never adds
+  // income beyond total after-tax compensation or changes PEG.
+  const flex=Math.max(cash,Math.min(total,cash+arg.net));
+  const available=mode==='cash'?cash:mode==='income'?total:flex;
+  return{row:r,cash,total,spent,arg,flex,available,margin:available-spent,
+    cashGap:Math.max(0,spent-cash),residual:Math.max(0,spent-flex),
+    status:cash>=spent?'cash':flex>=spent?'arg':'extra'};
+}
+function experienceIncomeReadout(rows,mode='flex'){
+  const details=rows.map(r=>overviewIncomeRow(r,mode));
+  const pressureDetail=details.reduce((a,b)=>deflate(b.margin,b.row.yr)<deflate(a.margin,a.row.yr)?b:a);
+  const gaps=details.filter(d=>d.margin<0);
+  const counts={cash:0,arg:0,extra:0};details.forEach(d=>counts[d.status]++);
+  return{pressure:pressureDetail.row,pressureDetail,gaps,details,counts,
+    monthly:Math.abs(pressureDetail.margin)/12};
 }
 const experienceFolds=new Set();
 const experienceEscape=s=>UI.escapeHtml(s);
@@ -71,9 +107,9 @@ function experienceOverview(R){
   const cp=document.querySelector('.cockpit');if(!cp)return;
   cp.classList.add('so-briefing');
   const current=R.find(r=>r.yr===PlannerTime.year())||R[0];
-  const years=R.filter(r=>r.yr>=current.yr),cashOnly=overviewIncomeView==='cash';
-  const {pressure,gaps,monthly}=experienceIncomeReadout(years,overviewIncomeView);
-  const basis=cashOnly?'cash pay':'income';
+  const years=R.filter(r=>r.yr>=current.yr),cashOnly=overviewIncomeView==='cash',flexView=overviewIncomeView==='flex';
+  const {pressure,pressureDetail,gaps,monthly,counts}=experienceIncomeReadout(years,overviewIncomeView);
+  const basis=cashOnly?'cash pay':flexView?'cash + ARG':'income';
   const heading=cp.querySelector('.cp-heading');
   heading.querySelector('h2').textContent='Your financial briefing.';
   const now=cp.querySelector('.cp-register[data-tense="now"]');
@@ -81,10 +117,28 @@ function experienceOverview(R){
   const details=allMetrics.filter(n=>!['Cash + taxable','Vested Stripe'].includes(n.querySelector('span')?.textContent));
   if(details.length){const more=document.createElement('div');more.className='so-position-detail';details.forEach(n=>more.append(n));now.append(more);experienceFold(now,[more],'Other balances & current cash margin','briefing-position');}
   const brief=document.createElement('section');brief.className='so-story';
-  const headline=gaps.length?(cashOnly?'Some years need more than cash pay.':'Some years outspend your income.'):(cashOnly?'Cash pay covers your modeled lifestyle.':'Income covers your modeled lifestyle.');
-  const description=gaps.length?`${gaps.length} of ${years.length} modeled years spend more than after-tax ${basis}.`:`After-tax ${basis} covers spending in all ${years.length} modeled years.`;
+  const headline=flexView?(counts.extra?'ARG gives flexibility, but some years need more.':counts.arg?'ARG gives you flexibility in tighter years.':'Cash pay covers your modeled lifestyle.'):
+    gaps.length?(cashOnly?'Some years need more than cash pay.':'Some years outspend your income.'):(cashOnly?'Cash pay covers your modeled lifestyle.':'Income covers your modeled lifestyle.');
+  const description=flexView?`${counts.cash} of ${years.length} years covered by cash pay · ${counts.arg} more potentially covered by ARG · ${counts.extra} requiring additional funding.`:
+    gaps.length?`${gaps.length} of ${years.length} modeled years spend more than after-tax ${basis}.`:`After-tax ${basis} covers spending in all ${years.length} modeled years.`;
   const unit=inflationView?'today’s dollars ('+P.planStartYear+')':'future dollars';
-  brief.innerHTML=`<div class="so-story-copy"><span class="so-eyebrow">THE PLAN IN ONE MINUTE</span><div class="ex-segments so-income-toggle" role="group" aria-label="Income comparison"><button aria-pressed="${!cashOnly}" onclick="setOverviewIncomeView('income')">Total income</button><button aria-pressed="${cashOnly}" onclick="setOverviewIncomeView('cash')">Cash only</button></div><h2>${headline}</h2><p>${description}</p><div class="so-story-actions"><button onclick="lifeOpenYear(${pressure.yr})">Explore the tightest year <span>↗</span></button><button onclick="_homeView='explore';experienceUtility('home')">Test a different outcome</button></div></div><div class="so-key-number"><span>${gaps.length?'Largest monthly '+basis+' gap':'Smallest monthly '+basis+' surplus'}</span><strong>${experienceMoney(deflate(monthly,pressure.yr))}</strong><span>${pressure.yr} · ${unit}</span><small>${cashOnly?'Cash pay only · excludes stock compensation.':'After-tax compensation · includes stock pay.'}<br>Excludes investment returns and existing assets.</small></div><div class="so-cash-path"><div class="so-path-head"><span>WHEN ${cashOnly?'CASH PAY':'INCOME'} COVERS YOUR LIFE</span><span>Annual ${basis} less spending · ${unit}</span></div>${experienceCashPath(years,pressure.yr,overviewIncomeView)}<div class="so-path-key"><span><i></i>${cashOnly?'Cash':'Income'} remaining</span><span><i></i>Spending above ${basis}</span><span>Choose a year to explore</span></div></div>`;
+  brief.innerHTML=`<div class="so-story-copy"><span class="so-eyebrow">THE PLAN IN ONE MINUTE</span><div class="ex-segments so-income-toggle" role="group" aria-label="Income comparison"><button aria-pressed="${cashOnly}" onclick="setOverviewIncomeView('cash')">Cash pay</button><button aria-pressed="${flexView}" onclick="setOverviewIncomeView('flex')">Cash + ARG</button><button aria-pressed="${overviewIncomeView==='income'}" onclick="setOverviewIncomeView('income')">Total comp</button></div><h2>${headline}</h2><p>${description}</p><div class="so-story-actions"><button onclick="lifeOpenYear(${pressure.yr})">Explore the tightest year <span>↗</span></button><button onclick="_homeView='explore';experienceUtility('home')">Test a different outcome</button></div></div><div class="so-key-number"><span>${gaps.length?'Largest monthly '+basis+' gap':'Smallest monthly '+basis+' surplus'}</span><strong>${experienceMoney(deflate(monthly,pressure.yr))}</strong><span>${pressure.yr} · ${unit}</span><small>${flexView?'Optional after-tax ARG election capacity; no actual cash election assumed.':cashOnly?'Cash pay only · excludes stock compensation.':'After-tax compensation · includes stock pay.'}<br>Excludes investment returns and existing assets.</small></div><div class="so-cash-path"><div class="so-path-head"><span>WHEN ${cashOnly?'CASH PAY':flexView?'CASH PAY + ARG':'INCOME'} COVERS YOUR LIFE</span><span>Annual ${basis} less spending · ${unit}</span></div>${experienceCashPath(years,pressure.yr,overviewIncomeView)}<div class="so-path-key"><span><i></i>${cashOnly?'Cash':flexView?'Cash + ARG':'Income'} remaining</span><span><i></i>Spending above ${basis}</span>${flexView?'<span class="so-arg-legend"><i></i>ARG could bridge</span>':''}<span>Choose a year to explore</span></div></div>`;
+  if(flexView){
+    const top=brief.querySelector('.so-key-number');
+    const annualGap=pressureDetail.cashGap,available=pressureDetail.arg.net,residual=pressureDetail.residual;
+    const annual=v=>experienceMoney(deflate(v,pressure.yr));
+    const grossNeeded=pressureDetail.arg.retain>0?Math.min(pressureDetail.arg.gross,annualGap/pressureDetail.arg.retain):0;
+    top.querySelector('small')?.remove();
+    top.insertAdjacentHTML('beforeend',`<div class="so-arg-breakdown">
+      <div><span>Cash-only annual gap</span><strong>${annual(annualGap)}</strong></div>
+      <div><span>Potential after-tax ARG</span><strong>${annual(available)}</strong></div>
+      <div><span>Remaining annual gap</span><strong>${annual(residual)}</strong></div>
+    </div><small>In this year, covering the cash-only gap would require up to ${annual(grossNeeded)} of gross ARG. Elections may require advance notice or fixed increments. The saved plan still retains ARG as stock.</small>`);
+    brief.querySelector('.so-story-actions')?.insertAdjacentHTML('beforebegin',
+      '<p class="so-arg-intro">Optional cash capacity only. Performance awards remain stock; no election or share sale is triggered.</p>');
+    brief.querySelector('.so-cash-path')?.insertAdjacentHTML('beforeend',
+      '<p class="so-arg-disclosure">This view estimates ARG from your selected compensation case (Base for Live plan) and carries the last known grant target past 2037. It does not change projected cash flows or net worth. Full-year, after-tax approximations; PEG is not cash-electable.</p>');
+  }
   now.after(brief);
   const decision=document.createElement('section');decision.className='so-decision';
   const buying=P.housingMode!=='rent'&&years.some(r=>r.yr===P.homePurchaseYear);
@@ -101,15 +155,17 @@ function experienceOverview(R){
   decision.after(signal);
 }
 function experienceCashPath(rows,selected,mode='cash'){
-  const basis=mode==='cash'?'cash':'income';
-  const values=rows.map(r=>deflate((mode==='cash'?r.incFull:r.netTC)-r.totEFull,r.yr));
+  const basis=mode==='cash'?'cash':mode==='flex'?'cash + ARG':'income';
+  const analyzed=rows.map(r=>overviewIncomeRow(r,mode));
+  const values=analyzed.map(d=>deflate(d.margin,d.row.yr));
   const pos=Math.max(0,...values),neg=Math.min(0,...values),span=Math.max(1,pos-neg);
   const top=22,bottom=155,height=bottom-top,zero=top+pos/span*height;
   const count=rows.length,step=820/Math.max(1,count),width=Math.max(4,step*.65);
   const y=v=>top+(pos-v)/span*height;
   const bars=rows.map((r,i)=>{const v=values[i],x=58+(i+.5)*step,yy=y(v),h=Math.max(1,Math.abs(yy-zero));
-    const label=`${r.yr}: ${experienceMoney(Math.abs(v))} annual ${basis} ${v<0?'shortfall':'surplus'} before investment returns or existing asset sales`;
-    return `<g class="so-year" role="button" tabindex="0" aria-label="${label}. Explore year" onclick="lifeOpenYear(${r.yr})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();lifeOpenYear(${r.yr});}"><title>${label}</title><rect x="${x-step/2}" y="15" width="${step}" height="165" fill="transparent"/><rect class="so-year-bar" x="${x-width/2}" y="${Math.min(yy,zero)}" width="${width}" height="${h}" rx="2" fill="${v<0?'#b27b43':'#397d79'}" opacity="${r.yr===selected?1:.7}"/>${r.yr===selected?`<circle cx="${x}" cy="${v<0?yy+7:yy-7}" r="3" fill="#283c45"/>`:''}</g>`;}).join('');
+    const status=analyzed[i].status;
+    const label=`${r.yr}: ${experienceMoney(Math.abs(v))} annual ${basis} ${v<0?'shortfall':'surplus'}. ${mode==='flex'?(status==='cash'?'Cash pay covers spending.':status==='arg'?'Electable ARG could bridge the gap.':'Additional funding is required.'):'Excludes investment returns and existing asset sales.'} No actual ARG cash election is assumed.`;
+    return `<g class="so-year" role="button" tabindex="0" aria-label="${label}. Explore year" onclick="lifeOpenYear(${r.yr})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();lifeOpenYear(${r.yr});}"><title>${label}</title><rect x="${x-step/2}" y="15" width="${step}" height="165" fill="transparent"/><rect class="so-year-bar" x="${x-width/2}" y="${Math.min(yy,zero)}" width="${width}" height="${h}" rx="2" fill="${mode==='flex'?(analyzed[i].status==='cash'?'#397d79':analyzed[i].status==='arg'?'#b27b43':'#a45447'):(v<0?'#b27b43':'#397d79')}" opacity="${r.yr===selected?1:.7}"/>${r.yr===selected?`<circle cx="${x}" cy="${v<0?yy+7:yy-7}" r="3" fill="#283c45"/>`:''}</g>`;}).join('');
   const ticks=[...new Set([0,Math.floor((count-1)/2),count-1])];
   return `<svg class="so-cash-svg" viewBox="0 0 910 205" role="group" aria-label="Annual ${basis} surplus and shortfall by year. Each bar opens that year."><text x="0" y="${top+4}">${experienceMoney(pos)}</text>${neg<0?`<text x="0" y="${bottom+4}">${experienceMoney(neg)}</text>`:''}<line x1="58" x2="878" y1="${zero}" y2="${zero}" stroke="#8faaa8" stroke-width="1"/><text x="884" y="${Math.max(12,zero+4)}">$0</text>${bars}${ticks.map(i=>`<text x="${58+(i+.5)*step}" y="195" text-anchor="middle">${rows[i].yr}</text>`).join('')}</svg>`;
 }
