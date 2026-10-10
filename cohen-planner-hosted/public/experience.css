@@ -523,3 +523,18 @@ body,body.home-view{background:radial-gradient(ellipse at 75% -20%,#2c2749 0,tra
  .bd .bd-oneoff input:focus,.bd .bd-oneoff select:focus { outline:2px solid #90a67e; outline-offset:2px; }
  .bd .bd-oneoff input::placeholder { color:#657755; }
 }
+
+/* Spending pace: actual, typical and normal range use distinct forest/sage tones. */
+@media screen {
+ .pace-bars { background:#eef0e5; border-color:#cbd5be; }
+ .pace-bar>div { background:#dce4d1; }
+ .pace-bar i { background:#365c43!important; box-shadow:none!important; }
+ .pace-bar[data-kind="typical"] i { background:#8fa67e!important; }
+ .pace-bar u { background:rgba(54,92,67,.24)!important; }
+ .ex-budget-meter-track i { background:#365c43; box-shadow:none; }
+ .ex-rank-track>i { background:#365c43; box-shadow:none; }
+ .bd-headroom { background:linear-gradient(135deg,#e5ecdc,#f8f7ef); }
+ .bd-share-chip.on { background:#e5ecdc; border-color:#90a67e; }
+ .bd-chg.rule { border-color:#90a67e; }
+ .bd-dot { background:#365c43; }
+}
