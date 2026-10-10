@@ -450,3 +450,35 @@ body,body.home-view{background:radial-gradient(ellipse at 75% -20%,#2c2749 0,tra
 /* Keep the income basis alongside the briefing, without changing plan assumptions. */
 .so-income-toggle { width:max-content; max-width:100%; margin:14px 0 20px; }
 .so-income-toggle button { font-size:12px; }
+
+/* Cash + ARG is a planning lens, not a different equity-election policy. */
+@media screen {
+  .so-income-toggle { display:inline-flex; gap:3px; padding:4px; border:1px solid #cbd6bd;
+    background:#e3e9da; border-radius:12px; }
+  .so-income-toggle button { border-radius:9px; white-space:nowrap; padding:9px 13px;
+    min-height:37px; font-weight:520; transition:background-color .14s ease, color .14s ease; }
+  .so-income-toggle button[aria-pressed="true"] { background:#f9f8ee; color:#2c5037;
+    box-shadow:0 1px 4px #27402a0d; font-weight:650; }
+  .so-income-toggle button:focus-visible { outline:2px solid #315c3a; outline-offset:2px; }
+  .so-arg-intro { font-size:12px!important; margin-top:8px!important;
+    color:#526a4e!important; line-height:1.6!important; }
+  .so-arg-breakdown { margin-top:19px; padding-top:15px; border-top:1px solid #bfceb6; }
+  .so-arg-breakdown>div { display:flex; justify-content:space-between; align-items:baseline;
+    gap:14px; padding:7px 0; border-bottom:1px solid #cbd6c317; }
+  .so-arg-breakdown>div span { font-size:11px; color:#5a7051; }
+  .so-arg-breakdown>div strong { color:#294b34; font-size:13px; font-weight:650;
+    font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .so-arg-breakdown>div:last-child strong { color:#855b31; }
+  .so-key-number>small { max-width:300px; }
+  .so-path-key .so-key-cash { background:#397d79; }
+  .so-path-key .so-key-arg { background:#b27b43; }
+  .so-path-key .so-key-extra { background:#a45447; }
+  .so-arg-disclosure { font-size:11px!important; line-height:1.65!important;
+    color:#657755!important; margin:16px 0 0!important; max-width:850px!important; }
+}
+@media screen and (max-width:760px){
+  .so-income-toggle { width:100%; box-sizing:border-box; }
+  .so-income-toggle button { flex:1 1 0; min-width:0; padding:9px 6px; font-size:11px; }
+  .so-arg-breakdown>div { align-items:flex-start; }
+  .so-arg-breakdown>div span { max-width:58%; }
+}
