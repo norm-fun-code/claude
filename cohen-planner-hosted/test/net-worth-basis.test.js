@@ -124,7 +124,7 @@ describe('both charts answer to the same inflation toggle', () => {
   });
 
   it('has the cockpit deflate its series, not just the Trajectory tab', () => {
-    for (const field of ['cpNw(r)', 'r.liq'])
+    for (const field of ['cpNw(r)', 'experienceInvestableAssets(r)'])
       expect(cockpit, field).toContain(`deflate(${field},r.yr)`);
   });
 

@@ -14,7 +14,7 @@
   // In the browser model.js is a plain script: its functions are globals, but its `const`s live in
   // the shared global scope rather than on `window`, so they are named here rather than read off it.
   const M = typeof module !== 'undefined' && module.exports ? require('./model.js')
-    : { LIV_KEYS, LIV_OVERRIDE_MAX, livingCategoryKey, budgetSegment, budgetValue, commonHousehold };
+    : { LIV_KEYS, LIV_OVERRIDE_MAX, livingCategoryKey, budgetSegment, budgetValue, commonHousehold, locationSpendingFactor };
   // Read when needed, not at load: script order in the page must not decide whether this works.
   const RB = () => (typeof module !== 'undefined' && module.exports ? require('./rent-buy.js') : root.PlannerRentBuy);
 
@@ -67,7 +67,10 @@
     const basis = c.basis === 'gross' ? 'gross' : 'net';
     const income = c.income || {};
     const base = Number(basis === 'gross' ? income.gross : income.net) || 0;
-    const input = c.input || { kind: 'clear' };
+    const factor=M.locationSpendingFactor(P,c.category,c.year);
+    const input = {...(c.input || { kind: 'clear' })};
+    if(input.kind==='amount')input.annual/=factor;
+    if(input.kind==='pct')input.pct/=factor;
     const pins = {}, before = { pins: {}, budgetRules: P.budgetRules || {} };
     const setPin = (k, v) => { before.pins[k] = P[k]; pins[k] = v; };
     let rules = JSON.parse(JSON.stringify(P.budgetRules || {}));

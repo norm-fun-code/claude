@@ -43,6 +43,39 @@ function nyRecapture(taxable,agi,yr,tableTax,f=1){
   return b[2]*f+b[3]*f*Math.max(0,Math.min(1,(agi-b[4]*f)/(50000*f)));
 }
 
+// Location is an orthogonal, household-wide overlay. Brooklyn inputs remain canonical.
+const NJ_MFJ_BR=[[20000,.014],[50000,.0175],[70000,.0245],[80000,.035],[150000,.05525],[500000,.0637],[1000000,.0897],[1e15,.1075]];
+const DEAL_SPENDING_FACTORS={groceries:.95,dining:.90,shopping:1,clothing:1,vacations:1,auto:1,insurance:1,misc:1,entertainment:.90,charity:1,medical:1,transit:1,utilities:1.10};
+const NJ_PROPERTY_RATES={deal:.00435,longBranch:.01370,ocean:.01323}; // 2025 effective-rate planning proxies, not parcel bills.
+function modeledMonthlyRent(p,yr){
+    const rentGrowth=Math.max(0,Number(p.rentInflation??0.03)||0);
+  const rentCap=Number(p.rentCap)>0?Number(p.rentCap):Infinity;
+  // Rent rises while waiting to buy too. An explicit false can reproduce a legacy
+  // flat-rent assumption, but merely choosing buy must not switch off rent inflation.
+  const inflateRent=p.housingMode==='rent'||p.rentInflatesBeforePurchase!==false;
+  // Rent you set from a year on, or for one year only (Budget → Housing). A one-year figure is exactly
+  // what was typed; a from-this-year-on figure restarts the rent there and then grows the way it always did.
+  const rentSteps=Array.isArray(p.rentSteps)?p.rentSteps.filter(x=>x&&Number.isFinite(Number(x.from))&&Number(x.monthly)>=0&&Number(x.from)<=yr):[];
+  const rentPin=rentSteps.filter(x=>x.only&&Number(x.from)===yr).at(-1);
+  const rentRoll=rentSteps.filter(x=>!x.only).reduce((m,x)=>!m||Number(x.from)>=Number(m.from)?x:m,null);
+  const rentBase=rentRoll?Number(rentRoll.monthly):Number(p.nycRent||0),rentFrom=rentRoll?Number(rentRoll.from):(p.planStartYear||2026);
+  const monthlyRent=rentPin?Number(rentPin.monthly):Math.min(rentCap,rentBase*(inflateRent?(1+rentGrowth)**(yr-rentFrom):1));
+  return monthlyRent;
+}
+function locationActive(p,yr){return p.locationConfig?.mode==='deal'&&yr>=Number(p.locationConfig.moveYear??p.homePurchaseYear??p.planStartYear??2026);}
+function locationSpendingFactor(p,key,yr){return locationActive(p,yr)?Math.max(.1,Number(p.locationConfig.factors?.[key]??DEAL_SPENDING_FACTORS[key]??1)):1;}
+function locationPropertyRate(p,yr){return locationActive(p,yr)?Number(p.locationConfig.propertyTaxRate??NJ_PROPERTY_RATES[p.locationConfig.municipality??'deal']??NJ_PROPERTY_RATES.deal):(p.propTaxRate??(p.propTaxBase&&p.homePrice?p.propTaxBase/p.homePrice:.012));}
+function locationAdditions(p,yr){
+ if(!locationActive(p,yr))return {};
+ const c=p.locationConfig,inf=(1+(p.expenseInflation||0))**(yr-(p.planStartYear||2026));
+ return {auto:(c.autoMonthly??600)*12*inf,insurance:(c.insuranceMonthly??100)*12*inf,transit:(c.commuteMonthly??200)*12*inf};
+}
+function locationCapitalGainsRate(p,tax,yr){
+ if(!locationActive(p,yr))return p.capGainsTaxRate;
+ if(p.locationConfig.capGainsRate!=null)return Number(p.locationConfig.capGainsRate);
+ const marginal=NJ_MFJ_BR.find(([top])=>tax.njTaxable<top)?.[1]??.1075;
+ return .238+marginal; // Existing simplified 20% federal + 3.8% NIIT sale-tax convention.
+}
 function calcTax(grossIncome,p,yr,numKids){
   const sy=p.planStartYear||2026;
   const taxInf=p.taxInflation??0.025;
@@ -93,10 +126,29 @@ function calcTax(grossIncome,p,yr,numKids){
   // New York's taxable income comes from AGI and its own standard deduction, never from the
   // federal itemised total, so there is no circularity in computing it first — and it has to
   // be first, because the SALT deduction is a deduction for taxes actually PAID.
+  const propertyTaxPaid=p.housingMode!=='rent'&&yr>=p.homePurchaseYear
+    ?locationPropertyRate(p,yr)*p.homePrice*(1+p.homeAppreciation)**(yr-p.homePurchaseYear):0;
   const nysTaxable=Math.max(0,agi-16050);
   const stateTable=bracketTax(nysTaxable,NYS_BR);
-  const stateT=stateTable+nyRecapture(nysTaxable,agi,yr,stateTable,sf);
-  const cityT=bracketTax(nysTaxable,NYC_BR);
+  const nyResident=stateTable+nyRecapture(nysTaxable,agi,yr,stateTable,sf);
+  let stateT=nyResident,cityT=bracketTax(nysTaxable,NYC_BR),njTaxable=0,njGrossTax=0,nySourceTax=0,njCredit=0;
+  if(locationActive(p,yr)){
+    const cfg=p.locationConfig;
+    // NJ permits 401(k) exclusion, not federal standard/QBI/half-SE deductions.
+    const njGross=Math.max(0,normW2+nancyW2+nancySE-(p.pretax401k||0));
+    const rentalTax=.18*modeledMonthlyRent(p,yr)*12;
+    const njPropertyDeduction=Math.min(15000,propertyTaxPaid||(p.housingMode==='rent'||yr<p.homePurchaseYear?rentalTax:0));
+    njTaxable=Math.max(0,njGross-2000-1500*(p._taxDependents??numKids)-njPropertyDeduction);
+    njGrossTax=njGross>20000?bracketTax(njTaxable,NJ_MFJ_BR):0;
+    const clamp=x=>Math.max(0,Math.min(1,Number(x)));
+    const nyGross=normW2*clamp(cfg.normNySource??1)+nancyW2*clamp(cfg.nancyNySource??1)+nancySE*clamp(cfg.practiceNySource??0);
+    const nyAgi=Math.max(0,normW2-pretax)*clamp(cfg.normNySource??1)+nancyW2*clamp(cfg.nancyNySource??1)+Math.max(0,nancySE-seTaxHalf)*clamp(cfg.practiceNySource??0);
+    const nyRatio=Math.min(1,nyAgi/Math.max(1,agi));
+    nySourceTax=nyResident*nyRatio;
+    // NJ-COJ credit limited to NJ tax attributable to the same doubly-taxed income.
+    njCredit=Math.min(nySourceTax,njGrossTax*Math.min(1,Math.max(0,nyGross-(p.pretax401k||0)*clamp(cfg.normNySource??1))/Math.max(1,njGross)));
+    stateT=nySourceTax+Math.max(0,njGrossTax-njCredit);cityT=0;
+  }
 
   // ── Itemized deductions ──
   const saltThreshold=505000*1.01**Math.max(0,Math.min(2029,yr)-2026);
@@ -106,10 +158,6 @@ function calcTax(grossIncome,p,yr,numKids){
   // LIMITS it. Deducting the cap itself handed a household with $2,154 of state and city tax
   // a $40,400 deduction. Eligible taxes here are state and city income tax plus real property
   // tax; the deduction is the lesser of what was paid and the cap.
-  const propertyTaxPaid=p.housingMode!=='rent'&&yr>=p.homePurchaseYear
-    ?(p.propTaxRate??(p.propTaxBase&&p.homePrice?p.propTaxBase/p.homePrice:0.012))
-      *p.homePrice*(1+p.homeAppreciation)**(yr-p.homePurchaseYear)
-    :0;
   const saltPaid=stateT+cityT+propertyTaxPaid;
   const saltDeduction=Math.min(saltPaid,saltCap);
   let mortInt=0,deductibleMortInt=0;
@@ -169,7 +217,7 @@ function calcTax(grossIncome,p,yr,numKids){
   return{
     allInTax:Math.round(allInTax),incomeTax:Math.round(incomeTax),
     fica:Math.round(Math.max(0,totalFICA)),federal:Math.round(federal),
-    state:Math.round(stateT),city:Math.round(cityT),effRate,
+    njTaxable,njGrossTax:Math.round(njGrossTax),nySourceTax:Math.round(nySourceTax),njCredit:Math.round(njCredit),state:Math.round(stateT),city:Math.round(cityT),effRate,
     net:Math.round(net),gross:Math.round(grossIncome),agi:Math.round(agi),
     deduction:Math.round(deduction),qbi:Math.round(qbi),saltCap:Math.round(saltCap),
     // What was actually deducted, and what was eligible — reporting only the cap made it
@@ -666,7 +714,7 @@ function run(p,rets,compiledGrants){
     // the first, and 1 in the first year too unless the plan says when it was observed.
     const stub=yIdx===0?yearRemaining(p):1;
     const ctcKids=kids.filter(k=>yr>=k&&(yr-k)<17).length;
-    const taxP={...p,pretax401k:p.pretax401k*normScale,pretaxBenefits:p.pretaxBenefits*normScale,_normW2:normW2,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0,_nancyOverhead:nancyIsSolo?nancyOH:0};
+    const taxP={...p,pretax401k:p.pretax401k*normScale,pretaxBenefits:p.pretaxBenefits*normScale,_normW2:normW2,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0,_nancyOverhead:nancyIsSolo?nancyOH:0,_taxDependents:kids.filter(k=>yr>=k&&yr-k<19).length};
     const tax=calcTax(grossIncome,taxP,yr,ctcKids);
     // tax.net nets ALL household tax out of ALL comp (cash + stock). Backing the stock
     // straight out leaves exactly the spendable figure:
@@ -713,21 +761,10 @@ function run(p,rets,compiledGrants){
     const sub=p.housingMode!=='rent'&&yr>=p.homePurchaseYear;
     // Property tax = rate × current home value (appreciates each year). Falls back
     // to legacy flat propTaxBase/homePrice for saved states without a rate.
-    const ptRate=p.propTaxRate??(p.propTaxBase&&p.homePrice?p.propTaxBase/p.homePrice:0.012);
+    const ptRate=locationPropertyRate(p,yr);
     const homeVal=sub?p.homePrice*(1+p.homeAppreciation)**(yr-p.homePurchaseYear):0;
     const ptax=sub?ptRate*homeVal:0;
-    const rentGrowth=Math.max(0,Number(p.rentInflation??0.03)||0);
-  const rentCap=Number(p.rentCap)>0?Number(p.rentCap):Infinity;
-  // Rent rises while waiting to buy too. An explicit false can reproduce a legacy
-  // flat-rent assumption, but merely choosing buy must not switch off rent inflation.
-  const inflateRent=p.housingMode==='rent'||p.rentInflatesBeforePurchase!==false;
-  // Rent you set from a year on, or for one year only (Budget → Housing). A one-year figure is exactly
-  // what was typed; a from-this-year-on figure restarts the rent there and then grows the way it always did.
-  const rentSteps=Array.isArray(p.rentSteps)?p.rentSteps.filter(x=>x&&Number.isFinite(Number(x.from))&&Number(x.monthly)>=0&&Number(x.from)<=yr):[];
-  const rentPin=rentSteps.filter(x=>x.only&&Number(x.from)===yr).at(-1);
-  const rentRoll=rentSteps.filter(x=>!x.only).reduce((m,x)=>!m||Number(x.from)>=Number(m.from)?x:m,null);
-  const rentBase=rentRoll?Number(rentRoll.monthly):Number(p.nycRent||0),rentFrom=rentRoll?Number(rentRoll.from):sy;
-  const monthlyRent=rentPin?Number(rentPin.monthly):Math.min(rentCap,rentBase*(inflateRent?(1+rentGrowth)**(yr-rentFrom):1));
+    const monthlyRent=modeledMonthlyRent(p,yr);
   const mortgagePayment=sub&&yr<p.homePurchaseYear+30?am:0;
   let h=sub?mortgagePayment+ptax+(p.maintBase+insuranceFor(p.homePrice,p))*1.02**(yr-p.homePurchaseYear):monthlyRent*12;
     const inf=(1+p.expenseInflation)**(yr-sy);
@@ -760,6 +797,8 @@ function run(p,rets,compiledGrants){
     }
     const itemAdds=planItemsFor(p,yr);
     for(const k of Object.keys(itemAdds.lines))livRaw[k]+=itemAdds.lines[k];
+    const locationAdds=locationAdditions(p,yr);
+    for(const k of LIV_KEYS){livRaw[k]*=locationSpendingFactor(p,k,yr);if(livSrc[k]==='model')livRaw[k]+=locationAdds[k]||0;}
     const stressCost=Math.max(0,Number(shock.expenseMultiplier??1));
     for(const k of LIV_KEYS)livRaw[k]*=stressCost;
     const roundParts=(o,f)=>{
@@ -801,6 +840,7 @@ function run(p,rets,compiledGrants){
     // rather than recovered by dividing totE by stubFrac downstream: that division is off by
     // the rounding on four components, and a total that disagrees with the year beside it by
     // a few hundred dollars is exactly the kind of thing this table exists to rule out.
+    if(locationActive(p,yr))cc*=Number(p.locationConfig.childcareFactor??.9);
     cc*=stressCost;
     const livFullParts=roundParts(livRaw,1);
     const hFull=h,livFull=liv,ccFull=cc;
@@ -814,6 +854,7 @@ function run(p,rets,compiledGrants){
       const startAge=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;
       if(a>=startAge&&a<=p.yeshivaEndAge)tu+=baseTuit(a)*(1+p.tuitionInflation)**(yr-sy); // C4 fix: yr-sy not yr-2026
     }
+    if(locationActive(p,yr))tu*=Number(p.locationConfig.tuitionFactor??.5);
     tu*=stressCost;
     const tuFull=tu;
     if(stub<1)tu*=stub;
@@ -841,7 +882,8 @@ function run(p,rets,compiledGrants){
     const dpThis=(p.housingMode!=='rent'&&yr===p.homePurchaseYear)?cashToClose(p.homePrice,p).total:0;
     const netCash=surp-dpThis;
     const sr=grantLedger?grantLedger.prices[yr+1].tender/grantLedger.prices[yr].tender-1:simplePrices?simplePrices[yr+1].tender/simplePrices[yr].tender-1:stripeReturn(p,yIdx);
-    const gp=1-p.costBasisPct,td=gp*p.capGainsTaxRate;
+    const gainsRate=locationCapitalGainsRate(p,tax,yr);
+    const gp=1-p.costBasisPct,td=gp*gainsRate;
     // A negative balance is an unfunded shortfall, not a leveraged position. Compounding it
     // at the portfolio's expected return would model an unlimited margin loan accruing at
     // the same rate the portfolio is assumed to earn, so it stays flat instead.
@@ -862,7 +904,7 @@ function run(p,rets,compiledGrants){
     const vestShareNew=(yr===sy)?stripeVestRemaining(p):1;
     const vestAvail=eqYear?vestByQuarter.reduce((a,b)=>a+b,0):normStockNet*vestShareNew;
     const vestBasis=eqYear?futureStockIncome*(1-vestRate):vestAvail;
-    const newSaleTaxRate=vestAvail>0?Math.max(0,1-vestBasis/vestAvail)*p.capGainsTaxRate:0;
+    const newSaleTaxRate=vestAvail>0?Math.max(0,1-vestBasis/vestAvail)*gainsRate:0;
     const stripeSold=Math.max(0,Math.min(saleBudget,vestAvail,stripeSellAmount(p,vestAvail*(1-newSaleTaxRate),netCash,liqGrown,ret,td)/(1-newSaleTaxRate)));
     const newSaleTax=stripeSold*newSaleTaxRate;
     const stripeRetained=Math.max(0,vestAvail-stripeSold);
@@ -904,7 +946,7 @@ function run(p,rets,compiledGrants){
       // Selling shares held from a PRIOR year does realise a gain — unlike a vest-date sale,
       // where basis equals the sale price. Only appreciation above basis is taxed.
       if(need>1e-6){
-        const r=sellLots(lots,need,p.capGainsTaxRate,Math.max(0,saleBudget-stripeSold));
+        const r=sellLots(lots,need,gainsRate,Math.max(0,saleBudget-stripeSold));
         holdSold=r.gross;holdTax=r.tax;need=r.shortfall;
       }
       // Nothing left to sell: the pool breaches the floor, and can go negative. That is a
@@ -1005,7 +1047,7 @@ function run(p,rets,compiledGrants){
       // the difference between a reconcilable dashboard and one that appears to double-count.
       sAdded:Math.round(newVest),sInOpening:Math.round(alreadyInOpening),
       sHold:Math.round(holdSold),sGainTax:Math.round(holdTax),
-      sAppr:Math.round(stripeAppr),sEnd:Math.round(stripeEnd),
+      location:locationActive(p,yr)?'deal':'brooklyn',taxState:tax.state,taxCity:tax.city,taxNJ:Math.max(0,tax.njGrossTax-tax.njCredit),taxNY:locationActive(p,yr)?tax.nySourceTax:tax.state,capGainsRate:gainsRate,sAppr:Math.round(stripeAppr),sEnd:Math.round(stripeEnd),
       sBasis:Math.round(lotsBasis(lots)),sLots:lots.length,
       // `sRate` is THIS year's performance, which the Feb yr+1 tender marks — that is what
       // the UI means by "after X% assumed return, marked Feb yr+1". `sMarked` is the rate
@@ -1064,6 +1106,7 @@ function run(p,rets,compiledGrants){
 // an entire band, which a test caught: a $1.5M purchase is 1.00%, not 1.25%.
 const NYC_MANSION_BANDS=[[2e6,.01],[3e6,.0125],[5e6,.015],[10e6,.0225],[15e6,.0325],[20e6,.035],[25e6,.0375],[Infinity,.039]];
 function mansionTax(price,p){
+  if(locationActive(p||{},p?.homePurchaseYear??2026))return price*Number(p.locationConfig.buyerTransferTaxRate??0);
   if(p&&p.mansionTaxRate!=null)return price*Number(p.mansionTaxRate);
   if(price<1e6)return 0;
   for(const [top,rate] of NYC_MANSION_BANDS)if(price<top)return price*rate;
@@ -1073,7 +1116,7 @@ function closingCosts(price,p){
   const loan=price*(1-(p.downPctg||0)/100);
   const mansion=mansionTax(price,p);
   // NYC mortgage recording tax: 1.925% on loans of $500K+, 1.8% below. Buyer-paid.
-  const recording=loan>0?loan*(loan>=5e5?0.01925:0.018):0;
+  const recording=!locationActive(p,p.homePurchaseYear)&&loan>0?loan*(loan>=5e5?0.01925:0.018):0;
   const titleRate=p.titleInsuranceRate!=null?Number(p.titleInsuranceRate):0.0045;
   const title=price*titleRate;
   const legal=p.closingLegalFees!=null?Number(p.closingLegalFees):5000;
@@ -1125,7 +1168,7 @@ function housingCostPerDollar(p){
   const insPerDollar=p.homeInsuranceAnnual!=null
     ?(p.homePrice>0?Number(p.homeInsuranceAnnual)/p.homePrice:0)
     :(p.homeInsuranceRate!=null?Number(p.homeInsuranceRate):0.0035);
-  return piPerDollar+(p.propTaxRate??0.012)+maintPerDollar+insPerDollar;
+  return piPerDollar+locationPropertyRate(p,p.homePurchaseYear)+maintPerDollar+insPerDollar;
 }
 
 function comfortAffordablePrice(p,targetShare,R){
@@ -1246,7 +1289,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
-  module.exports={nycKidCost,commonHousehold,bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
+  module.exports={NJ_MFJ_BR,DEAL_SPENDING_FACTORS,NJ_PROPERTY_RATES,locationActive,locationSpendingFactor,locationPropertyRate,locationAdditions,locationCapitalGainsRate,nycKidCost,commonHousehold,bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
     normComp,nancyW2Income,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,

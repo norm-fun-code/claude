@@ -1541,7 +1541,7 @@ function buildControls(){
   bodies.oneOff=expBody.slice(bodies.baselines.length);
 
   // Home
-  const homeBody=housingModeControl()+s('Monthly rent','nycRent',0,20000,100,v=>'$'+v.toLocaleString()+'/mo')+(P.housingMode==='rent'?s('Annual rent inflation','rentInflation',0,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Monthly rent cap','rentCap',0,50000,500,v=>v?'$'+v.toLocaleString()+'/mo':'No cap')+`<p>Rent grows from ${P.planStartYear}. The cap is a maximum monthly rent; no purchase or suburban move is modeled.</p>`:s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%'));
+  const homeBody=housingModeControl()+s('Monthly rent','nycRent',0,20000,100,v=>'$'+v.toLocaleString()+'/mo')+(P.housingMode==='rent'?s('Annual rent inflation','rentInflation',0,.10,.005,v=>(v*100).toFixed(1)+'%')+s('Monthly rent cap','rentCap',0,50000,500,v=>v?'$'+v.toLocaleString()+'/mo':'No cap')+`<p>Rent grows from ${P.planStartYear}. The cap is a maximum monthly rent; no purchase is modeled. Location follows the long-term home selector.</p>`:s('Purchase year','homePurchaseYear',2028,2035,1)+s('Price','homePrice',1000000,3000000,50000,v=>'$'+(v/1e6).toFixed(2)+'M')+s('Down %','downPctg',20,60,5,v=>v+'%')+s('Mortgage rate','mortgageRate',3,8,.25,v=>v+'%')+s('Property tax %','propTaxRate',0.005,0.03,0.0005,v=>(v*100).toFixed(2)+'%'));
   bodies.home=homeBody+(P.housingMode==='rent'?'':s('Home upkeep','maintBase',0,80000,1000,v=>fmtF(v)+'/yr'));
 
   // Returns (cap gains hardcoded for NYC)
@@ -1886,12 +1886,12 @@ function keepAssumptions(params){
   out=window.StripeGrants?StripeGrants.stripFacts(out):out;
   // A third kind of fact: expense groups the household has said are the same in every case. They
   // live in the live plan only, so a saved case cannot drift from them.
-  return window.PlannerShared?PlannerShared.strip(out):out;
+  out={...(window.PlannerShared?PlannerShared.strip(out):out)};delete out.locationConfig;return out;
 }
 function attachObserved(params){
   let out=window.PlannerOpening?PlannerOpening.withObserved(params,openingFromLivePlan()):params;
   out=window.StripeGrants?StripeGrants.withFacts(out,P&&P.stripeGrants):out;
-  return window.PlannerShared&&P?PlannerShared.attach(out,P):out;
+  out=window.PlannerShared&&P?PlannerShared.attach(out,P):out;return {...out,locationConfig:P?.locationConfig};
 }
 // A case's assumptions, made runnable against today's balance sheet. Every place that
 // projects a saved case goes through here, so a comparison compares futures rather than
@@ -5041,7 +5041,7 @@ function housingReadinessHtml(R,P){
 function mortgagePayoffHtml(R,P){
   const loan=P.homePrice*(1-P.downPctg/100),rate=P.mortgageRate/100,mr=rate/12,n=360;
   const mo=loan>0&&mr>0?loan*(mr*(1+mr)**n)/((1+mr)**n-1):0;
-  const ptRate=P.propTaxRate??.012,tax0=ptRate*P.homePrice/12,maint0=(P.maintBase||D.maintBase)/12,allIn=mo+tax0+maint0;
+  const ptRate=locationPropertyRate(P,P.homePurchaseYear),tax0=ptRate*P.homePrice/12,maint0=(P.maintBase||D.maintBase)/12,allIn=mo+tax0+maint0;
   const interest=mo*n-loan,payoff=P.homePurchaseYear+30;
   const hv30=P.homePrice*(1+P.homeAppreciation)**30,tax30=ptRate*hv30/12;
   const rows=[];
@@ -5108,7 +5108,7 @@ function renderHousingTab(R,P,host){
     const loan=price*(1-q.downPctg/100);
     const mr=q.mortgageRate/100/12;
     const pi=loan>0&&mr>0?loan*(mr*(1+mr)**360)/((1+mr)**360-1):0;
-    const tax=(q.propTaxRate??.012)*price/12;
+    const tax=(locationPropertyRate(q,q.homePurchaseYear))*price/12;
     const maint=(q.maintBase||0)*(price/q.homePrice)/12;
     return{pi,tax,maint,all:pi+tax+maint};
   };
@@ -5268,7 +5268,7 @@ function renderHousingTab(R,P,host){
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Cash to close</div>
       <div style="font-size:10px;color:var(--t2);margin-bottom:9px">One-time, due on the day. Separate from whether you can carry the house afterwards.</div>
       ${row('Down payment',cash.down,`${q.downPctg}%`)}
-      ${row('Mansion tax',cc.mansion,'NYC band')}
+      ${row('Buyer mansion tax',cc.mansion,locationActive(q,q.homePurchaseYear)?'NJ seller-paid transfer fee excluded':'NYC band')}
       ${row('Mortgage recording tax',cc.recording,'on the loan')}
       ${row('Title insurance',cc.title)}
       ${row('Legal & other',cc.legal+cc.other)}
@@ -6401,7 +6401,7 @@ INCOME (${planSY} base year)
 • Norm gross: ${fmt(y26.normG)} = ${fmt(y26.normCash)} CASH + ${fmt(y26.normStock)} Stripe stock. Both are ordinary W-2 income at vest (identical tax), but ONLY the cash is spendable — vesting stock arrives as a Stripe asset.
 • Nancy gross: ${fmt(y26.nancyG)} (W2 currently, solo practice ${P.nancyRampYear}+)
 • Combined gross: ${fmt(y26.gross)}
-• Effective tax rate: ${(y26.effRate*100).toFixed(1)}% all-in (Fed + NYS + NYC + FICA)
+• Effective tax rate: ${(y26.effRate*100).toFixed(1)}% all-in (federal + location-adjusted state/city + FICA)
 • Spendable cash after tax: ${fmt(y26.inc)} — this is cash comp + Nancy − all household tax − pretax − practice overhead. It EXCLUDES stock he retains. (Take-home if he sold every vesting share: ${fmt(y26.netTC)}.)
 • Pre-tax deductions: 401k ${fmt(P.pretax401k)} + benefits ${fmt(P.pretaxBenefits)} = ${fmt(P.pretax401k+P.pretaxBenefits)}
 
@@ -6435,7 +6435,7 @@ LIFECYCLE PROJECTIONS (current plan)
 • Worst single year by net flow: ${fmt(worst)}
 • Total cumulative shortfall across negative-net-flow years: ${fmt(totalDef)}
 • Total stock sold to fund deficits: ${fmt(totSold)}
-• Total tax on those sales: ${fmt(totTaxSale)} (at ${(P.capGainsTaxRate*100).toFixed(1)}% all-in NYC cap gains)
+• Total tax on those sales: ${fmt(totTaxSale)} (at ${(P.capGainsTaxRate*100).toFixed(1)}% Brooklyn baseline; NJ sale tax varies by year)
 
 STRIPE EQUITY — a SEPARATE pool from the diversified portfolio. Never conflate the two.
 • Starting Stripe equity: ${fmt(P.startingStripeEquity||0)}  [key: startingStripeEquity]
@@ -6456,7 +6456,7 @@ HOME PURCHASE PLAN
 • Target: ${fmt(P.homePrice)} (${(P.downPctg)}% down) in ${P.homePurchaseYear}
 • Down payment: ${fmt(P.homePrice*P.downPctg/100)}
 • Mortgage: ${fmt(P.homePrice-P.homePrice*P.downPctg/100)} @ ${P.mortgageRate}% (30yr)
-• Property tax: ${((P.propTaxRate??.012)*100).toFixed(2)}% of home value (~${fmt(Math.round((P.propTaxRate??.012)*P.homePrice))}/yr at purchase, grows with appreciation)
+• Property tax: ${(locationPropertyRate(P,P.homePurchaseYear)*100).toFixed(2)}% of home value (~${fmt(Math.round(locationPropertyRate(P,P.homePurchaseYear)*P.homePrice))}/yr at purchase, grows with appreciation)
 • ${y30.yr} liquid after purchase: ${fmt(y30.liq)}
 • ${y30.yr} effective tax rate: ${(y30.effRate*100).toFixed(1)}% (mortgage interest deduction helps)
 
@@ -6478,11 +6478,12 @@ PORTFOLIO ASSUMPTIONS
 • Portfolio return: ${(P.investReturn*100).toFixed(1)}%/yr
 • Home appreciation: ${(P.homeAppreciation*100).toFixed(1)}%/yr
 • Cost basis for stock sales: ${(P.costBasisPct*100).toFixed(0)}%
-• Cap gains rate (all-in NYC): ${(P.capGainsTaxRate*100).toFixed(1)}%
+• Brooklyn cap gains baseline (NJ uses location sale-tax rate): ${(P.capGainsTaxRate*100).toFixed(1)}%
 
 ═══ HOUSEHOLD CONTEXT (static) ═══
 
-• Norm: Stripe IR, NYC. W-2 comp is part cash, part Stripe stock — the plan models these as two separate streams (see the Stripe section above for the live figures).
+• Residence overlay: ${JSON.stringify(P.locationConfig||{mode:"brooklyn"})}. NJ starts January 1 of moveYear; income unchanged; NY-source wages retained with NJ credit.
+• Norm: Stripe IR. W-2 comp is part cash, part Stripe stock — the plan models these as two separate streams (see the Stripe section above for the live figures).
 • Nancy: Family therapist. Plans solo practice ~2030.
 • Currently UES (Pavilion, 500 E 77th, 2-year lease through 2029)
 • Planning Brooklyn move (Midwood, near Barkai)

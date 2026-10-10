@@ -6,7 +6,7 @@ import Model from '../public/model.js';
 import Budget from '../public/budget.js';
 function presentation(){
  const P={planStartYear:2026,expenseInflation:.03,numKids:0,housingMode:'rent',planItems:[]};
- const ctx={P,_budgetScope:'year',SUB_VIEWS:{projection:{views:[]}},MORE_ACTIONS:[],_planLoaded:false,afParams(){},PlannerSuggest:Suggest,PlannerTime:{year:()=>2026},LIV_LABEL:{groceries:'Groceries',clothing:'Clothing'},UI:{escapeHtml:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),money:v=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(v)},render(){},renderHomeTab(){},renderCompareTab(){},deflate:v=>v,_reduceMotion:()=>true};
+ const ctx={locationSpendingFactor:Model.locationSpendingFactor,P,_budgetScope:'year',SUB_VIEWS:{projection:{views:[]}},MORE_ACTIONS:[],_planLoaded:false,afParams(){},PlannerSuggest:Suggest,PlannerTime:{year:()=>2026},LIV_LABEL:{groceries:'Groceries',clothing:'Clothing'},UI:{escapeHtml:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),money:v=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(v)},render(){},renderHomeTab(){},renderCompareTab(){},deflate:v=>v,_reduceMotion:()=>true};
  vm.createContext(ctx);vm.runInContext(fs.readFileSync(new URL('../public/experience.js',import.meta.url),'utf8'),ctx);
  return {ctx,call:s=>vm.runInContext(s,ctx)};
 }

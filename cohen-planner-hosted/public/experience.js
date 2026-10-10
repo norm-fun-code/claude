@@ -236,7 +236,7 @@ function experienceBudget(R){
   const yr=Math.min(R.at(-1).yr,Math.max(R[0].yr,_budgetYear??PlannerTime.year())),r=R.find(x=>x.yr===yr),mo=_budgetUnit==='month';
   const a=PlannerBudget.allocation(P,R,yr),act=yr===PlannerTime.year()?PlannerBudget.actuals(_spend,yr,P.monarchLineMap):null;
   const amt=v=>experienceMoney(v/(mo?12:1));
-  bd.querySelector('.bd-head').outerHTML=experienceHeader('SPENDING & BUDGET / PLAN','Your spending, against your plan.',`Household totals · ${yr} · ${mo?'monthly':'annual'} amounts. Housing follows the selected case.`);
+  bd.querySelector('.bd-head').outerHTML=experienceHeader('SPENDING & BUDGET / PLAN','Your spending, against your plan.',`Household totals · ${yr} · ${mo?'monthly':'annual'} amounts. ${locationActive(P,yr)?'Deal-area spending and NJ taxes':'Brooklyn spending and taxes'}. Housing follows the selected case.`);
   const bar=bd.querySelector('.bd-bar');
   const tools=bar?.querySelector('.bd-tools');if(tools){const advanced=document.createElement('details');advanced.className='ex-budget-settings';advanced.innerHTML='<summary>Budget settings</summary>';tools.before(advanced);advanced.append(tools);}
   const mobileTools=bd.querySelector('.bd-tools-m');if(mobileTools)mobileTools.remove();
@@ -348,7 +348,7 @@ function experienceHomePeek(key,value){
   const q=rbParams();if(key){q[key]=Number(value);const f=RB_LEVERS.find(x=>x[0]===key);document.getElementById('exHome-'+key).textContent=f[5](Number(value));}
   const loan=q.homePrice*(1-q.downPctg/100),mr=q.mortgageRate/1200;
   const pi=loan<=0?0:mr>0?loan*mr/(1-Math.pow(1+mr,-360)):loan/360;
-  const cost=pi+(q.propTaxRate??.012)*q.homePrice/12+(q.maintBase||0)/12;
+  const cost=pi+locationPropertyRate(q,q.homePurchaseYear)*q.homePrice/12+(q.maintBase||0)/12;
   const el=document.getElementById('exHomeLive');if(el)el.innerHTML=experienceMetric('Monthly carrying cost',experienceMoney(cost),'Principal, interest, property tax & modeled maintenance')+experienceMetric('Down payment',experienceMoney(q.homePrice*q.downPctg/100),'Closing costs and sale taxes are additional')+experienceMetric('Purchase year',q.homePurchaseYear,'Release a slider to update the full projection');
 }
 function experienceCompare(){
@@ -532,7 +532,7 @@ function experienceCashBridge(row,year){
 
 function experienceBudgetGuide(plan,row,key){
   const band=PlannerSuggest.BANDS[key];if(!band)return null;
-  const factor=Math.pow(1+(Number(plan.expenseInflation)||0),Math.max(0,row.yr-(plan.planStartYear||row.yr)));
+  const factor=Math.pow(1+(Number(plan.expenseInflation)||0),Math.max(0,row.yr-(plan.planStartYear||row.yr)))*locationSpendingFactor(plan,key,row.yr);
   const people=PlannerSuggest.people(plan,row.yr),lo=band.per[0]*people*factor,hi=band.per[1]*people*factor;
   const value=row.livFullParts?.[key];if(!Number.isFinite(value))return null;
   const status=value<lo-.5?'low':value>hi+.5?'high':'within';
@@ -561,7 +561,7 @@ function experienceApplyBudgetGuide(key,year){
 function experienceFutureChecks(plan,row){
   // Compare future spending in base-year purchasing power, so inflation alone is not a warning.
   const factor=Math.pow(1+(Number(plan.expenseInflation)||0),Math.max(0,row.yr-(plan.planStartYear||row.yr)));
-  const base={...row,livFullParts:Object.fromEntries(Object.entries(row.livFullParts||{}).map(([k,v])=>[k,v/factor]))};
+  const base={...row,livFullParts:Object.fromEntries(Object.entries(row.livFullParts||{}).map(([k,v])=>[k,v/(factor*locationSpendingFactor(plan,k,row.yr))]))};
   return PlannerSuggest.checks(plan,[base],row.yr).filter(c=>experienceBudgetGuide(plan,row,c.line)?.status!=='within');
 }
 function experienceOpenBudgetSuggestion(){
@@ -617,3 +617,43 @@ function experienceChartFormatting(){
     chart.update?.('none');
   }
 }
+
+let locationComparisonCache={signature:'',result:null};
+function locationSet(mode){
+ P.locationConfig={...(P.locationConfig||{}),mode,moveYear:P.locationConfig?.moveYear??P.homePurchaseYear??2031};
+ rebuildScenarioResults();buildControls();render();savePlannerState();
+}
+function locationEdit(key,value){
+ const c={...(P.locationConfig||{}),mode:P.locationConfig?.mode||'brooklyn'};
+ if(key==='municipality'){c.municipality=value;delete c.propertyTaxRate;}
+ else if(key.startsWith('factor:'))c.factors={...(c.factors||{}),[key.slice(7)]:Math.max(.1,Math.min(2,Number(value)/100))};
+ else if(['tuitionFactor','childcareFactor','normNySource','nancyNySource','practiceNySource'].includes(key))c[key]=Math.max(0,Math.min(1,Number(value)/100));
+ else if(key==='propertyTaxRate')c[key]=Math.max(0,Math.min(.1,Number(value)/100));
+ else if(key==='moveYear')c[key]=Math.max(P.planStartYear||2026,Math.min(P.planEndYear||2070,Math.round(Number(value)||P.planStartYear||2026)));
+ else c[key]=Math.max(0,Number(value)||0);
+ P.locationConfig=c;rebuildScenarioResults();buildControls();render();savePlannerState();
+}
+function experienceLocation(){
+ if(!_planLoaded)return;
+ document.getElementById('locationBar')?.remove();
+ const c=P.locationConfig||{},deal=c.mode==='deal',year=c.moveYear??P.homePurchaseYear??2031;
+ const el=document.createElement('section');el.id='locationBar';el.className='ex-location-bar';
+ const number=(label,key,value,suffix='',step=1)=>`<label>${label}<span><input type="number" aria-label="${label}" value="${value}" step="${step}" min="0" onchange="locationEdit('${key}',this.value)">${suffix}</span></label>`;
+ const factor=(label,key)=>number(label,'factor:'+key,Math.round((c.factors?.[key]??DEAL_SPENDING_FACTORS[key])*100),'%');
+ const signature=JSON.stringify(P);
+ if(locationComparisonCache.signature!==signature){
+   const bk=run({...P,locationConfig:{...c,mode:'brooklyn'}}),nj=run({...P,locationConfig:{...c,mode:'deal',moveYear:year}});
+   const peak=bk.R.filter(r=>r.yr>=year).reduce((a,b)=>b.tuFull>a.tuFull?b:a,bk.R.at(-1));
+   const other=nj.R.find(r=>r.yr===peak.yr);
+   locationComparisonCache={signature,result:{year:peak.yr,spending:peak.totEFull-other.totEFull,taxes:peak.tax-other.tax,wealth:nj.R.at(-1).netWorth-bk.R.at(-1).netWorth,end:nj.R.at(-1).yr}};
+ }
+ const impact=locationComparisonCache.result;
+ el.innerHTML=`<div class="ex-location-top"><div><span class="ex-kicker">LONG-TERM HOME</span><strong>${deal?'Deal area, NJ':'Brooklyn, NY'}</strong><small>Same income cases · ${deal?'NJ costs from '+year:'Brooklyn costs'}</small></div><div class="ex-segments" aria-label="Long-term location"><button type="button" aria-pressed="${!deal}" onclick="locationSet('brooklyn')">Brooklyn</button><button type="button" aria-pressed="${deal}" onclick="locationSet('deal')">Deal, NJ</button></div></div>
+ <details class="ex-location-settings"><summary>Compare costs & adjust assumptions</summary><div class="ex-location-impact"><span>${impact.year} spending saved<strong>${experienceMoney(impact.spending)}/yr</strong></span><span>${impact.year} tax saved<strong>${experienceMoney(impact.taxes)}/yr</strong></span><span>${impact.end} wealth difference<strong>${experienceMoney(impact.wealth)}</strong></span></div><p>Savings show Brooklyn minus Deal; wealth difference shows Deal minus Brooklyn, in the selected income case. January 1 move; years before ${year} stay in Brooklyn. Home price, rent, mortgage, income and investment returns stay at the selected case’s inputs. These are modeled differences, not forecasts.</p>
+ <div class="ex-location-grid">${number('NJ move year','moveYear',year)}<label>Municipality<select aria-label="NJ municipality" onchange="locationEdit('municipality',this.value)">${[['deal','Deal borough'],['longBranch','Long Branch'],['ocean','Ocean Township']].map(([v,l])=>`<option value="${v}" ${(c.municipality||'deal')===v?'selected':''}>${l}</option>`).join('')}</select></label>${number('NJ property tax estimate','propertyTaxRate',(c.propertyTaxRate??NJ_PROPERTY_RATES[c.municipality||'deal'])*100,'%',.001)}${number('Tuition vs Brooklyn','tuitionFactor',(c.tuitionFactor??.5)*100,'%')}${number('Childcare vs Brooklyn','childcareFactor',(c.childcareFactor??.9)*100,'%')}${factor('Groceries vs Brooklyn','groceries')}${factor('Dining vs Brooklyn','dining')}${factor('Entertainment vs Brooklyn','entertainment')}${factor('Utilities vs Brooklyn','utilities')}${number('Extra car costs / month','autoMonthly',c.autoMonthly??600)}${number('Extra auto insurance / month','insuranceMonthly',c.insuranceMonthly??100)}${number('Extra commuting / month','commuteMonthly',c.commuteMonthly??200)}${number('Norm NY-source pay','normNySource',(c.normNySource??1)*100,'%')}${number('Nancy W-2 NY-source pay','nancyNySource',(c.nancyNySource??1)*100,'%')}${number('Nancy practice NY-source income','practiceNySource',(c.practiceNySource??0)*100,'%')}</div>
+ <p>50% tuition is your planning assumption, not a verified Hillel fee schedule. Discounts are modeling judgments, not measured local household averages. Shopping, clothing, vacations, healthcare, giving and one-offs receive no automatic discount. Car/insurance/commuting allowances grow with inflation and apply to modeled lines; an explicit budget rule replaces that line’s allowance. Amount edits in Deal are converted back to the shared Brooklyn baseline.</p><p>NJ tax uses the joint schedule, personal/dependent exemptions, 401(k) exclusion and property-tax deduction. NY-source compensation retains NY tax with a proportionally allocated, limited NJ credit (a planning approximation); no NYC resident tax after moving. NJ pretax benefits are treated as taxable. Capital-gain sales keep the planner’s simplified 20% federal + 3.8% NIIT convention plus NJ marginal tax. No mid-year residency, NJ payroll levies, school fees/busing, shore flood insurance or parcel-specific assessment is inferred.</p>
+ <p>Sources: <a href="https://www.nj.gov/treasury/taxation/pdf/current/njtaxratesch.pdf" target="_blank" rel="noopener">NJ income-tax schedule</a> · <a href="https://www.tax.ny.gov/pit/file/nonresident-faqs.htm" target="_blank" rel="noopener">NY sourcing rules</a> · <a href="https://www.nj.gov/treasury/taxation/njit14.shtml" target="_blank" rel="noopener">NJ credit</a> · <a href="https://www.nj.gov/treasury/taxation/pdf/lpt/gtr/2025taxrates.pdf" target="_blank" rel="noopener">2025 property-tax comparison</a>. Effective rates are planning proxies; enter a real property’s tax bill before making a purchase decision. NJ’s transfer fee is seller-paid under current law, so the buyer model excludes it and NYC mortgage recording tax.</p></details>`;
+ document.querySelector('.hdr')?.after(el);
+}
+
+const experienceBeforeLocation=experienceEnhance;experienceEnhance=function(){experienceBeforeLocation();experienceLocation();};
