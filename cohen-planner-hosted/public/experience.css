@@ -509,3 +509,17 @@ body,body.home-view{background:radial-gradient(ellipse at 75% -20%,#2c2749 0,tra
  .decision-room .dr-save input { background:#f8f7ef; color:#274631; border-color:#bbc8ac; }
  .decision-room .dr-control input,.decision-room .dr-scrubber input { accent-color:#365c43; }
 }
+
+/* Remaining legacy surfaces: advisor actions and the full budget editor. */
+@media screen {
+ .ex-advisor-prompts button { background:#e5ecdc; border-color:#bbc8ac; color:#365c43; }
+ .ex-advisor-prompts button:hover { background:#d7e2cb; border-color:#90a67e; }
+ .bd .cl-group { background:#f8f7ef!important; border-color:#cbd5be; }
+ .bd .cl-ghead { background:#eef0e5!important; }
+ .bd .cl-table thead { background:#e7eadf!important; }
+ .bd .cl-table tr,.bd .bd-row { background:transparent; }
+ .bd .bd-tag.rule,.bd .bd-tag.pin,.bd .bd-led-kind { background:#e5ecdc; color:#365c43; border-color:#bbc8ac; }
+ .bd .bd-oneoff input,.bd .bd-oneoff select { appearance:none; background:#f8f7ef; color:#274631; border:1px solid #bbc8ac; border-radius:8px; padding:8px 10px; min-height:36px; box-sizing:border-box; font:inherit; }
+ .bd .bd-oneoff input:focus,.bd .bd-oneoff select:focus { outline:2px solid #90a67e; outline-offset:2px; }
+ .bd .bd-oneoff input::placeholder { color:#657755; }
+}

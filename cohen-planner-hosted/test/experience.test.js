@@ -113,3 +113,12 @@ describe('focused spending and budget presentation',()=>{
   const before=JSON.stringify(t.ctx.P);expect(Suggest.pending(t.ctx.P,2032,0).some(x=>x.id.startsWith('camp-'))).toBe(true);expect(Suggest.pending(t.ctx.P,2040,0).some(x=>x.id.startsWith('mitzvah-'))).toBe(true);expect(JSON.stringify(t.ctx.P)).toBe(before);
  });
 });
+
+describe('investable asset display',()=>{
+ it('includes vested Stripe and other net assets while excluding home and retirement without double counting sales',()=>{
+  const t=presentation();t.ctx.asset={liq:500000,sEnd:2000000,otherAssets:50000,otherDebt:10000,eq:1000000,k401:700000,nwExRetHome:2540000};
+  expect(t.call('experienceInvestableAssets(asset)')).toBe(2540000);
+  t.ctx.asset={liq:1500000,sEnd:1000000,otherAssets:50000,otherDebt:10000};
+  expect(t.call('experienceInvestableAssets(asset)')).toBe(2540000);
+ });
+});
