@@ -29,6 +29,16 @@ describe('location overlay',()=>{
   expect(cross.njCredit).toBeLessThanOrEqual(cross.njGrossTax);expect(cross.njCredit).toBeLessThanOrEqual(cross.nySourceTax);
   expect(cross.state).toBe(Math.round(cross.nySourceTax+cross.njGrossTax-cross.njCredit));
  });
+ it('applies NJ spending discounts by category, starting only after the move',()=>{
+  const factors={groceries:.95,dining:.90,shopping:.97,clothing:.97,vacations:1,auto:1,insurance:1,misc:.90,entertainment:.90,charity:1,medical:.95,transit:1,utilities:.95};
+  const p={...D,locationConfig:nj};
+  for(const [category,factor] of Object.entries(factors)){
+   expect(M.locationSpendingFactor(p,category,2031)).toBe(factor);
+   expect(M.locationSpendingFactor(p,category,2030)).toBe(1);
+  }
+  expect(M.locationSpendingFactor({...p,locationConfig:{...nj,factors:{medical:1.1}}},'medical',2031)).toBe(1.1);
+  expect(M.locationSpendingFactor({...p,locationConfig:{mode:'brooklyn'}},'groceries',2040)).toBe(1);
+ });
  it('uses the selected municipality and removes NYC buyer taxes only for NJ purchases',()=>{
   const p={...D,homePurchaseYear:2031,locationConfig:nj};
   expect(M.locationPropertyRate(p,2030)).toBe(D.propTaxRate);
@@ -39,7 +49,7 @@ describe('location overlay',()=>{
  });
  it('applies inflation to added car costs, leaves shopping/travel alone, and keeps Deal budget edits exact',()=>{
   const p={...D,locationConfig:nj};
-  expect(M.locationSpendingFactor(p,'shopping',2040)).toBe(1);expect(M.locationSpendingFactor(p,'vacations',2040)).toBe(1);
+  expect(M.locationSpendingFactor(p,'shopping',2040)).toBe(.97);expect(M.locationSpendingFactor(p,'vacations',2040)).toBe(1);
   expect(M.locationAdditions(p,2032).auto/M.locationAdditions(p,2031).auto).toBeCloseTo(1+D.expenseInflation);
   const e=B.edit(p,{category:'groceries',year:2031,scope:'onward',input:{kind:'amount',annual:12000}});
   const changed={...p,...e.pins,budgetRules:e.budgetRules};
