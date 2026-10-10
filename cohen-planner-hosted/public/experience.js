@@ -465,6 +465,14 @@ function experienceBudgetVisual(R){
  experiencePlanReview(bd,r,yr,R);
 
 }
+let experienceCatchUpBusy=false;
+async function experienceCatchUp(){
+ if(experienceCatchUpBusy)return;
+ experienceCatchUpBusy=true;
+ const button=document.querySelector('.so-catch-up');if(button){button.disabled=true;button.textContent='Catching up…';}
+ try{await runIncremental();}catch(e){showToast('Could not catch up. Please try again.','red');}
+ finally{experienceCatchUpBusy=false;const current=document.querySelector('.so-catch-up');if(current){current.disabled=false;current.textContent='↻ Catch up';}}
+}
 function experienceSpendingVisual(){
  const w=document.querySelector('.spending-workspace');if(!w||!_spend||_spend.error)return;
  const rows=window.__spendingViz?.rows||[];if(!rows.length)return;
@@ -480,7 +488,7 @@ function experienceSpendingVisual(){
  if(lens)experienceFold(w,[lens],'All categories, exact amounts & income comparison','spending-category-detail');
  const drift=w.querySelector('#spendLtmChart')?.closest('section'),pace=w.querySelector('.pace');
  const stage=document.createElement('section');stage.className='so-spending-stage';
- stage.innerHTML=`<div class="so-question-tabs" aria-label="Spending question">${[['categories','Where it goes'],['trend','How it’s changing'],['month','This month']].map(([v,label])=>`<button aria-pressed="${spendingStoryView===v}" onclick="spendingStoryView='${v}';render()">${label}</button>`).join('')}</div>`;
+ stage.innerHTML=`<div class="so-spending-toolbar"><div class="so-question-tabs" aria-label="Spending question">${[['categories','Where it goes'],['trend','How it’s changing'],['month','This month']].map(([v,label])=>`<button aria-pressed="${spendingStoryView===v}" onclick="spendingStoryView='${v}';render()">${label}</button>`).join('')}</div><button type="button" class="so-catch-up" onclick="experienceCatchUp()" ${experienceCatchUpBusy?'disabled':''} aria-label="Catch up Monarch transactions">${experienceCatchUpBusy?'Catching up…':'↻ Catch up'}</button></div>`;
  w.querySelector('.ex-heading').after(stage);stage.append(section);section.hidden=spendingStoryView!=='categories';
  if(drift){stage.append(drift);drift.hidden=spendingStoryView!=='trend';drift.querySelector('h3').textContent='Is our spending rising?';}
  if(pace){stage.append(pace);pace.hidden=spendingStoryView!=='month';}

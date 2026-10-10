@@ -567,3 +567,16 @@ body,body.home-view{background:radial-gradient(ellipse at 75% -20%,#2c2749 0,tra
  .cp-basis { padding:10px 12px; }
  .cp-trajectory .cp-pins button { border-radius:9px; font-size:11px; padding:8px 10px; }
 }
+
+@media screen {
+ .so-spending-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+ .so-spending-toolbar .so-question-tabs { flex:1; min-width:0; }
+ .so-catch-up { flex:none; margin:0 28px 8px 0; background:transparent; border:0; border-bottom:1px solid transparent; padding:7px 3px; color:#596f4d; cursor:pointer; font:inherit; font-size:11px; white-space:nowrap; }
+ .so-catch-up:hover { color:#274631; border-bottom-color:#90a67e; }
+ .so-catch-up:focus-visible { outline:2px solid #365c43; outline-offset:2px; }
+ .so-catch-up:disabled { opacity:.6; cursor:wait; }
+}
+@media screen and (max-width:760px) {
+ .so-spending-toolbar .so-question-tabs { flex-basis:100%; }
+ .so-catch-up { margin:-8px 20px 2px auto; padding:6px 3px; }
+}
