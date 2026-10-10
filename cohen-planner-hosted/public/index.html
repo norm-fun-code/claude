@@ -616,7 +616,7 @@ function caseReallyEdited(){
   if(!scenarioDirty||activeScenarioIdx<0||!scenarios[activeScenarioIdx])return false;
   try{
     const canon=o=>JSON.stringify(o,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().filter(x=>v[x]!==undefined).map(x=>[x,v[x]])):v);
-    const same=canon(keepAssumptions({...P}))===canon(keepAssumptions({...D,...migrateP(scenarios[activeScenarioIdx].params)}));
+    const same=canon(keepAssumptions({...P}))===canon(keepAssumptions(scenarioPlan(scenarios[activeScenarioIdx].params)));
     if(same)scenarioDirty=false;
     return !same;
   }catch(e){return true}
