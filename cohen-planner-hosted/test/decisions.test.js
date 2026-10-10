@@ -22,6 +22,15 @@ describe('Decision Room calculations',()=>{
     expect(summary.floor.liq).toBe(Math.min(...R.map(r=>r.liq)));
     expect(summary.current.surp).toBe(R[0].inc-R[0].totE);
   });
+  it('previews Nancy’s start year without changing the saved plan and keeps W-2 income until practice begins',()=>{
+    const original=JSON.stringify(defaults),p={...defaults,nancyRampYear:2028,nancyW2Y0:100000,nancyW2Y1:110000,nancyW2Y2:120000,nancyW2Y3:130000};
+    const later=variant(p,{nancyRampYear:2030}),R=run(later).R;
+    expect(R.find(r=>r.yr===2028).nancyG).toBe(120000);
+    expect(R.find(r=>r.yr===2029).nancyG).toBe(130000);
+    expect(R.find(r=>r.yr===2030).nancyG).not.toBe(130000);
+    expect(p.nancyRampYear).toBe(2028);expect(JSON.stringify(defaults)).toBe(original);
+    expect(preset(p,'practice')).toEqual({nancyRampYear:2029});
+  });
   it('uses starting liquidity for a first-year home and does not treat year-end balance as closing cash',()=>{
     const p={...defaults,homePurchaseYear:defaults.planStartYear};
     const s=summarize(p,run(p).R,p.planStartYear);

@@ -12,6 +12,7 @@
     // here — "back a month earlier" and "a month later" are real choices, and they move the
     // year a child arrives more than the monthly rate does.
     childcareStartMonths:{label:'Childcare starts at',min:0,max:24,step:1,format:'months'},
+    nancyRampYear:{label:'Nancy’s practice start year',min:2026,max:2099,step:1,format:'year'},
     nancyMaxClients:{label:'Nancy’s clients / week',min:0,max:40,step:1,format:'number'},
     investReturn:{label:'Annual portfolio return',min:0,max:0.12,step:0.005,format:'percent'},
   };
@@ -85,6 +86,7 @@
       rate:{mortgageRate:clamp(p.mortgageRate+1,0,15)},
       down:{downPctg:clamp(p.downPctg+10,0,100)},
       care:{childcareMonthly:clamp((p.childcareMonthly??2800)+1000,0,12000)},
+      practice:{nancyRampYear:clamp(p.nancyRampYear+1,2026,2099)},
       time:{nancyMaxClients:clamp(p.nancyMaxClients-3,0,40)},
       returns:{investReturn:clamp(p.investReturn-.02,0,.12)},
     };

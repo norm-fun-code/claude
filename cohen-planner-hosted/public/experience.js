@@ -257,7 +257,8 @@ function experienceBudget(R){
     const rest=[...row.children].filter(n=>n!==top);
     rest.filter(n=>n.matches('.cl-track,.bd-callout')).forEach(n=>n.remove());
     const body=document.createElement('div');body.className='ex-row-detail';body.hidden=true;
-    rest.filter(n=>n.isConnected).forEach(n=>body.append(n));row.append(body);
+    rest.filter(n=>n.isConnected).forEach(n=>body.append(n));
+    const guideHtml=experienceBudgetGuideHtml(P,r,key);if(guideHtml)body.insertAdjacentHTML('afterbegin',guideHtml);row.append(body);
     const more=columns.querySelector('button');more.onclick=()=>{body.hidden=!body.hidden;more.setAttribute('aria-expanded',String(!body.hidden));more.textContent=body.hidden?'Details':'Close';};
     const actualStrip=body.querySelector('.bd-actual');if(actualStrip)actualStrip.querySelector('.bd-pill')?.remove();
   });
@@ -508,11 +509,34 @@ function experienceCashBridge(row,year){
   return `<div class="ex-cash-title"><span class="ex-kicker">MONTHLY CASH FLOW · ${year}</span><span>${inflationView?'Today’s dollars ('+P.planStartYear+')':'Future dollars'}</span></div><div class="ex-cash-comparison">${bar('Cash pay after tax',income,'income')}${bar('Household spending',spend,'spend')}<div class="ex-cash-result" data-shortfall="${delta<0}"><span>${delta<0?'To fund from assets':'Cash remaining'}</span><strong>${money(Math.abs(delta))}<small>/mo</small></strong><p>${delta<0?'Spending exceeds cash pay.':'Before additional saving or investing.'}</p></div></div><p class="ex-chart-caption">Same scale · cash pay excludes unsold equity · home-purchase funds are separate.</p>`;
 }
 
+function experienceBudgetGuide(plan,row,key){
+  const band=PlannerSuggest.BANDS[key];if(!band)return null;
+  const factor=Math.pow(1+(Number(plan.expenseInflation)||0),Math.max(0,row.yr-(plan.planStartYear||row.yr)));
+  const people=PlannerSuggest.people(plan,row.yr),lo=band.per[0]*people*factor,hi=band.per[1]*people*factor;
+  const value=row.livFullParts?.[key];if(!Number.isFinite(value))return null;
+  const status=value<lo-.5?'low':value>hi+.5?'high':'within';
+  // Round inside the band, not above its upper limit or below its lower limit.
+  const monthly=status==='high'?Math.floor(hi/12):status==='low'?Math.ceil(lo/12):Math.round(value/12);
+  return {lo,hi,value,status,annual:monthly*12,year:row.yr};
+}
+function experienceBudgetGuideHtml(plan,row,key){
+  const g=experienceBudgetGuide(plan,row,key);if(!g)return '';
+  const flagged=g.status!=='within',name=experienceEscape(LIV_LABEL[key]||key);
+  return `<section class="ex-guide-recommendation"><span class="ex-kicker">${flagged?'ASSUMPTION TO REVIEW':'WITHIN HOUSEHOLD GUIDE'}</span><strong>${name}: ${experienceMoney(g.lo/12)}–${experienceMoney(g.hi/12)}/mo</strong><p>${row.yr} dollars · ${experienceEscape(PlannerSuggest.household(plan,row.yr))} · broad planning range, not measured NYC spending.</p>${flagged?`<p>Your plan is ${experienceMoney(g.value/12)}/mo. ${g.status==='high'?'Consider reducing':'Consider allowing'} it to <strong>${experienceMoney(g.annual/12)}/mo</strong> to bring it within the guide.</p><button class="ui-btn ui-btn-primary" onclick="experienceApplyBudgetGuide('${key}',${row.yr})">Use ${experienceMoney(g.annual/12)}/mo for ${row.yr}</button><small>Changes this year only, across shared cases. Undo is available.</small>`:''}</section>`;
+}
+function experienceApplyBudgetGuide(key,year){
+  const row=run(P).R.find(r=>r.yr===year);if(!row)return;
+  const g=experienceBudgetGuide(P,row,key);if(!g||g.status==='within')return;
+  const edit=PlannerBudget.edit(P,{category:key,year,scope:'year',input:{kind:'amount',annual:g.annual},basis:'net',income:{net:row.netTC,gross:row.gross}});
+  if(!edit.ok){showToast(edit.error,'red');return;}
+  budgetApply(edit,`${LIV_LABEL[key]||key} → ${experienceMoney(g.annual/12)}/mo, ${year} only`);
+  experienceBudgetReveal(key);
+}
 function experienceFutureChecks(plan,row){
   // Compare future spending in base-year purchasing power, so inflation alone is not a warning.
   const factor=Math.pow(1+(Number(plan.expenseInflation)||0),Math.max(0,row.yr-(plan.planStartYear||row.yr)));
   const base={...row,livFullParts:Object.fromEntries(Object.entries(row.livFullParts||{}).map(([k,v])=>[k,v/factor]))};
-  return PlannerSuggest.checks(plan,[base],row.yr);
+  return PlannerSuggest.checks(plan,[base],row.yr).filter(c=>experienceBudgetGuide(plan,row,c.line)?.status!=='within');
 }
 function experienceOpenBudgetSuggestion(){
   document.querySelectorAll('.so-nudge').forEach(n=>n.open=true);

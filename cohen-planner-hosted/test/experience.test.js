@@ -2,6 +2,8 @@ import {describe,it,expect} from 'vitest';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import Suggest from '../public/suggest.js';
+import Model from '../public/model.js';
+import Budget from '../public/budget.js';
 function presentation(){
  const P={planStartYear:2026,expenseInflation:.03,numKids:0,housingMode:'rent',planItems:[]};
  const ctx={P,SUB_VIEWS:{projection:{views:[]}},MORE_ACTIONS:[],_planLoaded:false,afParams(){},PlannerSuggest:Suggest,PlannerTime:{year:()=>2026},LIV_LABEL:{groceries:'Groceries',clothing:'Clothing'},UI:{escapeHtml:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),money:v=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(v)},render(){},renderHomeTab(){},renderCompareTab(){},deflate:v=>v,_reduceMotion:()=>true};
@@ -49,12 +51,12 @@ describe('focused spending and budget presentation',()=>{
   const t=presentation();t.ctx.rows=[{yr:2026,incFull:120000,totEFull:100000},{yr:2027,incFull:90000,totEFull:100000}];
   const html=t.call('experienceCashPath(rows,2027)');expect(html).toContain('cash shortfall');expect(html).toContain('cash surplus');expect((html.match(/tabindex="0"/g)||[])).toHaveLength(2);expect(html).toContain('lifeOpenYear(2027)');expect(html).not.toContain('NaN');
  });
- it('defaults the income readout to total after-tax compensation and separates cash-only gaps',()=>{
+ it('separates total after-tax income from cash-only gaps',()=>{
   const t=presentation();t.ctx.rows=[
    {yr:2026,inc:10000,incFull:90000,netTC:150000,totEFull:120000},
    {yr:2027,incFull:110000,netTC:160000,totEFull:140000}
   ];
-  const income=t.call('experienceIncomeReadout(rows)');
+  const income=t.call('experienceIncomeReadout(rows,\'income\')');
   expect(income.gaps).toHaveLength(0);expect(income.pressure.yr).toBe(2027);expect(income.monthly).toBeCloseTo(20000/12);
   const cash=t.call("experienceIncomeReadout(rows,'cash')");
   expect(cash.gaps).toHaveLength(2);expect(cash.monthly).toBe(2500);
@@ -63,10 +65,26 @@ describe('focused spending and budget presentation',()=>{
  });
  it('switches the displayed basis without changing compensation or saved assumptions',()=>{
   const t=presentation(),before=JSON.stringify(t.ctx.P);let renders=0;t.ctx.render=()=>{renders++};
-  expect(t.call('overviewIncomeView')).toBe('income');
+  expect(t.call('overviewIncomeView')).toBe('flex');
   t.call("setOverviewIncomeView('cash')");expect(t.call('overviewIncomeView')).toBe('cash');
   t.call("setOverviewIncomeView('income')");expect(t.call('overviewIncomeView')).toBe('income');
   expect(JSON.stringify(t.ctx.P)).toBe(before);expect(renders).toBe(2);
+ });
+ it('shows an actionable guide in selected-year dollars and clears high and low alerts after applying it',()=>{
+  const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+  const D=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
+  for(const year of [2027,2043])for(const amount of [1,100000]){
+   const t=presentation();t.ctx.P={...D,planStartYear:2026,observedOn:null,masterBudget:true,budgetRules:{shopping:[{from:2026,kind:'amount',value:amount}]}};
+   const before=Model.run(t.ctx.P).R;t.ctx.row=before.find(r=>r.yr===year);
+   const g=t.call("experienceBudgetGuide(P,row,'shopping')");expect(g.status).not.toBe('within');
+   const detail=t.call("experienceBudgetGuideHtml(P,row,'shopping')");expect(detail).toContain('Use ');expect(detail).toContain('for '+year);expect(detail).toContain('Changes this year only');
+   const edit=Budget.edit(t.ctx.P,{category:'shopping',year,scope:'year',input:{kind:'amount',annual:g.annual}});
+   Object.assign(t.ctx.P,{budgetRules:edit.budgetRules},edit.pins);
+   const after=Model.run(t.ctx.P).R;t.ctx.row=after.find(r=>r.yr===year);
+   expect(t.call("experienceBudgetGuide(P,row,'shopping').status")).toBe('within');
+   expect(t.call('experienceFutureChecks(P,row)').some(c=>c.line==='shopping')).toBe(false);
+   expect(after.find(r=>r.yr===year+1).livFullParts.shopping).toBe(before.find(r=>r.yr===year+1).livFullParts.shopping);
+  }
  });
  it('keeps an unaccepted ongoing camp cost visible in later camp years',()=>{
   const t=presentation();Object.assign(t.ctx.P,{numKids:1,kid1Birth:2027});

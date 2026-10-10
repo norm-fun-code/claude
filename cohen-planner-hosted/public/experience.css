@@ -482,3 +482,30 @@ body,body.home-view{background:radial-gradient(ellipse at 75% -20%,#2c2749 0,tra
   .so-arg-breakdown>div { align-items:flex-start; }
   .so-arg-breakdown>div span { max-width:58%; }
 }
+/* Selected budget lines and their actionable guides share the forest/ivory palette. */
+.bd-row.ex-row-highlight { background:#e5ecdc!important; outline:1px solid #90a67e; }
+.bd-row .ex-row-detail { background:#f4f4e9; color:#50634b; border:1px solid #d2dbc6; }
+.ex-guide-recommendation { display:grid; gap:9px; margin-bottom:18px; padding-bottom:18px; border-bottom:1px solid #d2dbc6; }
+.ex-guide-recommendation>strong { color:#274631; font-size:15px; }
+.ex-guide-recommendation p { margin:0; font-size:12px; line-height:1.5; color:#50634b; }
+.ex-guide-recommendation .ui-btn { justify-self:start; font-size:12px; width:auto; }
+.ex-guide-recommendation>small { font-size:11px; color:#596f4d; }
+
+/* Complete the decision-room palette, including inherited intro and control states. */
+@media screen {
+ .decision-room { --dr-border:#cbd5be; --dr-muted:#596f4d; color:#274631; }
+ .decision-room .dr-intro,.decision-room .dr-intro h2 { color:#274631; }
+ .decision-room .dr-intro p { color:#596f4d; }
+ .decision-room .dr-control output,.decision-room .dr-changes strong,.decision-room .dr-scrubber output { color:#365c43; }
+ .decision-room .dr-primary { background:#365c43; border-color:#365c43; color:#fbf8ec; }
+ .decision-room .dr-primary:hover { background:#294b33; }
+ .decision-room .dr-secondary,.decision-room .dr-presets button { background:#e7eadf; border-color:#cbd5be; color:#365c43; }
+ .decision-room .dr-secondary:hover,.decision-room .dr-presets button:hover { background:#dce4d1; border-color:#90a67e; }
+ .decision-room .dr-text-button,.decision-room .dr-milestones span { color:#365c43; }
+ .decision-room .dr-milestones button:hover { background:#e5ecdc; }
+ .decision-room .dr-chart { fill:#596f4d; }
+ .decision-room .dr-legend { color:#365c43; }
+ .decision-room .dr-legend span:nth-child(2) { color:#8f682e; }
+ .decision-room .dr-save input { background:#f8f7ef; color:#274631; border-color:#bbc8ac; }
+ .decision-room .dr-control input,.decision-room .dr-scrubber input { accent-color:#365c43; }
+}
