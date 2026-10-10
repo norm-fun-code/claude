@@ -3,11 +3,14 @@
 // One-time, narrowly scoped update of saved compensation scenarios.
 // Does not change housing, spending, net-worth opening balances, Nancy income,
 // investment returns, or Stripe holdings. Do not use as a general migration.
-const UPDATE_ID = 'audited-stripe-comp-2026-10-08-v1';
+const UPDATE_ID = 'stripe-arg-cash-election-from-2028-v2-2026-10-09';
 
-// Values in USD thousands, from the audited compensation tables.
-// Annual equity grant remains part of Stock, not Cash.
-const DATA = {
+// The underlying October 8 audited comp was already based on *face-value* ARG
+// plus PEG stock measured at vest-date value. The new election is an allocation:
+// starting in 2028, recurring ARG moves from newly vested stock to cash, while
+// performance awards (PEG) remain shares. No W-2 total changes.
+// Audit input values are in USD thousands and are retained for traceability.
+const AUDITED_DATA = {
   conservative: [
     [2026,257,155],[2027,264,155],[2028,255,149],[2029,263,136],
     [2030,282,150],[2031,305,154],[2032,314,161],[2033,323,165],
@@ -24,6 +27,21 @@ const DATA = {
     [2034,399,271],[2035,374,287],[2036,386,275],[2037,436,273]
   ]
 };
+const ARG_CASH_START_YEAR=2028;
+const ARG_FACE_K={L3:80,L4:100,L5:150};
+function levelFor(scenario,year){
+  if(scenario==='conservative') return year>=2030?'L4':'L3';
+  if(scenario==='base') return year>=2035?'L5':year>=2029?'L4':'L3';
+  if(scenario==='optimistic') return year>=2033?'L5':year>=2028?'L4':'L3';
+  throw new Error('Unknown audited scenario '+scenario);
+}
+const DATA=Object.fromEntries(Object.entries(AUDITED_DATA).map(([scenario,rows])=>[
+  scenario,rows.map(([year,cash,stock])=>{
+    const cashArg=year>=ARG_CASH_START_YEAR?ARG_FACE_K[levelFor(scenario,year)]:0;
+    if(cashArg>stock) throw new Error('Invalid ARG reallocation '+scenario+' '+year);
+    return [year,cash+cashArg,stock-cashArg];
+  })
+]));
 const COLORS = {conservative:'#20c997',base:'#339af0',optimistic:'#845ef7'};
 
 function scenarioKey(name) {
