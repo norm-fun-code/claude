@@ -143,7 +143,7 @@ function renderCockpit(R){
 
   const cash=PlannerStress.cashMetrics(current,available?Number(s.accessible)||0:Number(P.startingLiquid)||0);
   const _flowMonthly=current.flowMonthly; // modeled monthly rate used by every margin surface
-  const metric=(title,value,detail,action)=>`<button class="cp-metric" onclick="cockpitGo('${action}')"><span>${title}</span><strong>${value}</strong><small>${detail}</small></button>`;
+  const metric=(title,value,detail,action)=>`<button class="cp-metric" onclick="cockpitGo('${action}')"><span>${title}</span><strong>${value}</strong>${detail?`<small>${detail}</small>`:''}</button>`;
   // The hero must never render a dash. When accounts are unreachable the PLAN still
   // knows a net worth, so show that and let the provenance chip carry the doubt.
   const hero=UI.heroValue({
@@ -165,11 +165,11 @@ function renderCockpit(R){
         <span class="cp-eyebrow">NET WORTH${cockpitExRet?' · EX-RETIREMENT':''}</span>
         <strong class="ui-hero-value" id="cp-hero" data-source="${hero.source}">${hero.value==null?'—':UI.money(hero.value)}</strong>
         <div class="cp-hero-meta">${hero.source==='observed'?'':UI.prov(hero.source)}${hero.partial?cockpitGapPanel(s,d):''}</div>
-        <p>${e(hero.note)}</p>
+        ${hero.source==='observed'?'':`<p>${e(hero.note)}</p>`}
         <button onclick="cockpitGo('overview')">See the composition <span>${UI.icon('arrow')}</span></button>
       </div>
       <div class="cp-metrics">${
-        metric('Cash + taxable',available?money(s.accessible):money(selected.liq),available?'Spendable without penalty':'Projected · accounts unavailable','overview')
+        metric('Cash + taxable',available?money(s.accessible):money(selected.liq),available?'':'Projected · accounts unavailable','overview')
       }${(() => {
         // Private holdings kept as their own tile rather than folded into the one above. They
         // are investments and they count in the net worth at the top, but the tile beside them
@@ -178,7 +178,7 @@ function renderCockpit(R){
         const v=available?Math.max(0,(Number(s.byClass?.private?.total)||0)-(Number(s.stripeVested)||0)):Number(selected.otherAssets)||0;
         return v>=1000?metric('Private assets',money(v),'In your net worth · not readily sellable','overview'):'';
       })()
-      }${metric('Vested Stripe',available?money(s.stripeVested):money(selected.sEnd),'Private equity · sale windows apply','stripe')
+      }${metric('Vested Stripe',available?money(s.stripeVested):money(selected.sEnd),'','stripe')
       }${metric('Retirement',available?money(s.byClass?.retirement?.total):money(selected.k401),cockpitExRet?'Locked until 59½ · NOT in the figure above':available?'Locked until retirement age':'Projected · accounts unavailable','holdings')
       }${metric(`${current.yr} cash margin /month`,money(cash.cashMargin),'Cash pay after tax less spending · excludes unsold stock','cashflow')}</div>
     </section>
