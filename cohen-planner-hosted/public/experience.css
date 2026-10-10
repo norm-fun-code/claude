@@ -446,3 +446,7 @@ body,body.home-view{background:radial-gradient(ellipse at 75% -20%,#2c2749 0,tra
 }
 
 @media screen { .bd-dot,.story-dot.active { background:#365c43; } .bd-dot.pin { background:#8f682e; } }
+
+/* Keep the income basis alongside the briefing, without changing plan assumptions. */
+.so-income-toggle { width:max-content; max-width:100%; margin:14px 0 20px; }
+.so-income-toggle button { font-size:12px; }

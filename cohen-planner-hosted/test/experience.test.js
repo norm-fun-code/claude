@@ -49,6 +49,25 @@ describe('focused spending and budget presentation',()=>{
   const t=presentation();t.ctx.rows=[{yr:2026,incFull:120000,totEFull:100000},{yr:2027,incFull:90000,totEFull:100000}];
   const html=t.call('experienceCashPath(rows,2027)');expect(html).toContain('cash shortfall');expect(html).toContain('cash surplus');expect((html.match(/tabindex="0"/g)||[])).toHaveLength(2);expect(html).toContain('lifeOpenYear(2027)');expect(html).not.toContain('NaN');
  });
+ it('defaults the income readout to total after-tax compensation and separates cash-only gaps',()=>{
+  const t=presentation();t.ctx.rows=[
+   {yr:2026,inc:10000,incFull:90000,netTC:150000,totEFull:120000},
+   {yr:2027,incFull:110000,netTC:160000,totEFull:140000}
+  ];
+  const income=t.call('experienceIncomeReadout(rows)');
+  expect(income.gaps).toHaveLength(0);expect(income.pressure.yr).toBe(2027);expect(income.monthly).toBeCloseTo(20000/12);
+  const cash=t.call("experienceIncomeReadout(rows,'cash')");
+  expect(cash.gaps).toHaveLength(2);expect(cash.monthly).toBe(2500);
+  const html=t.call("experienceCashPath(rows,2027,'income')");
+  expect(html).toContain('income surplus');expect(html).not.toContain('cash shortfall');expect(html).not.toContain('NaN');
+ });
+ it('switches the displayed basis without changing compensation or saved assumptions',()=>{
+  const t=presentation(),before=JSON.stringify(t.ctx.P);let renders=0;t.ctx.render=()=>{renders++};
+  expect(t.call('overviewIncomeView')).toBe('income');
+  t.call("setOverviewIncomeView('cash')");expect(t.call('overviewIncomeView')).toBe('cash');
+  t.call("setOverviewIncomeView('income')");expect(t.call('overviewIncomeView')).toBe('income');
+  expect(JSON.stringify(t.ctx.P)).toBe(before);expect(renders).toBe(2);
+ });
  it('keeps an unaccepted ongoing camp cost visible in later camp years',()=>{
   const t=presentation();Object.assign(t.ctx.P,{numKids:1,kid1Birth:2027});
   const ongoing=t.call('experiencePendingSuggestions(P,2036)');

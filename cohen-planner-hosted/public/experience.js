@@ -5,6 +5,18 @@ let lifeYear=null,lifeMode='wealth',lifeContext=null;
 let budgetRankMode='size';
 let budgetShowAll=false;
 let spendingStoryView='categories';
+let overviewIncomeView='income';
+function setOverviewIncomeView(mode){
+  if(!['income','cash'].includes(mode))return;
+  overviewIncomeView=mode;render();
+}
+function experienceIncomeReadout(rows,mode='income'){
+  const income=r=>mode==='cash'?r.incFull:r.netTC;
+  const margin=r=>income(r)-r.totEFull;
+  const pressure=rows.reduce((a,b)=>margin(b)<margin(a)?b:a);
+  const gaps=rows.filter(r=>margin(r)<0);
+  return {pressure,gaps,monthly:Math.abs(margin(pressure))/12};
+}
 const experienceFolds=new Set();
 const experienceEscape=s=>UI.escapeHtml(s);
 const experienceMoney=v=>UI.money(v,{exact:Math.abs(v)<10000});
@@ -59,8 +71,9 @@ function experienceOverview(R){
   const cp=document.querySelector('.cockpit');if(!cp)return;
   cp.classList.add('so-briefing');
   const current=R.find(r=>r.yr===PlannerTime.year())||R[0];
-  const years=R.filter(r=>r.yr>=current.yr),pressure=years.reduce((a,b)=>b.incFull-b.totEFull<a.incFull-a.totEFull?b:a);
-  const gaps=years.filter(r=>r.incFull<r.totEFull),gap=Math.max(0,(pressure.totEFull-pressure.incFull)/12);
+  const years=R.filter(r=>r.yr>=current.yr),cashOnly=overviewIncomeView==='cash';
+  const {pressure,gaps,monthly}=experienceIncomeReadout(years,overviewIncomeView);
+  const basis=cashOnly?'cash pay':'income';
   const heading=cp.querySelector('.cp-heading');
   heading.querySelector('h2').textContent='Your financial briefing.';
   const now=cp.querySelector('.cp-register[data-tense="now"]');
@@ -68,14 +81,14 @@ function experienceOverview(R){
   const details=allMetrics.filter(n=>!['Cash + taxable','Vested Stripe'].includes(n.querySelector('span')?.textContent));
   if(details.length){const more=document.createElement('div');more.className='so-position-detail';details.forEach(n=>more.append(n));now.append(more);experienceFold(now,[more],'Other balances & current cash margin','briefing-position');}
   const brief=document.createElement('section');brief.className='so-story';
-  const headline=gaps.length?'Your peak years need more than salary.':'Cash pay covers your modeled lifestyle.';
-  const description=gaps.length?`${gaps.length} of ${years.length} modeled years have a cash shortfall before asset sales. The question is how to fund those years—and how much depends on Stripe.`:'The selected case shows no annual cash-pay shortfall. The next question is how well that holds up if income or investment returns disappoint.';
+  const headline=gaps.length?(cashOnly?'Some years need more than cash pay.':'Some years outspend your income.'):(cashOnly?'Cash pay covers your modeled lifestyle.':'Income covers your modeled lifestyle.');
+  const description=gaps.length?`${gaps.length} of ${years.length} modeled years spend more than after-tax ${basis}.`:`After-tax ${basis} covers spending in all ${years.length} modeled years.`;
   const unit=inflationView?'today’s dollars ('+P.planStartYear+')':'future dollars';
-  brief.innerHTML=`<div class="so-story-copy"><span class="so-eyebrow">THE PLAN IN ONE MINUTE</span><h2>${headline}</h2><p>${description}</p><div class="so-story-actions"><button onclick="lifeOpenYear(${pressure.yr})">Explore the tightest year <span>↗</span></button><button onclick="_homeView='explore';experienceUtility('home')">Test a different outcome</button></div></div><div class="so-key-number"><span>${gaps.length?'Largest monthly cash gap':'Smallest monthly cash surplus'}</span><strong>${experienceMoney(deflate(gaps.length?gap:(pressure.incFull-pressure.totEFull)/12,pressure.yr))}</strong><span>${pressure.yr} · ${unit}</span><small>After-tax cash pay less spending.<br>Before selling equity or other assets.</small></div><div class="so-cash-path"><div class="so-path-head"><span>WHEN CASH PAY COVERS YOUR LIFE</span><span>Annual cash surplus / shortfall · ${unit}</span></div>${experienceCashPath(years,pressure.yr)}<div class="so-path-key"><span><i></i>Cash remaining</span><span><i></i>Funding needed from assets</span><span>Choose a year to explore</span></div></div>`;
+  brief.innerHTML=`<div class="so-story-copy"><span class="so-eyebrow">THE PLAN IN ONE MINUTE</span><div class="ex-segments so-income-toggle" role="group" aria-label="Income comparison"><button aria-pressed="${!cashOnly}" onclick="setOverviewIncomeView('income')">Total income</button><button aria-pressed="${cashOnly}" onclick="setOverviewIncomeView('cash')">Cash only</button></div><h2>${headline}</h2><p>${description}</p><div class="so-story-actions"><button onclick="lifeOpenYear(${pressure.yr})">Explore the tightest year <span>↗</span></button><button onclick="_homeView='explore';experienceUtility('home')">Test a different outcome</button></div></div><div class="so-key-number"><span>${gaps.length?'Largest monthly '+basis+' gap':'Smallest monthly '+basis+' surplus'}</span><strong>${experienceMoney(deflate(monthly,pressure.yr))}</strong><span>${pressure.yr} · ${unit}</span><small>${cashOnly?'Cash pay only · excludes stock compensation.':'After-tax compensation · includes stock pay.'}<br>Excludes investment returns and existing assets.</small></div><div class="so-cash-path"><div class="so-path-head"><span>WHEN ${cashOnly?'CASH PAY':'INCOME'} COVERS YOUR LIFE</span><span>Annual ${basis} less spending · ${unit}</span></div>${experienceCashPath(years,pressure.yr,overviewIncomeView)}<div class="so-path-key"><span><i></i>${cashOnly?'Cash':'Income'} remaining</span><span><i></i>Spending above ${basis}</span><span>Choose a year to explore</span></div></div>`;
   now.after(brief);
   const decision=document.createElement('section');decision.className='so-decision';
   const buying=P.housingMode!=='rent'&&years.some(r=>r.yr===P.homePurchaseYear);
-  decision.innerHTML=`<div><span class="ex-kicker">YOUR NEXT QUESTION</span><h3>${buying?'How much home leaves room for the rest of your life?':gaps.length?'How much of your lifestyle depends on selling assets?':'What would make this plan less comfortable?'}</h3><p>${buying?'Put the purchase beside family costs, peak tuition and your cash reserves.':gaps.length?'Explore the cash gap alongside liquidity, Stripe sale timing and the assumptions behind your income.':'Stress income, markets and spending before treating the projection as a promise.'}</p></div><button class="ui-btn ui-btn-primary" onclick="${buying?"_homeView='housing';experienceUtility('home')":"_homeView='explore';experienceUtility('home')"}">${buying?'Explore housing':'Stress the plan'} ↗</button>`;
+  decision.innerHTML=`<div><span class="ex-kicker">YOUR NEXT QUESTION</span><h3>${buying?'How much home leaves room for the rest of your life?':gaps.length?(cashOnly?'How much of your lifestyle depends on stock pay?':'Which years need income or spending changes?'):'What would make this plan less comfortable?'}</h3><p>${buying?'Put the purchase beside family costs, peak tuition and your cash reserves.':gaps.length?(cashOnly?'Explore grant elections, liquidity and Stripe sale timing.':'Review compensation, family costs and the assumptions behind your income.'):'Stress income, markets and spending before treating the projection as a promise.'}</p></div><button class="ui-btn ui-btn-primary" onclick="${buying?"_homeView='housing';experienceUtility('home')":"_homeView='explore';experienceUtility('home')"}">${buying?'Explore housing':'Stress the plan'} ↗</button>`;
   brief.after(decision);
   const workspace=cp.querySelector('.cp-workspace'),runway=cp.querySelector('section[aria-label="Cash runway and required Stripe sales"]');
   workspace?.querySelector('.cp-floor')?.remove();workspace?.querySelector('.cp-intelligence')?.remove();
@@ -87,17 +100,18 @@ function experienceOverview(R){
   signal.innerHTML=`<span>${_inboxError?'Watchlist checks unavailable':!_inbox?'Reading watchlist checks…':priorities.length?experienceEscape(priorities[0].title||priorities[0].kind||'A watchlist item needs review'):'No priorities returned by the checks that ran.'}</span><button onclick="experienceUtility('today','watch')">Review checks${priorities.length?' ('+priorities.length+')':''} ↗</button>`;
   decision.after(signal);
 }
-function experienceCashPath(rows,selected){
-  const values=rows.map(r=>deflate(r.incFull-r.totEFull,r.yr));
+function experienceCashPath(rows,selected,mode='cash'){
+  const basis=mode==='cash'?'cash':'income';
+  const values=rows.map(r=>deflate((mode==='cash'?r.incFull:r.netTC)-r.totEFull,r.yr));
   const pos=Math.max(0,...values),neg=Math.min(0,...values),span=Math.max(1,pos-neg);
   const top=22,bottom=155,height=bottom-top,zero=top+pos/span*height;
   const count=rows.length,step=820/Math.max(1,count),width=Math.max(4,step*.65);
   const y=v=>top+(pos-v)/span*height;
   const bars=rows.map((r,i)=>{const v=values[i],x=58+(i+.5)*step,yy=y(v),h=Math.max(1,Math.abs(yy-zero));
-    const label=`${r.yr}: ${experienceMoney(Math.abs(v))} annual ${v<0?'cash shortfall':'cash surplus'} before asset sales`;
+    const label=`${r.yr}: ${experienceMoney(Math.abs(v))} annual ${basis} ${v<0?'shortfall':'surplus'} before investment returns or existing asset sales`;
     return `<g class="so-year" role="button" tabindex="0" aria-label="${label}. Explore year" onclick="lifeOpenYear(${r.yr})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();lifeOpenYear(${r.yr});}"><title>${label}</title><rect x="${x-step/2}" y="15" width="${step}" height="165" fill="transparent"/><rect class="so-year-bar" x="${x-width/2}" y="${Math.min(yy,zero)}" width="${width}" height="${h}" rx="2" fill="${v<0?'#b27b43':'#397d79'}" opacity="${r.yr===selected?1:.7}"/>${r.yr===selected?`<circle cx="${x}" cy="${v<0?yy+7:yy-7}" r="3" fill="#283c45"/>`:''}</g>`;}).join('');
   const ticks=[...new Set([0,Math.floor((count-1)/2),count-1])];
-  return `<svg class="so-cash-svg" viewBox="0 0 910 205" role="group" aria-label="Annual cash surplus and shortfall by year. Each bar opens that year."><text x="0" y="${top+4}">${experienceMoney(pos)}</text>${neg<0?`<text x="0" y="${bottom+4}">${experienceMoney(neg)}</text>`:''}<line x1="58" x2="878" y1="${zero}" y2="${zero}" stroke="#8faaa8" stroke-width="1"/><text x="884" y="${Math.max(12,zero+4)}">$0</text>${bars}${ticks.map(i=>`<text x="${58+(i+.5)*step}" y="195" text-anchor="middle">${rows[i].yr}</text>`).join('')}</svg>`;
+  return `<svg class="so-cash-svg" viewBox="0 0 910 205" role="group" aria-label="Annual ${basis} surplus and shortfall by year. Each bar opens that year."><text x="0" y="${top+4}">${experienceMoney(pos)}</text>${neg<0?`<text x="0" y="${bottom+4}">${experienceMoney(neg)}</text>`:''}<line x1="58" x2="878" y1="${zero}" y2="${zero}" stroke="#8faaa8" stroke-width="1"/><text x="884" y="${Math.max(12,zero+4)}">$0</text>${bars}${ticks.map(i=>`<text x="${58+(i+.5)*step}" y="195" text-anchor="middle">${rows[i].yr}</text>`).join('')}</svg>`;
 }
 
 function lifeOpenYear(year){lifeYear=year;_projView='life';experienceUtility('projection');}
