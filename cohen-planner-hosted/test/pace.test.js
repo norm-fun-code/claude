@@ -400,7 +400,7 @@ describe('the spending alert acts on the difference', () => {
 describe('the spending card does not say it twice', () => {
   const html = require('node:fs').readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   it('the headline names the category, the rows explain it', () => {
-    expect(html).toContain('<p class="pace-headline-driver">${e(p.headlineDriver.label)}</p>');
+    expect(html).toContain('<p class="pace-headline-driver">${e(lead.headlineDriver.label)}</p>');
     expect(html).toContain('d.explain?`<small class="pace-why"');
   });
   it('drops the explanation onto its own line rather than a third column', () => {
@@ -534,11 +534,11 @@ describe('The card says what the range actually is',()=>{
   });
 
   it('prints the count of months it is running above',()=>{
-    expect(html).toContain('running above <b>${p.monthsAbove} of your last ${p.monthsCompared}</b>');
+    expect(html).toContain('running above <b>${lead.monthsAbove} of your last ${lead.monthsCompared}</b>');
   });
 
   it('explains what the band is instead of asserting "normal"',()=>{
-    expect(html).toContain('the range is where the middle ${Math.round((p.bandPct[1]-p.bandPct[0])*100)}% of them landed');
+    expect(html).toContain('the range is where the middle ${Math.round((lead.bandPct[1]-lead.bandPct[0])*100)}% of them landed');
     expect(html).not.toContain('Compared against the same day of ${p.monthsCompared} earlier month');
   });
 });
@@ -582,5 +582,32 @@ describe('The range drawn is the verdict',()=>{
       expect(p.verdict==='about').toBe(inside);
       expect(p.tone==='neutral').toBe(inside);
     }
+  });
+});
+
+describe('total spending pace, alongside discretionary',()=>{
+  const rows=[];
+  for(const m of ['2026-05','2026-06','2026-07','2026-08']){
+    rows.push({m,d:1,amt:5000,cat:'Rent'});
+    for(let d=1;d<=28;d++)rows.push({m,d,amt:50,cat:'Dining'});
+  }
+  it('keeps committed costs in when asked for the total, and out otherwise',()=>{
+    const disc=Pace.pace(tx(rows),cats,{asOf:'2026-08-10'});
+    const total=Pace.pace(tx(rows),cats,{asOf:'2026-08-10',includeCommitted:true});
+    expect(disc.scope).toBe('discretionary');
+    expect(total.scope).toBe('total');
+    expect(disc.mtd).toBe(500);
+    expect(total.mtd).toBe(5500);
+    expect(total.verdict).toBe('about');
+  });
+  it('the card leads with the total and lists both rows, falling back to discretionary alone',()=>{
+    const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+    expect(html).toContain('h+=paceCard(d.pace,d.paceTotal);');
+    const card=html.slice(html.indexOf('function paceCard('),html.indexOf('const ordinal=n=>'));
+    expect(card).toContain("const lead=pt&&pt.status==='ok'?pt:p;");
+    expect(card).toContain("row('Total',pt)+row('Discretionary',p)");
+    expect(card).toContain('${word} is running about normal');
+    const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+    expect(server).toMatch(/const paceTotal = Pace\.pace\([\s\S]*includeCommitted: true/);
   });
 });

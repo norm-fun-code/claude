@@ -3304,70 +3304,76 @@ async function runIncremental(){
 // its own and "running well above what is normal for you" means something immediately.
 // Underneath it, two bars on a shared scale: this month against the range this household
 // actually occupies by this day of the month.
-function paceCard(p){
-  if(!p)return '';
+function paceCard(p,pt){
+  // Total spending leads, as it does in Monarch: it is the figure that has to square with income.
+  // Discretionary sits beneath as the part of it you steer. With no total figure (an older server),
+  // the card falls back to discretionary alone, as it was.
+  const lead=pt&&pt.status==='ok'?pt:p;
+  if(!lead)return '';
   const e=advEscape,m=v=>UI.money(v),M=v=>UI.money(v,{exact:true});
+  const isTotal=lead===pt;
+  const word=isTotal?'Total spending':'Discretionary spending';
 
   // Nothing is judged without enough history to judge it against, and the card says what
   // it is waiting for rather than showing a hedged verdict.
-  if(p.status!=='ok'){
+  if(lead.status!=='ok'){
     return `<section class="pace" data-tone="unknown">
       <span class="ui-eyebrow">This month</span>
       <h3>Not enough history to judge the pace yet.</h3>
-      <ul class="pace-needs">${(p.needs||[]).map(n=>`<li>${e(n.why)}</li>`).join('')}</ul>
-      <p class="pace-foot">${e(p.note||'')}</p>
+      <ul class="pace-needs">${(lead.needs||[]).map(n=>`<li>${e(n.why)}</li>`).join('')}</ul>
+      <p class="pace-foot">${e(lead.note||'')}</p>
     </section>`;
   }
 
-  const TONE={good:'good',neutral:'neutral',warn:'warn',bad:'bad'}[p.tone]||'neutral';
-  const headline=p.tone==='neutral'
-    ? 'Discretionary spending is running about normal'
-    : `Discretionary spending is running ${e(p.verdict)} your usual pace`;
+  const TONE={good:'good',neutral:'neutral',warn:'warn',bad:'bad'}[lead.tone]||'neutral';
+  const headline=lead.tone==='neutral'
+    ? `${word} is running about normal`
+    : `${word} is running ${e(lead.verdict)} your usual pace`;
+  const lastPct=lead.lastMonth&&lead.lastMonth.deltaPct;
 
-  // Both bars share one scale so their lengths are comparable. The scale is the larger of
-  // the two plus the top of the normal band, so the normal marker always has somewhere
-  // to sit and a big month does not push it off the end.
-  const scale=Math.max(p.mtd,p.normalHigh,1)*1.06;
-  const pctOf=v=>Math.max(0,Math.min(100,v/scale*100));
-  const lastPct=p.lastMonth&&p.lastMonth.deltaPct;
+  // One row per measure, each on its own scale: its figure, how far from typical, and a bar with the
+  // typical point and normal range marked. Total dwarfs discretionary, so a shared scale would make the
+  // smaller row unreadable.
+  const row=(label,x)=>{
+    if(!x||x.status!=='ok')return '';
+    const scale=Math.max(x.mtd,x.normalHigh,1)*1.06;
+    const pctOf=v=>Math.max(0,Math.min(100,v/scale*100));
+    const d=x.typical>0?Math.round((x.mtd-x.typical)/x.typical*100):null;
+    const tone=x.mtd>x.normalHigh?'up':x.mtd<x.normalLow?'down':'flat';
+    return `<div class="pace-row" data-tone="${tone}">
+      <div class="pace-row-top"><span>${label}</span><b class="ui-num">${M(x.mtd)}</b>${d==null?'':`<em class="pace-delta">${d>0?'+':d<0?'−':''}${Math.abs(d)}%</em>`}</div>
+      <div class="pace-track"><u style="left:${pctOf(x.normalLow)}%;width:${pctOf(x.normalHigh)-pctOf(x.normalLow)}%"></u><i style="width:${pctOf(x.mtd)}%"></i><s style="left:${pctOf(x.typical)}%"></s></div>
+      <small>typical ${M(x.typical)} · normal ${m(x.normalLow)}–${m(x.normalHigh)}</small>
+    </div>`;
+  };
 
   return `<section class="pace ui-rise" data-tone="${TONE}">
     <header>
-      <span class="ui-eyebrow">This month · through the ${p.day}${ordinal(p.day)}</span>
+      <span class="ui-eyebrow">This month · through the ${lead.day}${ordinal(lead.day)}</span>
       <h3>${headline}</h3>
     </header>
 
     <div class="pace-figure">
-      <strong class="ui-num">${M(p.mtd)}</strong>
+      <strong class="ui-num">${M(lead.mtd)}</strong>
       <span>so far</span>
     </div>
     <p class="pace-sub">
-      Normal for you by this day is <b>${m(p.normalLow)}–${m(p.normalHigh)}</b>${
-        p.over>0?`, so you are <b>${m(p.over)}</b> above typical`
-                :p.over<-1?`, and you are <b>${m(-p.over)}</b> below typical`:''}.
-      ${p.monthsAbove!=null&&p.monthsCompared?`This month is running above <b>${p.monthsAbove} of your last ${p.monthsCompared}</b> at the same point.`:''}
-      ${lastPct!=null?`Last month by the same day: <b>${M(p.lastMonth.atDay)}</b>.`:''}
+      Normal for you by this day is <b>${m(lead.normalLow)}–${m(lead.normalHigh)}</b>${
+        lead.over>0?`, so you are <b>${m(lead.over)}</b> above typical`
+                :lead.over<-1?`, and you are <b>${m(-lead.over)}</b> below typical`:''}.
+      ${lead.monthsAbove!=null&&lead.monthsCompared?`This month is running above <b>${lead.monthsAbove} of your last ${lead.monthsCompared}</b> at the same point.`:''}
+      ${lastPct!=null?`Last month by the same day: <b>${M(lead.lastMonth.atDay)}</b>.`:''}
     </p>
 
-    <div class="pace-bars">
-      <div class="pace-bar">
-        <span>This month<b class="ui-num">${M(p.mtd)}</b></span>
-        <div><i style="width:${pctOf(p.mtd)}%"></i></div>
-      </div>
-      <div class="pace-bar" data-kind="typical">
-        <span>Typical at this point<b class="ui-num">${M(p.typical)}</b></span>
-        <div>
-          <i style="width:${pctOf(p.typical)}%"></i>
-          <u style="left:${pctOf(p.normalLow)}%;width:${pctOf(p.normalHigh)-pctOf(p.normalLow)}%"></u>
-        </div>
-      </div>
+    <div class="pace-rows">
+      ${isTotal?row('Total',pt)+row('Discretionary',p):row('Discretionary',p)}
     </div>
 
-    ${p.headlineDriver?`<p class="pace-headline-driver">${e(p.headlineDriver.label)}</p>`:''}
+    ${lead.headlineDriver?`<p class="pace-headline-driver">${e(lead.headlineDriver.label)}</p>`:''}
 
-    ${p.flagged.length?`<div class="pace-drivers">
+    ${lead.flagged.length?`<div class="pace-drivers">
       <span class="ui-eyebrow">What is driving it</span>
-      ${p.flagged.slice(0,4).map(d=>`<div class="pace-driver">
+      ${lead.flagged.slice(0,4).map(d=>`<div class="pace-driver">
         <span>${e(d.category)}</span>
         <span><b class="ui-num">${M(d.mtd)}</b><small>usually ${M(d.typical)} by now · <em>${m(d.over)} more</em></small></span>
         ${d.explain?`<small class="pace-why" data-kind="${e(d.explain.kind)}">${e(d.explain.sentence)}</small>`:''}
@@ -3375,9 +3381,9 @@ function paceCard(p){
     </div>`:`<p class="pace-clear">No single category is out of its usual range.</p>`}
 
     <footer class="pace-foot">
-      Same day of your last ${p.monthsCompared} month${p.monthsCompared===1?'':'s'}${
-        p.bandPct?` · the range is where the middle ${Math.round((p.bandPct[1]-p.bandPct[0])*100)}% of them landed`:''}
-      · committed costs excluded by ${e(p.committedRule)}
+      Same day of your last ${lead.monthsCompared} month${lead.monthsCompared===1?'':'s'}${
+        lead.bandPct?` · the range is where the middle ${Math.round((lead.bandPct[1]-lead.bandPct[0])*100)}% of them landed`:''}
+      · total excludes transfers and card payments${p&&p.committedRule?` · discretionary also leaves out committed costs (rent, tuition, care, insurance, utilities…) by ${e(p.committedRule)}`:''}
       · ${UI.prov('observed','from your transactions')}
     </footer>
   </section>`;
@@ -4257,7 +4263,7 @@ function renderSpendingTab(R,P){
 
   let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px" class="spending-workspace">`;
 
-  h+=paceCard(d.pace);
+  h+=paceCard(d.pace,d.paceTotal);
 
   // ── Freshness and coverage, before any number that depends on them ──
   const nTx=st.transactions||0;

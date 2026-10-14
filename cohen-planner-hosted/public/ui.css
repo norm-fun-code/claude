@@ -464,6 +464,21 @@
 .pace-bar u{position:absolute;top:0;bottom:0;border-radius:5px;
   background:color-mix(in srgb,var(--t4) 35%,transparent);text-decoration:none}
 
+/* One row per measure (total, then discretionary), each on its own scale: figure, change from typical,
+   and a bar with the normal range shaded and the typical point ticked. */
+.pace-rows{display:flex;flex-direction:column;gap:18px;margin-bottom:var(--sp-3);padding:16px 18px;border:1px solid var(--bd);border-radius:12px}
+.pace-row-top{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;font-size:var(--t-body);color:var(--t2)}
+.pace-row-top span{flex:1;font-weight:600}
+.pace-row-top b{color:var(--tx);font-weight:650;font-size:20px;letter-spacing:-.4px}
+.pace-delta{font-style:normal;font-size:var(--t-xs);font-weight:650;padding:3px 8px;border-radius:999px;background:var(--s3);color:var(--t2);font-variant-numeric:tabular-nums}
+.pace-row[data-tone=down] .pace-delta{background:color-mix(in srgb,var(--gain) 16%,transparent);color:var(--gain)}
+.pace-row[data-tone=up] .pace-delta{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.pace-track{position:relative;height:10px;border-radius:5px;background:var(--s3);overflow:visible}
+.pace-track i{position:absolute;left:0;top:0;bottom:0;border-radius:5px;background:var(--rail)}
+.pace-track u{position:absolute;top:0;bottom:0;border-radius:5px;background:color-mix(in srgb,var(--t4) 35%,transparent);text-decoration:none}
+.pace-track s{position:absolute;top:-4px;bottom:-4px;width:2px;margin-left:-1px;background:var(--tx);border-radius:1px}
+.pace-row small{display:block;margin-top:6px;text-align:right;font-size:var(--t-xs);color:var(--t3);font-variant-numeric:tabular-nums}
+
 .pace-drivers{border-top:1px solid var(--bd);padding-top:var(--sp-2)}
 .pace-driver{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-3);
   padding:8px 0;border-top:1px solid var(--bd);font-size:var(--t-sm)}

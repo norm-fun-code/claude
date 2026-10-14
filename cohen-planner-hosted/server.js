@@ -593,8 +593,16 @@ async function spendingReport({ startDate, endDate, committed } = {}) {
     classify: t => Spending.classify(t, catIndex, { accountClasses }),
     committedCategories: committed,
   });
+  // The same comparison over everything spent, committed costs included — what Monarch calls total
+  // spending. The card leads with it; the discretionary figure sits beneath as the part you steer.
+  const paceTotal = Pace.pace(ledger, catIndex, {
+    asOf: endDate,
+    classify: t => Spending.classify(t, catIndex, { accountClasses }),
+    committedCategories: committed,
+    includeCommitted: true,
+  });
   return {
-    startDate, endDate, status, coverage: cov, pace,
+    startDate, endDate, status, coverage: cov, pace, paceTotal,
     months: summary.months.map(m => ({ ...m, byCategory: undefined })),
     totals: summary.totals, counts: summary.counts,
     rolling: {

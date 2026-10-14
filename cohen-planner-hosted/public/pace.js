@@ -115,7 +115,8 @@
       if(!Number.isFinite(spend)||spend===0)continue;
       const cat=(cats&&t.categoryId!=null&&cats.get?cats.get(String(t.categoryId)):null);
       const name=(cat&&cat.name)||t.categoryName||'Uncategorised';
-      if(isCommitted(name,o))continue;
+      // Total spending keeps committed costs in; the discretionary view leaves them out.
+      if(!o.includeCommitted&&isCommitted(name,o))continue;
       const mk=monthOf(t.date),d=dayOf(t.date);
       if(!mk||!d)continue;
       if(!byMonth.has(mk))byMonth.set(mk,{month:mk,days:new Array(32).fill(0),cats:new Map(),items:[]});
@@ -323,7 +324,7 @@
     for(const d of drivers)if(d.flagged)d.explain=explainDriver(d.category,d.over,current,priorMonths,day);
 
     return{
-      status:'ok',asOf,month:thisMonth,day,
+      status:'ok',asOf,month:thisMonth,day,scope:o.includeCommitted?'total':'discretionary',
       mtd,typical,sd:spread,z,rank,
       verdict:band.verdict,tone:band.tone,
       // The normal range in dollars. "$2,400–$3,400 is normal for you by the 12th" is

@@ -234,10 +234,11 @@
     }
     const coverage = E.Spending.coverage(sum.months, today, windows);
     const pace = E.Pace.pace(ledger, catIndex, { asOf: today, classify });
+    const paceTotal = E.Pace.pace(ledger, catIndex, { asOf: today, classify, includeCommitted: true });
     const status = { windows, transactions: ledger.length, firstDate: ledger[0].date,
       lastDate: ledger[ledger.length - 1].date, lastSyncAt: now, pending: 0 };
     const spend = {
-      startDate: ledger[0].date, endDate: today, status, coverage, pace,
+      startDate: ledger[0].date, endDate: today, status, coverage, pace, paceTotal,
       months: sum.months.map(m => ({ ...m, byCategory: undefined })),
       totals: sum.totals, counts: sum.counts,
       rolling: {
