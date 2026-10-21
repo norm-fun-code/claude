@@ -49,9 +49,21 @@ describe('Financial Independence overlay uses the shared engine',()=>{
   const a=analyze({horizonAge:70,nancyBirthYear:1996});expect(a.result.R.at(-1).yr).toBe(2086);expect(a.milestones.map(x=>x.age)).toEqual([60,65,70,75,80,85,90]);
   const tiny=analyze({normIncome:0,nancyIncome:0},{...p,startingLiquid:1,startingStripeEquity:0,k401Start:0});expect(tiny.status).toBe('Unsustainable');expect(tiny.failYear).not.toBeNull();
  });
- it('excludes home and private investments and applies estimated Stripe sale tax to accessibility',()=>{
+ it('uses gross eligible investments, excluding home and locked private assets',()=>{
   const c=F.config(p,{privateLiquidityPct:0}),r={yr:2034,liq:100000,sEnd:200000,sBasis:100000,capGainsRate:.3,k401:500000,eq:9e6,otherAssets:8e6};
-  expect(F.accessible(r,{otherDebt:0},c)).toBe(270000);expect(F.accessible({...r,yr:2053},{otherDebt:0},c)).toBe(770000);
+  expect(F.accessible(r,{otherDebt:0},c)).toBe(300000);expect(F.accessible({...r,yr:2053},{otherDebt:0},c)).toBe(800000);
+ });
+ it('measures the withdrawal guardrail against gross assets while counting actual sale and distribution taxes once',()=>{
+  const q={...p,otherAssets:300000,otherDebt:0},c=F.config(q,{reserve:0,maxWithdrawal:.04});
+  const opening={yr:2033,liq:100000,sEnd:200000,sBasis:100000,k401:500000,otherAssets:300000,netWorth:1100000,capGainsRate:.3};
+  const row={...opening,yr:2034,fiFundingNeed:20000,txS:300,sGainTax:100,fiRetTax:50,fiPrivateGainTax:200,fiSSGainTax:20};
+  const result={R:[opening,row,{...row,yr:2088,fiFundingNeed:0,txS:0,sGainTax:0,fiRetTax:0,fiPrivateGainTax:0,fiSSGainTax:0}]};
+  const before=JSON.stringify(result),s=F.summary(result,q,c);
+  expect(s.stats[0].available).toBe(600000);expect(s.stats[0].withdrawal).toBe(20670);
+  expect(s.stats[0].rate).toBeCloseTo(20670/600000,10);expect(s.rateYear).toBeNull();
+  expect(F.investments({...opening,yr:2034},q,c,false)).toBe(600000);
+  expect(F.afterTaxStripe(row,q)).toBe(170000);expect(F.afterTaxPrivate(row,q,c)).toBe(232500);
+  expect(JSON.stringify(result)).toBe(before);
  });
  it('does not spend retirement accounts before 60, applies ordinary tax and RMDs without phantom assets',()=>{
   const a=analyze({normIncome:0,nancyIncome:0,reserve:0},{...p,startingLiquid:2500000,startingStripeEquity:0,k401Start:10000000});
@@ -100,6 +112,15 @@ describe('Financial Independence presentation and save isolation',()=>{
   const t=ui();t.call('renderFinancialIndependence()');
   for(const label of ['Exit corporate work in','Your annual part-time income','Nancy’s annual practice revenue','Social Security assumption','Private assets tradable from'])expect(t.host.innerHTML).toContain(label);
   expect(t.host.innerHTML).toContain('fi-panel fi-simple ');
+  expect(t.host.innerHTML).toContain('before sale taxes · excludes home and retirement');
+  for(const rule of ['funding','reserve','withdrawal']){
+   expect(t.host.innerHTML).toContain('aria-controls="fi-help-'+rule+'"');
+   expect(t.host.innerHTML).toContain('id="fi-help-'+rule+'" role="tooltip" hidden');
+  }
+  expect(t.host.innerHTML).toContain('onclick="fiToggleHelp(this)"');
+  expect(t.host.innerHTML).toContain('onfocus="fiOpenHelp(this)"');
+  expect(t.host.innerHTML).not.toContain('After estimated sale taxes');
+  expect(t.host.innerHTML).toContain('BEFORE future sale taxes');
   expect(t.host.innerHTML).toContain('Advanced analysis &amp; assumptions'.replace('&amp;','&'));
   expect(t.host.innerHTML).toContain('fiTrajectory');
   expect(t.host.innerHTML).toContain('Save this scenario');

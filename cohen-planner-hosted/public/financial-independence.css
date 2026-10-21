@@ -52,3 +52,16 @@
 .fi-simple-actions{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-top:18px}
 .fi-simple-actions span{font-size:11px;color:#6c795f}
 .fi-simple-actions button{border-radius:10px;min-height:42px}
+
+/* One compact, keyboard- and touch-accessible explanation for each safety rule. */
+.fi-guardrails{display:flex;flex-wrap:wrap;gap:8px;margin-top:19px}
+.fi-guardrail{display:inline-flex;min-width:0}
+.fi-guardrail-button{display:inline-flex;align-items:center;justify-content:space-between;gap:10px;min-height:42px;padding:9px 12px;border:1px solid #b8c9ae;border-radius:10px;background:#edf2e5;color:#345d40;font:inherit;font-size:11px;font-weight:650;cursor:pointer}
+.fi-guardrail-button[data-pass=false]{border-color:#c8b583;background:#f2efdf;color:#80672e}
+.fi-guardrail-button:focus-visible{outline:2px solid #406a49;outline-offset:3px}
+.fi-info-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 16px;width:16px;height:16px;border:1px solid currentColor;border-radius:50%;font-size:10px;font-family:Georgia,serif;font-weight:700;line-height:1}
+.fi-guardrail-help{position:fixed;z-index:10000;box-sizing:border-box;max-height:calc(100dvh - 32px);overflow:auto;padding:16px 18px;background:#f8f9ef;border:1px solid #b9c9ac;border-radius:12px;box-shadow:0 12px 34px rgba(25,55,36,.20);color:#435b3f;font-size:12px;font-weight:400;line-height:1.6;text-align:left;white-space:normal}
+.fi-guardrail-help[hidden]{display:none}
+.fi-guardrail-help>strong{display:block;color:#244b32;font-size:13px;font-weight:750;line-height:1.4;margin-bottom:7px}
+.fi-guardrail-help>span{display:block}
+@media(max-width:680px){.fi-guardrails{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.fi-guardrail-button{width:100%;min-height:48px;padding:8px;font-size:10px;gap:6px;text-align:left}}

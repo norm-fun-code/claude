@@ -40,13 +40,19 @@
   return {...clean,fiConfig:c,_fiPrepared:true,_fiExpenses:Object.fromEntries(base.map(r=>[r.yr,{h:r.hFull,liv:r.livFullParts,cc:r.ccFull,tu:r.tuFull,oneoff:r.eAdj}]))};
  }
  function afterTaxStripe(r,p){return Math.max(0,r.sEnd-(Math.max(0,r.sEnd-r.sBasis)*(r.capGainsRate??p.capGainsTaxRate??.35)));}
- function afterTaxPrivate(r,p,c){
+ function grossPrivate(r,p,c){
   if(r.yr<Math.max(c.transitionYear,c.privateLiquidityYear))return 0;
-  const gross=r.fiPrivateUnlocked?r.fiPrivateTradable:Math.max(0,r.otherAssets||0)*c.privateLiquidityPct;
+  return Math.max(0,(r.fiPrivateUnlocked?r.fiPrivateTradable:Math.max(0,r.otherAssets||0)*c.privateLiquidityPct)||0);
+ }
+ function investments(r,p,c,includeRetirement=true){
+  return r.liq+Math.max(0,r.sEnd||0)+grossPrivate(r,p,c)+(includeRetirement?(r.k401||0):0);
+ }
+ function afterTaxPrivate(r,p,c){
+  const gross=grossPrivate(r,p,c);
   const basis=r.fiPrivateUnlocked?r.fiPrivateBasis:Math.max(0,p.otherAssets||0)*c.privateLiquidityPct*c.privateBasisPct;
   return Math.max(0,gross-Math.max(0,gross-basis)*(r.capGainsRate??p.capGainsTaxRate??.35));
  }
- function accessible(r,p,c){return r.liq+afterTaxStripe(r,p)+afterTaxPrivate(r,p,c)+(r.yr-c.normBirthYear>=60?r.k401:0)-Math.abs(p.otherDebt||0);}
+ function accessible(r,p,c){return investments(r,p,c,false)+(r.yr-c.normBirthYear>=60?(r.k401||0):0)-Math.abs(p.otherDebt||0);}
  function summary(result,p,c){
   const R=result.R.filter(r=>r.yr>=c.transitionYear),opening=result.R.find(r=>r.yr===c.transitionYear-1);
   const stats=R.map((r,i)=>{const prev=i?R[i-1]:opening;const available=(prev?accessible({...prev,yr:r.yr},p,c):0)+(!i?Math.max(0,p._fiExtraCapital||0):0);
@@ -59,7 +65,7 @@
   const low=R.reduce((a,b)=>accessible(b,p,c)<accessible(a,p,c)?b:a,R[0]);
   const deflate=r=>(1+(p.expenseInflation||0))**(r.yr-(p.planStartYear||2026));
   const realLow=R.reduce((a,b)=>accessible(b,p,c)/deflate(b)<accessible(a,p,c)/deflate(a)?b:a,R[0]);
-  const portfolio=r=>r.liq+afterTaxStripe(r,p)+afterTaxPrivate(r,p,c)+r.k401;
+  const portfolio=r=>investments(r,p,c);
   const portfolioLow=R.reduce((a,b)=>portfolio(b)<portfolio(a)?b:a,R[0]);
   const portfolioRealLow=R.reduce((a,b)=>portfolio(b)/deflate(b)<portfolio(a)/deflate(a)?b:a,R[0]);
   return {minReal:accessible(realLow,p,c)/deflate(realLow),minRealYear:realLow.yr,portfolioMin:portfolio(portfolioLow),portfolioMinYear:portfolioLow.yr,portfolioMinReal:portfolio(portfolioRealLow)/deflate(portfolioRealLow),portfolioMinRealYear:portfolioRealLow.yr,status,failYear:fail?.yr??null,reserveYear:breach?.yr??null,rateYear:excess?.yr??null,peakRate:Math.max(0,...stats.filter(r=>Number.isFinite(r.rate)).map(r=>r.rate)),stats,
@@ -74,7 +80,7 @@
    const candidates=[];
    if(scan){const end=Math.min(horizon(c)-1,c.normBirthYear+c.normStopAge);
     for(let year=(p.planStartYear||2026)+1;year<=end;year++){
-     const t=solve({ssLevel:level,transitionYear:year});candidates.push({year,status:t.status,min:t.min,failYear:t.failYear,peakRate:t.peakRate,endInvestments:t.final.liq+afterTaxStripe(t.final,p)+afterTaxPrivate(t.final,p,{...c,transitionYear:year})+t.final.k401});
+     const t=solve({ssLevel:level,transitionYear:year});candidates.push({year,status:t.status,min:t.min,failYear:t.failYear,peakRate:t.peakRate,endInvestments:investments(t.final,p,{...c,transitionYear:year})});
     }}
    return {candidates,earliest:candidates.find(x=>x.status==='Sustainable under assumptions')?.year??null,solvent:candidates.find(x=>x.status!=='Unsustainable')?.year??null};
   };
@@ -113,6 +119,6 @@
   }
   return {c,plan,original,result,...s,candidates,earliest,solvent,requiredNorm,requiredLateIncome,fundingLateIncome,stressResults,ssComparisons};
  }
- const api={config,horizon,prepare,accessible,afterTaxStripe,afterTaxPrivate,summary,analyze};
+ const api={config,horizon,prepare,accessible,investments,grossPrivate,afterTaxStripe,afterTaxPrivate,summary,analyze};
  if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PlannerFI=api;
 })(typeof window!=='undefined'?window:globalThis);
