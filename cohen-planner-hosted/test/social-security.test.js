@@ -78,7 +78,7 @@ describe('Social Security and later earnings use the shared financial engine',()
   expect(at(a,2059).normCash).toBe(51500);expect(at(a,2059).nancyG).toBe(100000);
   expect(at(a,2061).normCash).toBe(0);expect(at(a,2061).nancyG).toBe(100000);expect(at(a,2062).nancyG).toBe(0);
   const b=analyze({normStopAge:68,normLateIncome:50000,normLateGrowth:0});expect(at(b,2060).normCash).toBeGreaterThan(50000);expect(at(b,2061).normCash).toBe(50000);
-  expect(at(a,2059).fiNancyOverhead).toBe(p.nancyPracticeOverhead);expect(at(a,2059).tax).toBeGreaterThan(at(analyze(),2059).tax);
+  expect(at(a,2059).fiNancyOverhead).toBe(p.nancyPracticeOverhead);expect(at(a,2059).tax).toBeGreaterThan(at(analyze({nancyBirthYear:1993}),2059).tax);
  });
  it('includes SS federal tax but excludes SS from payroll and NY/NJ tax',()=>{
   const zero={...p,pretax401k:0,pretaxBenefits:0,_normW2:0,_nancyW2:0,_nancySE:0,_retirementIncome:100000};
