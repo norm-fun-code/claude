@@ -8,6 +8,10 @@ const D=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
 const p={...D,observedOn:null,normManualThroughYear:2037};
 const analyze=(input={},params=p)=>F.analyze(params,input,M,{scan:false,stresses:false});
 describe('Financial Independence overlay uses the shared engine',()=>{
+ it('uses Nancy’s confirmed birth year for lifetime and Social Security milestones',()=>{
+  const c=F.config(p,{});expect(c.nancyBirthYear).toBe(1998);expect(c.nancyClaimAge).toBe(67);expect(F.horizon(c)).toBe(2088);
+  expect(F.config(p,{nancyBirthYear:1997}).nancyBirthYear).toBe(1997);
+ });
  it('does not mutate the selected case and disabled configuration is identical to the original',()=>{
   const before=JSON.stringify(p),a=analyze();expect(JSON.stringify(p)).toBe(before);
   expect(M.run({...p,fiConfig:{enabled:false}})).toEqual(M.run(p));
