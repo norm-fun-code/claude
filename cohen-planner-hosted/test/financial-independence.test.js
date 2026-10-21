@@ -1,4 +1,4 @@
-import {describe,it,expect} from 'vitest';
+import {describe,it,expect,vi} from 'vitest';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import M from '../public/model.js';
@@ -56,6 +56,10 @@ describe('Financial Independence overlay uses the shared engine',()=>{
   const R=a.result.R;for(let i=1;i<R.length;i++){const r=R[i],last=R[i-1];if(r.yr<2034)continue;
    expect(Math.abs(r.k401-(last.k401*(1+p.investReturn)-r.fiRetDraw))).toBeLessThan(2);
    expect(r.netWorth).toBe(r.liq+r.sEnd+r.eq+r.otherAssets-r.otherDebt+r.k401);
+   const cashFlow=r.flowFull-r.dpOut+r.sSold+r.sHold+r.fiRetDraw-r.sGainTax-r.txS-r.fiRetTax;
+   const expected=(last.liq>0?last.liq*(1+p.investReturn):last.liq)+cashFlow*(1+p.investReturn/2);
+   expect(Math.abs(r.liq-expected)).toBeLessThan(4);
+   expect(Math.abs(r.sEnd-(r.sBeg+r.sAppr+r.sAdded-r.sHold))).toBeLessThan(3);
   }
  });
  it('RMD at 75 uses the prior ending balance divided by 24.6 and does not incur FICA',()=>{
@@ -82,7 +86,7 @@ describe('Financial Independence overlay uses the shared engine',()=>{
 
 describe('Financial Independence presentation and save isolation',()=>{
  function ui(){
-  const host={innerHTML:'',querySelectorAll:()=>[]};const ctx={P:structuredClone(p),scenarios:[{name:'Base Case'}],activeScenarioIdx:0,PlannerFI:F,run:M.run,runMonteCarlo:M.runMonteCarlo,Chart:class{constructor(_,o){this.options=o;}destroy(){}},document:{getElementById:id=>id==='fiRoot'?host:id==='fiSaveName'?{value:'Financial Independence — 2034'}:id==='fiSaveButton'?{disabled:false}:{}},saved:[],keepAssumptions:x=>structuredClone(x),advUuid:()=> 'test-fi-case',fetch:async(_,o)=>{ctx.saved.push(JSON.parse(o.body));return {ok:true}},showToast(){},renderCaseControl(){},savePlannerState(){},setTimeout};vm.createContext(ctx);vm.runInContext(fs.readFileSync(new URL('../public/financial-independence-ui.js',import.meta.url),'utf8'),ctx);return {ctx,host,call:s=>vm.runInContext(s,ctx)};
+  const host={innerHTML:'',querySelectorAll:()=>[]};const ctx={P:structuredClone(p),scenarios:[{name:'Base Case'}],activeScenarioIdx:0,PlannerFI:F,run:M.run,runMonteCarlo:M.runMonteCarlo,Chart:class{constructor(_,o){this.options=o;}destroy(){}},document:{getElementById:id=>id==='fiRoot'?host:id==='fiSaveName'?{value:'Financial Independence — 2034'}:id==='fiSaveButton'?{disabled:false}:{}},saved:[],keepAssumptions:x=>structuredClone(x),advUuid:()=> 'test-fi-case',fetch:async(_,o)=>{ctx.saved.push(JSON.parse(o.body));return {ok:true}},showToast(){},renderCaseControl(){},savePlannerState(){},setTimeout,clearTimeout};vm.createContext(ctx);vm.runInContext(fs.readFileSync(new URL('../public/financial-independence-ui.js',import.meta.url),'utf8'),ctx);return {ctx,host,call:s=>vm.runInContext(s,ctx)};
  }
  it('renders the primary answer, chart, cash flow and actionable controls without editing P',()=>{
   const t=ui(),before=JSON.stringify(t.ctx.P);t.call('renderFinancialIndependence()');expect(t.host.innerHTML).toContain('Make work a choice.');expect(t.host.innerHTML).toContain('fiTrajectory');expect(t.host.innerHTML).toContain('2034');t.call("fiEdit('normIncome',175000)");expect(JSON.stringify(t.ctx.P)).toBe(before);expect(t.host.innerHTML).toContain('175000');
@@ -90,6 +94,9 @@ describe('Financial Independence presentation and save isolation',()=>{
  });
  it('saves a distinct reusable scenario with no transient expense snapshots or mutations',async()=>{
   const t=ui(),before=JSON.stringify(t.ctx.P);await t.call('fiSave()');expect(t.ctx.saved).toHaveLength(1);const s=t.ctx.saved[0];expect(s.name).toBe('Financial Independence — 2034');expect(s.params.fiConfig.enabled).toBe(true);expect(s.params._fiPrepared).toBeUndefined();expect(s.params._fiExpenses).toBeUndefined();expect(JSON.stringify(t.ctx.P)).toBe(before);expect(t.ctx.scenarios[0].name).toBe('Base Case');
+ });
+ it('numeric input events recalculate after a short debounce without modifying the base case',()=>{
+  vi.useFakeTimers();try{const t=ui(),before=JSON.stringify(t.ctx.P);t.call("fiQueueEdit('transitionYear',2036)");vi.advanceTimersByTime(350);expect(t.host.innerHTML).toContain('2036 needs more cushion.');expect(JSON.stringify(t.ctx.P)).toBe(before);}finally{vi.useRealTimers();}
  });
  it('clears stale Monte Carlo results when the underlying case changes',()=>{
   const t=ui();t.call('renderFinancialIndependence();fiSimulation={ruinPct:0};');t.ctx.P.investReturn=.03;t.call('renderFinancialIndependence()');expect(t.call('fiSimulation')).toBeNull();

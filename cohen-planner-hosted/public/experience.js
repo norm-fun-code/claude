@@ -360,7 +360,7 @@ function experienceCompare(){
 }
 function experienceWhatIf(){
   const ca=document.getElementById('chartArea');
-  ca.insertAdjacentHTML('afterbegin',experienceHeader('DECISIONS / WHAT-IF','See what a different choice changes.','Preview a decision, inspect the effect, and save a separate scenario when it fits.'));
+  ca.insertAdjacentHTML('afterbegin',document.getElementById('fiRoot')?'<div class="fi-page-kicker">DECISIONS / WHAT-IF</div>':experienceHeader('DECISIONS / WHAT-IF','See what a different choice changes.','Preview a decision, inspect the effect, and save a separate scenario when it fits.'));
   const dr=document.getElementById('wiDR');if(dr)experienceFold(ca,[dr],'Other what-ifs: housing, income & returns','decision-other');
   const stress=document.getElementById('wiStress'),levers=document.getElementById('wiKL'),head=levers?.previousElementSibling;
   if(stress)experienceFold(ca,[stress],'Stress the plan: markets, income & housing','decision-stress');
