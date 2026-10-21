@@ -74,7 +74,7 @@
    const candidates=[];
    if(scan){const end=Math.min(horizon(c)-1,c.normBirthYear+c.normStopAge);
     for(let year=(p.planStartYear||2026)+1;year<=end;year++){
-     const t=solve({ssLevel:level,transitionYear:year});candidates.push({year,status:t.status,min:t.min,failYear:t.failYear,peakRate:t.peakRate,endInvestments:t.final.liq+afterTaxStripe(t.final,p)+t.final.k401});
+     const t=solve({ssLevel:level,transitionYear:year});candidates.push({year,status:t.status,min:t.min,failYear:t.failYear,peakRate:t.peakRate,endInvestments:t.final.liq+afterTaxStripe(t.final,p)+afterTaxPrivate(t.final,p,{...c,transitionYear:year})+t.final.k401});
     }}
    return {candidates,earliest:candidates.find(x=>x.status==='Sustainable under assumptions')?.year??null,solvent:candidates.find(x=>x.status!=='Unsustainable')?.year??null};
   };
