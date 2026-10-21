@@ -43,7 +43,7 @@
  function afterTaxPrivate(r,p,c){
   if(r.yr<Math.max(c.transitionYear,c.privateLiquidityYear))return 0;
   const gross=r.fiPrivateUnlocked?r.fiPrivateTradable:Math.max(0,r.otherAssets||0)*c.privateLiquidityPct;
-  const basis=r.fiPrivateUnlocked?r.fiPrivateBasis:gross*c.privateBasisPct;
+  const basis=r.fiPrivateUnlocked?r.fiPrivateBasis:Math.max(0,p.otherAssets||0)*c.privateLiquidityPct*c.privateBasisPct;
   return Math.max(0,gross-Math.max(0,gross-basis)*(r.capGainsRate??p.capGainsTaxRate??.35));
  }
  function accessible(r,p,c){return r.liq+afterTaxStripe(r,p)+afterTaxPrivate(r,p,c)+(r.yr-c.normBirthYear>=60?r.k401:0)-Math.abs(p.otherDebt||0);}
