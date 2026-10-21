@@ -101,12 +101,15 @@ function calcTax(grossIncome,p,yr,numKids){
   const stdDeduct=Math.round(STD_DEDUCT_2026*f);
 
   const pretax=p.pretax401k+p.pretaxBenefits;
+  const normSE=p._normSE||0,retirementIncome=p._retirementIncome||0;
   const normW2=p._normW2||0;const nancyW2=p._nancyW2||0;const nancySE=p._nancySE||0;
-  const overhead=p._nancyOverhead||0;
+  const overhead=(p._nancyOverhead||0)+(p._normOverhead||0);
 
   // ── FICA / SE tax (computed first: half SE tax is deductible above the line) ──
-  const normSS=Math.min(normW2,ssCap)*.062;
-  const normMed=normW2*.0145;
+  const normSEBase=normSE*.9235;
+  const normSS=Math.min(normW2,ssCap)*.062+Math.min(normSEBase,Math.max(0,ssCap-normW2))*.124;
+  const normMed=normW2*.0145+normSEBase*.029;
+  const normSEHalf=.5*(Math.min(normSEBase,Math.max(0,ssCap-normW2))*.124+normSEBase*.029);
   let nancySS=0,nancyMed=0,seTaxHalf=0;
   if(nancySE>0){
     const seBase=nancySE*.9235;
@@ -117,12 +120,12 @@ function calcTax(grossIncome,p,yr,numKids){
     nancySS=Math.min(nancyW2,ssCap)*.062;
     nancyMed=nancyW2*.0145;
   }
-  const combinedMedWages=normW2+(nancySE>0?nancySE*.9235:nancyW2);
+  const combinedMedWages=normW2+normSEBase+(nancySE>0?nancySE*.9235:nancyW2);
   const addlMedicare=Math.max(0,combinedMedWages-250000)*.009;
   const totalFICA=normSS+normMed+nancySS+nancyMed+addlMedicare;
 
   // ── AGI ──
-  const agi=Math.max(0,(normW2+nancyW2+nancySE)-pretax-seTaxHalf);
+  const agi=Math.max(0,(normW2+normSE+nancyW2+nancySE+retirementIncome)-pretax-seTaxHalf-normSEHalf);
 
   // ── State and city tax, computed BEFORE the federal deduction ──
   // New York's taxable income comes from AGI and its own standard deduction, never from the
@@ -137,14 +140,14 @@ function calcTax(grossIncome,p,yr,numKids){
   if(locationActive(p,yr)){
     const cfg=p.locationConfig;
     // NJ permits 401(k) exclusion, not federal standard/QBI/half-SE deductions.
-    const njGross=Math.max(0,normW2+nancyW2+nancySE-(p.pretax401k||0));
+    const njGross=Math.max(0,normW2+normSE+nancyW2+nancySE+retirementIncome-(p.pretax401k||0));
     const rentalTax=.18*modeledMonthlyRent(p,yr)*12;
     const njPropertyDeduction=Math.min(15000,propertyTaxPaid||(p.housingMode==='rent'||yr<p.homePurchaseYear?rentalTax:0));
     njTaxable=Math.max(0,njGross-2000-1500*(p._taxDependents??numKids)-njPropertyDeduction);
     njGrossTax=njGross>20000?bracketTax(njTaxable,NJ_MFJ_BR):0;
     const clamp=x=>Math.max(0,Math.min(1,Number(x)));
-    const nyGross=normW2*clamp(cfg.normNySource??1)+nancyW2*clamp(cfg.nancyNySource??1)+nancySE*clamp(cfg.practiceNySource??0);
-    const nyAgi=Math.max(0,normW2-pretax)*clamp(cfg.normNySource??1)+nancyW2*clamp(cfg.nancyNySource??1)+Math.max(0,nancySE-seTaxHalf)*clamp(cfg.practiceNySource??0);
+    const nyGross=(normW2+normSE)*clamp(cfg.normNySource??1)+nancyW2*clamp(cfg.nancyNySource??1)+nancySE*clamp(cfg.practiceNySource??0);
+    const nyAgi=Math.max(0,normW2+normSE-pretax-normSEHalf)*clamp(cfg.normNySource??1)+nancyW2*clamp(cfg.nancyNySource??1)+Math.max(0,nancySE-seTaxHalf)*clamp(cfg.practiceNySource??0);
     const nyRatio=Math.min(1,nyAgi/Math.max(1,agi));
     nySourceTax=nyResident*nyRatio;
     // NJ-COJ credit limited to NJ tax attributable to the same doubly-taxed income.
@@ -185,8 +188,8 @@ function calcTax(grossIncome,p,yr,numKids){
 
   // ── QBI ──
   let qbi=0;
-  if(nancySE>0){
-    const businessQBI=Math.max(0,nancySE-seTaxHalf);
+  if(nancySE+normSE>0){
+    const businessQBI=Math.max(0,nancySE-seTaxHalf+normSE-normSEHalf);
     const qbiBase=businessQBI*p.nancyQBIRate;
     // IRC 199A uses taxable income BEFORE QBI, not AGI. Nancy's solo health
     // practice is an SSTB with no employee wages or qualified depreciable assets:
@@ -215,7 +218,7 @@ function calcTax(grossIncome,p,yr,numKids){
   const incomeTax=federal+stateT+cityT;
   const allInTax=incomeTax+Math.max(0,totalFICA);
   const effRate=grossIncome>0?allInTax/grossIncome:0;
-  const net=grossIncome-allInTax-pretax-overhead;
+  const net=grossIncome+retirementIncome-allInTax-pretax-overhead;
   return{
     allInTax:Math.round(allInTax),incomeTax:Math.round(incomeTax),
     fica:Math.round(Math.max(0,totalFICA)),federal:Math.round(federal),
@@ -625,6 +628,9 @@ function stripeSellAmount(p,newStock,netCash,liqGrown,ret,td){
 function drawYears(R){return R.filter(r=>r.sold>0||r.sHold>0).length}
 
 function run(p,rets,compiledGrants){
+  const fiEngine=typeof module!=='undefined'&&module.exports?require('./financial-independence.js'):window.PlannerFI;
+  if(p.fiConfig?.enabled&&!p._fiPrepared)return run(fiEngine.prepare(p,run),rets,compiledGrants);
+  const fi=p.fiConfig?.enabled?p.fiConfig:null;
   const sy=p.planStartYear||2026;
   const ey=p.planEndYear||2058;
   const kids=[p.kid1Birth];
@@ -671,6 +677,8 @@ function run(p,rets,compiledGrants){
   const grantLedger=grantEngine.active(p)?(compiledGrants||grantEngine.compile(p)):null;
   const simplePrices=p.stripeSimplified&&p.stripeGrants?.referenceTender>0?grantEngine.pricePath(p,sy-1,ey+1):null;
   for(let yr=sy;yr<=ey;yr++){
+    const fiOn=!!fi&&yr>=fi.transitionYear;
+    const k401Opening=k401;
     const nk=kids.filter(k=>yr>=k).length;
     const yIdx=yr-sy;
     let {cash:normCash,stock:normStock}=normComp(p,yIdx,grantLedger);
@@ -698,8 +706,22 @@ function run(p,rets,compiledGrants){
         nancySENet=Math.max(0,nancyGross-nancyOH-nancyOffice);
       }
     }
+    let fiNormSE=0,fiNormOH=0;
+    if(fiOn){
+      const years=yr-fi.transitionYear,earnings=fi.stress==='earnings25'?.75:fi.stress==='earnings50'?.5:1;
+      const early=fi.stress==='early'?10:0;
+      const normWorking=yr<fi.normBirthYear+fi.normStopAge-early,nancyWorking=yr<fi.nancyBirthYear+fi.nancyStopAge-early;
+      normCash=normWorking?fi.normIncome*(1+fi.normGrowth)**years*earnings:0;
+      // January 1 exit: unvested awards forfeit unless a documented annual continuation is entered.
+      normStock=Math.max(0,Number(fi.vests?.[yr]||0));eqYear=null;
+      if(fi.normType==='consulting'){fiNormOH=normWorking?fi.consultingOverhead*(1+(p.expenseInflation||0))**years:0;fiNormSE=Math.max(0,normCash-fiNormOH);}
+      nancyGross=nancyWorking?fi.nancyIncome*(1+fi.nancyGrowth)**years*earnings:0;nancyIsSolo=true;
+      nancyOH=nancyWorking?p.nancyPracticeOverhead:0;
+      nancyOffice=nancyWorking&&p.housingMode!=='rent'&&yr>=p.homePurchaseYear?p.nancyHomeOfficeDeduct:0;
+      nancySENet=Math.max(0,nancyGross-nancyOH-nancyOffice);
+    }
     const uncappedGross=normCash+normStock+nancyGross;
-    const cap=Number(p.combinedIncomeCap)||0;
+    const cap=fiOn?0:Number(p.combinedIncomeCap)||0;
     const incomeScale=cap>0&&uncappedGross>cap?cap/uncappedGross:1;
     if(incomeScale<1){
       normCash*=incomeScale;normStock*=incomeScale;nancyGross*=incomeScale;
@@ -716,7 +738,8 @@ function run(p,rets,compiledGrants){
     // the first, and 1 in the first year too unless the plan says when it was observed.
     const stub=yIdx===0?yearRemaining(p):1;
     const ctcKids=kids.filter(k=>yr>=k&&(yr-k)<17).length;
-    const taxP={...p,pretax401k:p.pretax401k*normScale,pretaxBenefits:p.pretaxBenefits*normScale,_normW2:normW2,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0,_nancyOverhead:nancyIsSolo?nancyOH:0,_taxDependents:kids.filter(k=>yr>=k&&yr-k<19).length};
+    const fiContrib=fiOn?Math.min(fi.contribution,24500*(1+(p.taxInflation??.025))**(yr-2026),fi.normType==='consulting'?fiNormSE*.20:Math.max(0,normCash)):p.pretax401k*normScale;
+    const taxP={...p,locationConfig:fiOn?{...p.locationConfig,normNySource:fi.normNySource,practiceNySource:fi.practiceNySource}:p.locationConfig,pretax401k:fiContrib,pretaxBenefits:fiOn?0:p.pretaxBenefits*normScale,_normW2:fiOn&&fi.normType==='consulting'?normStock:normW2,_normSE:fiNormSE,_normOverhead:fiNormOH,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0,_nancyOverhead:nancyIsSolo?nancyOH:0,_taxDependents:kids.filter(k=>yr>=k&&yr-k<19).length};
     const tax=calcTax(grossIncome,taxP,yr,ctcKids);
     // tax.net nets ALL household tax out of ALL comp (cash + stock). Backing the stock
     // straight out leaves exactly the spendable figure:
@@ -738,6 +761,7 @@ function run(p,rets,compiledGrants){
     const cashAvail=(tax.net-normStockNet-qcaCash*(1-qcaRate))*stub+qcaRemaining*(1-qcaRate);
     const futureStockIncome=eqYear?futureEvents.reduce((s,e)=>s+e.stock,0):normStock*(yIdx===0?stripeVestRemaining(p):1);
     const remainingNetComp=cashAvail+futureStockIncome*(1-vestRate);
+    const fiHealth=fiOn?fi.extraHealth*(1+(p.expenseInflation||0))**(yr-fi.transitionYear):0;
     const inc=cashAvail;
     // ── The same year, stated as a WHOLE year ──
     // The stub exists because the months before the observation date are already inside the
@@ -751,7 +775,8 @@ function run(p,rets,compiledGrants){
     const incFull=tax.net-normStockNet;
     // rets[] (Monte Carlo) perturbs only the DIVERSIFIED portfolio. Stripe follows its own
     // explicit return path — we have no basis for claiming to know its volatility.
-    const retFull=rets?rets[yIdx]:p.investReturn;
+    const ordinaryRet=rets?rets[yIdx]:p.investReturn;
+    const retFull=fiOn&&fi.stress==='downturn'&&yr===fi.transitionYear?-.30:ordinaryRet;
     // The opening balance already contains this year's market moves up to the observation
     // date, so only the remainder of the year may be compounded onto it. Compounded, not
     // scaled: a third of a year at 6% is (1.06)^(1/3)−1, not 2%.
@@ -759,7 +784,7 @@ function run(p,rets,compiledGrants){
     // Half-year convention: prior balance compounds a full year, this year's
     // contributions (deposited throughout the year) earn ~half a year of return.
     // Contributions are pro-rated too — the ones already made are inside k401Start.
-    k401=k401*(1+ret)+(p.pretax401k+p.company401kMatch)*normScale*stub*(1+ret/2);
+    k401=k401*(1+ret)+(fiOn?fiContrib:(p.pretax401k+p.company401kMatch)*normScale)*stub*(1+ret/2);
     const sub=p.housingMode!=='rent'&&yr>=p.homePurchaseYear;
     // Property tax = rate × current home value (appreciates each year). Falls back
     // to legacy flat propTaxBase/homePrice for saved states without a rate.
@@ -844,6 +869,8 @@ function run(p,rets,compiledGrants){
     // a few hundred dollars is exactly the kind of thing this table exists to rule out.
     if(locationActive(p,yr))cc*=Number(p.locationConfig.childcareFactor??.9);
     cc*=stressCost;
+    const frozen=fiOn?p._fiExpenses?.[yr]:null;
+    if(frozen){h=frozen.h;cc=frozen.cc;for(const k of Object.keys(livRaw))livRaw[k]=frozen.liv[k]??0;liv=sumParts(livRaw);}
     const livFullParts=roundParts(livRaw,1);
     const hFull=h,livFull=liv,ccFull=cc;
     if(stub<1){h*=stub;cc*=stub}
@@ -858,6 +885,7 @@ function run(p,rets,compiledGrants){
     }
     if(locationActive(p,yr))tu*=Number(p.locationConfig.tuitionFactor??.5);
     tu*=stressCost;
+    if(frozen)tu=frozen.tu;
     const tuFull=tu;
     if(stub<1)tu*=stub;
     tT+=tu;
@@ -868,7 +896,7 @@ function run(p,rets,compiledGrants){
     // A one-off for this year alone — see expenseAdjFor. It is real spending, so it lands in
     // the total the cash waterfall and the net-flow figure are computed from, not in a note
     // beside it.
-    const eAdj=expenseAdjFor(p,yr,sy)+probeAdjFor(p,yr)+itemAdds.oneOff;
+    const eAdj=(frozen?frozen.oneoff:expenseAdjFor(p,yr,sy)+probeAdjFor(p,yr)+itemAdds.oneOff)+fiHealth;
     const totE=Math.round(h)+Math.round(liv)+Math.round(cc)+Math.round(tu)+eAdj;
     // Same summing discipline: rounded components summed, never a rounded raw sum.
     const totEFull=Math.round(hFull)+Math.round(livFull)+Math.round(ccFull)+Math.round(tuFull)+eAdj;
@@ -882,7 +910,13 @@ function run(p,rets,compiledGrants){
     // Cash comp funds life first. Whatever it can't cover (including the down payment, a
     // real cash outflow) is the gap the retention policy decides how to close.
     const dpThis=(p.housingMode!=='rent'&&yr===p.homePurchaseYear)?cashToClose(p.homePrice,p).total:0;
-    const netCash=surp-dpThis;
+    let fiRetDraw=0,fiRetTax=0;
+    const retAge=fi?yr-fi.normBirthYear:0;
+    const retirementNet=amount=>amount-(calcTax(grossIncome,{...taxP,_retirementIncome:amount},yr,ctcKids).allInTax-tax.allInTax);
+    // Uniform Lifetime Table, ages 75–100. No early withdrawal exceptions assumed.
+    const divisors=[24.6,23.7,22.9,22,21.1,20.2,19.4,18.5,17.7,16.8,16,15.2,14.4,13.7,12.9,12.2,11.5,10.8,10.1,9.5,8.9,8.4,7.8,7.3,6.8,6.4];
+    if(fiOn&&retAge>=75){fiRetDraw=Math.min(k401,k401Opening/divisors[Math.min(25,retAge-75)]);fiRetTax=fiRetDraw-retirementNet(fiRetDraw);k401-=fiRetDraw;}
+    const netCash=surp-dpThis+fiRetDraw-fiRetTax;
     const sr=grantLedger?grantLedger.prices[yr+1].tender/grantLedger.prices[yr].tender-1:simplePrices?simplePrices[yr+1].tender/simplePrices[yr].tender-1:stripeReturn(p,yIdx);
     const gainsRate=locationCapitalGainsRate(p,tax,yr);
     const gp=1-p.costBasisPct,td=gp*gainsRate;
@@ -939,7 +973,7 @@ function run(p,rets,compiledGrants){
     let txS=0,sold=0,holdSold=0,holdTax=0,netFlow=netCash+stripeSold-newSaleTax;
     if(netFlow<0){
       let need=-netFlow; // net cash still required after the vest
-      const floor=Math.max(0,p.liquidReserveFloor??p.stripeLiquidFloor??500000);
+      const floor=fiOn?fi.reserve*(1+(p.expenseInflation||0))**(yr-sy):Math.max(0,p.liquidReserveFloor??p.stripeLiquidFloor??500000);
       // Gross sale that lands the pool exactly on the floor, under the same half-year
       // convention applied below. Selling from the pool is grossed up for cap-gains tax.
       const roomToFloor=Math.max(0,(liqGrown-floor)/(1+ret/2));
@@ -950,6 +984,13 @@ function run(p,rets,compiledGrants){
       if(need>1e-6){
         const r=sellLots(lots,need,gainsRate,Math.max(0,saleBudget-stripeSold));
         holdSold=r.gross;holdTax=r.tax;need=r.shortfall;
+      }
+      if(fiOn&&retAge>=60&&need>1e-6&&k401>0){
+        let lo=0,hi=k401;
+        const priorNet=retirementNet(fiRetDraw);
+        for(let j=0;j<35;j++){const mid=(lo+hi)/2; if(retirementNet(fiRetDraw+mid)-priorNet<need)lo=mid;else hi=mid;}
+        const take=Math.min(k401,hi),net=retirementNet(fiRetDraw+take)-priorNet;
+        fiRetDraw+=take;fiRetTax+=take-net;k401-=take;need=Math.max(0,need-net);
       }
       // Nothing left to sell: the pool breaches the floor, and can go negative. That is a
       // genuinely insolvent plan, and the UI calls it out rather than hiding it.
@@ -993,6 +1034,7 @@ function run(p,rets,compiledGrants){
     R.push({yr,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
+      fiActive:fiOn,fiHealth:Math.round(fiHealth),fiNormSE:Math.round(fiNormSE),fiNancyOverhead:Math.round(nancyOH),fiRetDraw:Math.round(fiRetDraw),fiRetTax:Math.round(fiRetTax),fiFundingNeed:fiOn?Math.max(0,-surpFull)+dpThis:0,fiContribution:fiOn?fiContrib:0,fiEmployerMatch:fiOn?0:p.company401kMatch,
       liv:Math.round(liv),livParts,livFullParts,livSrc,livAdds:Object.fromEntries(Object.entries(itemAdds.lines).map(([k,v])=>[k,Math.round(v)])),cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
       // The WHOLE calendar year, stub or not. On a full year each equals its counterpart.
       // A table comparing a quarter of one year against all of the next answers nothing, so
@@ -1237,6 +1279,7 @@ function drawHistoricalBlock(nYears){
 }
 
 function runMonteCarlo(p,trials=600,mode='lognormal'){
+  if(p.fiConfig?.enabled&&!p._fiPrepared){const F=typeof module!=='undefined'&&module.exports?require('./financial-independence.js'):window.PlannerFI;p=F.prepare(p,run);}
   const sy=p.planStartYear||2026;const ey=p.planEndYear||2058;const nYears=ey-sy+1;
   const vol=p.mcVol??.14;const mean=p.investReturn;
   // Lognormal returns: treat `mean` as the ARITHMETIC expected return and derive the

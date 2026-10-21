@@ -10,6 +10,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="/planner-time.js"></script>
 <script src="/stripe-grants.js"></script>
+<script src="/financial-independence.js"></script>
 <script src="/model.js"></script>
 <script src="/stress-tests.js"></script>
 <script src="/stripe-grants-ui.js"></script>
@@ -426,6 +427,7 @@ body{background:transparent}
 <link rel="stylesheet" href="/cockpit.css">
 <link rel="stylesheet" href="/ui.css">
 <link rel="stylesheet" href="/experience.css">
+<link rel="stylesheet" href="/financial-independence.css">
 <script src="/ui.js"></script>
 <script src="/cockpit.js"></script>
 </head>
@@ -666,7 +668,7 @@ function savePlannerState(){
   setSyncStatus('saving');
   const revision=++_saveRevision;
   const livePlanParams=typeof _livePlanParams!=='undefined'?_livePlanParams:null;
-  const payload=JSON.stringify({state:{P,livePlanParams,compareMode,activeTab,_projView,_todayView,_homeView,cockpitNwBasis:cockpitExRet?'exRetirement':'total',activeScenarioIdx,activeScenarioId:scenarios[activeScenarioIdx]?.id||null,scenarioDirty,monarchSnapshot,experienceVersion:8}});
+  const payload=JSON.stringify({state:{P,fiWhatIf:typeof fiWhatIf!=='undefined'?fiWhatIf:null,livePlanParams,compareMode,activeTab,_projView,_todayView,_homeView,cockpitNwBasis:cockpitExRet?'exRetirement':'total',activeScenarioIdx,activeScenarioId:scenarios[activeScenarioIdx]?.id||null,scenarioDirty,monarchSnapshot,experienceVersion:8}});
   clearTimeout(_saveTimer);
   _saveTimer=setTimeout(()=>{
     // Serialize writes so a slower earlier request cannot overwrite newer state.
@@ -699,6 +701,7 @@ async function loadFromServer(){
       const d=await stRes.json();
       const s=d.state||{};
       if(s.P)P={...D,...migrateP(s.P)};
+      if(s.fiWhatIf&&typeof fiWhatIf!=='undefined')fiWhatIf=s.fiWhatIf;
       if(s.compareMode!==undefined)compareMode=s.compareMode;
       if(s.experienceVersion>=6&&s.activeTab)activeTab=s.experienceVersion>=7?s.activeTab:'cockpit';
       _planLoaded=true;
@@ -5404,8 +5407,9 @@ function updateRefiCalc(){
 function renderWhatIfTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
-  ca.innerHTML=`<div id="wiStress"></div><div id="wiDR"></div><div class="home-sec"><div class="hero-eyebrow">Then</div><h2>Which assumptions matter most</h2></div><div id="wiKL"></div>`;
+  ca.innerHTML=`<div id="fiRoot"></div><div id="wiStress"></div><div id="wiDR"></div><div class="home-sec"><div class="hero-eyebrow">Then</div><h2>Which assumptions matter most</h2></div><div id="wiKL"></div>`;
   window._lastR=R;window._lastP=P;
+  renderFinancialIndependence();
   renderAnnualStress(R,P);
   renderDecisionRoom(R,'wiDR');
   renderSensitivityTab(R,P,'wiKL');
@@ -7268,6 +7272,7 @@ window.onerror=function(msg,src,line,col,err){
   console.error('Global error:',err||msg);
 };
 </script>
+<script src="/financial-independence-ui.js"></script>
 <script src="/experience.js"></script>
 </body>
 </html>
