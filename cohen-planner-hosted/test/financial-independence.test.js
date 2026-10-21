@@ -46,7 +46,7 @@ describe('Financial Independence overlay uses the shared engine',()=>{
   const tiny=analyze({normIncome:0,nancyIncome:0},{...p,startingLiquid:1,startingStripeEquity:0,k401Start:0});expect(tiny.status).toBe('Unsustainable');expect(tiny.failYear).not.toBeNull();
  });
  it('excludes home and private investments and applies estimated Stripe sale tax to accessibility',()=>{
-  const c=F.config(p,{}),r={yr:2034,liq:100000,sEnd:200000,sBasis:100000,capGainsRate:.3,k401:500000,eq:9e6,otherAssets:8e6};
+  const c=F.config(p,{privateLiquidityPct:0}),r={yr:2034,liq:100000,sEnd:200000,sBasis:100000,capGainsRate:.3,k401:500000,eq:9e6,otherAssets:8e6};
   expect(F.accessible(r,{otherDebt:0},c)).toBe(270000);expect(F.accessible({...r,yr:2053},{otherDebt:0},c)).toBe(770000);
  });
  it('does not spend retirement accounts before 60, applies ordinary tax and RMDs without phantom assets',()=>{
@@ -113,5 +113,51 @@ describe('Financial Independence presentation and save isolation',()=>{
  });
  it('clears stale Monte Carlo results when the underlying case changes',()=>{
   const t=ui();t.call('renderFinancialIndependence();fiSimulation={ruinPct:0};');t.ctx.P.investReturn=.03;t.call('renderFinancialIndependence()');expect(t.call('fiSimulation')).toBeNull();
+ });
+});
+
+describe('Private investment liquidity in Financial Independence',()=>{
+ it('does not make other private assets spendable before the assumed listing date',()=>{
+  const q={...p,otherAssets:300000,startingStripeEquity:0};
+  const a=analyze({privateLiquidityYear:2036,privateLiquidityPct:1,privateBasisPct:.25},q);
+  expect(a.result.R.find(r=>r.yr===2035).fiPrivateUnlocked).toBe(false);
+  expect(F.afterTaxPrivate(a.result.R.find(r=>r.yr===2035),q,a.c)).toBe(0);
+  const first=a.result.R.find(r=>r.yr===2036);
+  expect(first.fiPrivateUnlocked).toBe(true);
+  expect(first.fiPrivateTradable).toBeGreaterThan(0);
+  expect(F.afterTaxPrivate(first,q,a.c)).toBeGreaterThan(0);
+  expect(a.original.R.find(r=>r.yr===2036).fiPrivateUnlocked).toBe(false);
+  expect(q.otherAssets).toBe(300000);
+ });
+ it('unlocks private investments without creating wealth and preserves their historical cost basis',()=>{
+  const q={...p,otherAssets:500000,startingLiquid:5000000,startingStripeEquity:0,k401Start:0,investReturn:.05};
+  const a=analyze({privateLiquidityYear:2034,privateLiquidityPct:.6,privateBasisPct:.2},q);
+  const r=a.result.R.find(r=>r.yr===2034);
+  expect(r.fiPrivateSold).toBe(0);
+  expect(r.fiPrivateBasis).toBeCloseTo(500000*.6*.2,0);
+  expect(r.fiPrivateTradable).toBeGreaterThan(500000*.6);
+  expect(r.netWorth).toBe(r.liq+r.sEnd+r.eq+r.otherAssets-r.otherDebt+r.k401);
+  expect(F.afterTaxPrivate(r,q,a.c)).toBeLessThan(r.fiPrivateTradable);
+ });
+ it('sells only tradable private assets when cash is needed and taxes realized gains once',()=>{
+  const q={...p,otherAssets:3000000,startingLiquid:0,startingStripeEquity:0,k401Start:0,investReturn:0};
+  const a=analyze({transitionYear:2027,privateLiquidityYear:2027,privateLiquidityPct:1,privateBasisPct:.1,normIncome:0,nancyIncome:0,reserve:0},q);
+  const locked=analyze({transitionYear:2027,privateLiquidityYear:2027,privateLiquidityPct:0,privateBasisPct:.1,normIncome:0,nancyIncome:0,reserve:0},q);
+  expect(a.result.R.some(r=>r.fiPrivateSold>0)).toBe(true);
+  expect(a.result.R.some(r=>r.fiPrivateGainTax>0)).toBe(true);
+  expect(locked.result.R.every(r=>!r.fiPrivateSold)).toBe(true);
+  expect(a.result.R.find(r=>r.yr===2030).liq).toBeGreaterThan(locked.result.R.find(r=>r.yr===2030).liq);
+  for(let i=1;i<a.result.R.length;i++){
+   const r=a.result.R[i],prev=a.result.R[i-1];if(r.yr<2027)continue;
+   expect(Math.abs(r.otherAssets-(prev.otherAssets-r.fiPrivateSold)),r.yr+' private assets').toBeLessThan(3);
+  }
+ });
+ it('exposes the private liquidity controls in the Financial Independence interface',()=>{
+  const source=fs.readFileSync(new URL('../public/financial-independence-ui.js',import.meta.url),'utf8');
+  for(const key of ['privateLiquidityYear','privateLiquidityPct','privateBasisPct'])expect(source).toContain(key);
+  const c=F.config(p,{privateLiquidityYear:2038,privateLiquidityPct:.5,privateBasisPct:.15});
+  expect(c.privateLiquidityYear).toBe(2038);
+  expect(c.privateLiquidityPct).toBe(.5);
+  expect(c.privateBasisPct).toBe(.15);
  });
 });

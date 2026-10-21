@@ -22,6 +22,14 @@ Incremental pre-Medicare household coverage is prorated by the number under 65. 
 
 Tax-deferred retirement withdrawals start at 60 under the existing conservative annual convention; no early-access exception/Roth basis is inferred. RMDs begin at 75. Liquid assets, tender-limited vested Stripe and retirement are funded separately. No sale is invented after assets exhaust: negative liquid balances are cumulative unfunded spending, without borrowing returns or phantom gain taxes.
 
+## Future-public private investments
+
+The FI What-If now includes the existing `otherAssets` pool (excluding vested Stripe) as a separately modeled, optionally saleable investment. Default assumption: first saleable year 2034, 100% of the pool becomes tradable, original tax basis equal to 25% of the plan's starting private asset value. These are editable and provisional; no IPO, lockup expiration, secondary transaction, exit valuation or tax basis is guaranteed.
+
+Before the liquidity date, these holdings remain in total net worth but not accessible investments or the spending waterfall. From the later of the liquidity year and FI transition, the configured share is marked tradable and its estimated *after-tax* value counts toward FI accessible investments, exit tests, milestones and comparisons. The remainder stays locked. When funding is required, the engine sells from the tradable pool only after ordinary liquid/Stripe sources, recognizes proportional original basis, deducts estimated capital-gains tax and includes realized gains in the federal Social Security taxation calculation. Unsold private investments continue to appreciate under the inherited diversified return assumption. Neither an IPO nor becoming tradable automatically creates cash, a taxable event or additional net worth. Original non-FI cases are unchanged.
+
+The planner still uses annual liquidity conventions, simplified capital-gains rates and one aggregate private-asset bucket. It cannot establish individual company listing dates, lockup windows, discounts, capital calls, carry, QSBS eligibility, fund distribution waterfalls or concentration risk. For conservative decisions, change the liquidity year/share and compare against a zero-liquidity case.
+
 ## Safety and comparison
 
 All runs reach at least age 90 for the younger person. Sustainable requires no unfunded year, the inflation-linked liquid reserve, and the selected maximum annual withdrawal rate throughout that horizon. Borderline is funded but fails a guardrail. The tool also displays the first fully funded exit separately, avoiding a claim that “positive at 70” is sufficient. Each candidate year is actually rerun for all three SS levels.
