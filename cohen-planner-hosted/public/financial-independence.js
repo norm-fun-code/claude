@@ -6,7 +6,7 @@
  function config(p,c={}){
   const sy=p.planStartYear||2026;
   const history=h=>Object.fromEntries(Object.entries(h||{}).filter(([y,v])=>Number.isInteger(+y)&&+y>=1900&&+y<sy&&Number.isFinite(Number(v))&&Number(v)>=0).map(([y,v])=>[y,Number(v)]));
-  const n=Math.round(bounded(c.normBirthYear,1993,sy-80,sy-18)),a=Math.round(bounded(c.nancyBirthYear,1993,sy-80,sy-18));
+  const n=Math.round(bounded(c.normBirthYear,1993,sy-80,sy-18)),a=Math.round(bounded(c.nancyBirthYear,1998,sy-80,sy-18));
   return {...c,enabled:c.enabled!==false,transitionYear:Math.round(bounded(c.transitionYear,2034,sy+1,Math.max(sy+1,n+Math.round(bounded(c.normStopAge,65,35,90))))),normBirthYear:n,nancyBirthYear:a,
    horizonAge:Math.round(bounded(c.horizonAge,90,90,100)),normIncome:bounded(c.normIncome,150000,0,5e6),nancyIncome:bounded(c.nancyIncome,200000,0,5e6),
    normGrowth:bounded(c.normGrowth,.02,-.1,.15),nancyGrowth:bounded(c.nancyGrowth,.02,-.1,.15),normType:c.normType==='consulting'?'consulting':'w2',
