@@ -23,7 +23,7 @@ describe('Financial Independence overlay uses the shared engine',()=>{
   for(const mode of ['brooklyn','deal']){
    const q={...p,locationConfig:{mode,moveYear:2031},budgetRules:{charity:[{from:2030,kind:'pct',value:.05,basis:'gross'}]}};
    const a=analyze({},q);for(let i=0;i<a.result.R.length;i++){
-    const x=a.result.R[i],y=a.original.R[i];for(const k of ['hFull','ccFull','tuFull','eAdj','totEFull'])expect(x[k],k+' '+x.yr).toBe(y[k]);expect(x.livFullParts).toEqual(y.livFullParts);
+    const x=a.result.R[i],y=a.original.R[i];for(const k of ['hFull','ccFull','tuFull'])expect(x[k],k+' '+x.yr).toBe(y[k]);expect(x.eAdj-(x.fiHealth||0)).toBeCloseTo(y.eAdj,0);expect(x.totEFull-(x.fiHealth||0)).toBeCloseTo(y.totEFull,0);expect(x.livFullParts).toEqual(y.livFullParts);
    }
   }
  });
@@ -42,7 +42,7 @@ describe('Financial Independence overlay uses the shared engine',()=>{
   expect(a.result.R.find(r=>r.yr===2043).normCash).toBe(0);expect(a.result.R.find(r=>r.yr===2043).nancyG).toBeGreaterThan(0);expect(a.result.R.find(r=>r.yr===2048).nancyG).toBe(0);
  });
  it('has no hidden threshold and extends until both people reach 90',()=>{
-  const a=analyze({horizonAge:70,nancyBirthYear:1996});expect(a.result.R.at(-1).yr).toBe(2086);expect(a.milestones.map(x=>x.age)).toEqual([60,70,80,90]);
+  const a=analyze({horizonAge:70,nancyBirthYear:1996});expect(a.result.R.at(-1).yr).toBe(2086);expect(a.milestones.map(x=>x.age)).toEqual([60,65,70,75,80,85,90]);
   const tiny=analyze({normIncome:0,nancyIncome:0},{...p,startingLiquid:1,startingStripeEquity:0,k401Start:0});expect(tiny.status).toBe('Unsustainable');expect(tiny.failYear).not.toBeNull();
  });
  it('excludes home and private investments and applies estimated Stripe sale tax to accessibility',()=>{
@@ -101,6 +101,15 @@ describe('Financial Independence presentation and save isolation',()=>{
  });
  it('numeric input events recalculate after a short debounce without modifying the base case',()=>{
   vi.useFakeTimers();try{const t=ui(),before=JSON.stringify(t.ctx.P);t.call("fiQueueEdit('transitionYear',2036)");vi.advanceTimersByTime(350);expect(t.host.innerHTML).toContain('2036 needs more cushion.');expect(JSON.stringify(t.ctx.P)).toBe(before);}finally{vi.useRealTimers();}
+ });
+ it('keeps benefit settings, earnings records and later work in the What-If and saved copy only',async()=>{
+  const t=ui(),before=JSON.stringify(t.ctx.P);
+  t.call("fiEdit('ssLevel',.75);fiToggleSS();");expect(t.host.innerHTML).toContain('Social Security Off');
+  t.call('fiToggleSS()');expect(t.call('fiGetAnalysis().c.ssLevel')).toBe(.75);
+  t.call("fiHistory('norm',2025,'100000');fiEdit('nancyLateIncome',50000)");
+  expect(JSON.stringify(t.ctx.P)).toBe(before);await t.call('fiSave()');
+  expect(t.ctx.saved[0].params.fiConfig.normEarningsHistory[2025]).toBe(100000);
+  expect(t.ctx.saved[0].params.fiConfig.ssLevel).toBe(.75);expect(t.ctx.saved[0].params.fiConfig.nancyLateIncome).toBe(50000);
  });
  it('clears stale Monte Carlo results when the underlying case changes',()=>{
   const t=ui();t.call('renderFinancialIndependence();fiSimulation={ruinPct:0};');t.ctx.P.investReturn=.03;t.call('renderFinancialIndependence()');expect(t.call('fiSimulation')).toBeNull();
