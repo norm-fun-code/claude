@@ -46,7 +46,7 @@ describe('Financial Independence overlay uses the shared engine',()=>{
   const tiny=analyze({normIncome:0,nancyIncome:0},{...p,startingLiquid:1,startingStripeEquity:0,k401Start:0});expect(tiny.status).toBe('Unsustainable');expect(tiny.failYear).not.toBeNull();
  });
  it('excludes home and private investments and applies estimated Stripe sale tax to accessibility',()=>{
-  const c=F.config(p,{}),r={yr:2034,liq:100000,sEnd:200000,sBasis:100000,capGainsRate:.3,k401:500000,eq:9e6,otherAssets:8e6};
+  const c=F.config(p,{privateLiquidityPct:0}),r={yr:2034,liq:100000,sEnd:200000,sBasis:100000,capGainsRate:.3,k401:500000,eq:9e6,otherAssets:8e6};
   expect(F.accessible(r,{otherDebt:0},c)).toBe(270000);expect(F.accessible({...r,yr:2053},{otherDebt:0},c)).toBe(770000);
  });
  it('does not spend retirement accounts before 60, applies ordinary tax and RMDs without phantom assets',()=>{
