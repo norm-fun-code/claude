@@ -96,6 +96,30 @@ describe('Financial Independence presentation and save isolation',()=>{
   const t=ui(),before=JSON.stringify(t.ctx.P);t.call('renderFinancialIndependence()');expect(t.host.innerHTML).toContain('Make work a choice.');expect(t.host.innerHTML).toContain('fiTrajectory');expect(t.host.innerHTML).toContain('2034');t.call("fiEdit('normIncome',175000)");expect(JSON.stringify(t.ctx.P)).toBe(before);expect(t.host.innerHTML).toContain('175000');
   t.call('fiSwitch()');expect(t.host.innerHTML).toContain('Your original plan is unchanged.');expect(JSON.stringify(t.ctx.P)).toBe(before);
  });
+ it('makes the five key levers and an accurate lifetime verdict the default view',()=>{
+  const t=ui();t.call('renderFinancialIndependence()');
+  for(const label of ['Exit corporate work in','Your annual part-time income','Nancy’s annual practice revenue','Social Security assumption','Private assets tradable from'])expect(t.host.innerHTML).toContain(label);
+  expect(t.host.innerHTML).toContain('fi-panel fi-simple ');
+  expect(t.host.innerHTML).toContain('Advanced analysis &amp; assumptions'.replace('&amp;','&'));
+  expect(t.host.innerHTML).toContain('fiTrajectory');
+  expect(t.host.innerHTML).toContain('Save this scenario');
+  expect(t.host.innerHTML).toContain('Social Security estimates are provisional');
+  const a=t.call('fiGetAnalysis()');
+  if(a.status==='Borderline')expect(t.host.innerHTML).toContain('funds your lifetime, with a caveat');
+  if(a.failYear)expect(t.host.innerHTML).toContain('First unfunded year');
+  expect(t.call('fiAdvanced')).toBe(false);
+  t.call('fiToggleAdvanced()');expect(t.call('fiAdvanced')).toBe(true);
+  expect(t.host.innerHTML).toContain('fi-show-advanced');
+ });
+ it('updates the decision levers without changing the base plan',async()=>{
+  const t=ui(),before=JSON.stringify(t.ctx.P);t.call('renderFinancialIndependence()');
+  t.call("fiEdit('transitionYear',2036);fiEdit('normIncome',175000);fiEdit('nancyIncome',225000);fiEdit('ssLevel',.75);fiEdit('privateLiquidityYear',2038)");
+  const c=t.call('fiGetAnalysis().c');
+  expect(c.transitionYear).toBe(2036);expect(c.normIncome).toBe(175000);expect(c.nancyIncome).toBe(225000);
+  expect(c.ssLevel).toBe(.75);expect(c.privateLiquidityYear).toBe(2038);
+  expect(JSON.stringify(t.ctx.P)).toBe(before);
+  await t.call('fiSave()');expect(t.ctx.saved[0].params.fiConfig.privateLiquidityYear).toBe(2038);
+ });
  it('saves a distinct reusable scenario with no transient expense snapshots or mutations',async()=>{
   const t=ui(),before=JSON.stringify(t.ctx.P);await t.call('fiSave()');expect(t.ctx.saved).toHaveLength(1);const s=t.ctx.saved[0];expect(s.name).toBe('Financial Independence — 2034');expect(s.params.fiConfig.enabled).toBe(true);expect(s.params._fiPrepared).toBeUndefined();expect(s.params._fiExpenses).toBeUndefined();expect(JSON.stringify(t.ctx.P)).toBe(before);expect(t.ctx.scenarios[0].name).toBe('Base Case');
  });
