@@ -1,0 +1,25 @@
+name: Financial planner tests
+on:
+  push:
+    branches:
+      - codex/fi-private-assets-liquidity
+      - claude/deploy-financial-planner-78esr
+  pull_request:
+    paths:
+      - 'cohen-planner-hosted/**'
+      - '.github/workflows/financial-planner-tests.yml'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cohen-planner-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: cohen-planner-hosted/package-lock.json
+      - run: npm ci
+      - run: npm test
