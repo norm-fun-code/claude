@@ -95,6 +95,10 @@ describe('Financial Independence presentation and save isolation',()=>{
  it('saves a distinct reusable scenario with no transient expense snapshots or mutations',async()=>{
   const t=ui(),before=JSON.stringify(t.ctx.P);await t.call('fiSave()');expect(t.ctx.saved).toHaveLength(1);const s=t.ctx.saved[0];expect(s.name).toBe('Financial Independence — 2034');expect(s.params.fiConfig.enabled).toBe(true);expect(s.params._fiPrepared).toBeUndefined();expect(s.params._fiExpenses).toBeUndefined();expect(JSON.stringify(t.ctx.P)).toBe(before);expect(t.ctx.scenarios[0].name).toBe('Base Case');
  });
+ it('compares against the actual selected original when reopening a saved FI scenario',()=>{
+  const q={...p,planEndYear:2083,fiConfig:{enabled:true,transitionYear:2034,normIncome:150000}};
+  const a=analyze({normIncome:200000},q);expect(a.original).toEqual(M.run(q));expect(a.result.R.find(r=>r.yr===2034).normCash).toBe(200000);expect(q.fiConfig.normIncome).toBe(150000);
+ });
  it('numeric input events recalculate after a short debounce without modifying the base case',()=>{
   vi.useFakeTimers();try{const t=ui(),before=JSON.stringify(t.ctx.P);t.call("fiQueueEdit('transitionYear',2036)");vi.advanceTimersByTime(350);expect(t.host.innerHTML).toContain('2036 needs more cushion.');expect(JSON.stringify(t.ctx.P)).toBe(before);}finally{vi.useRealTimers();}
  });

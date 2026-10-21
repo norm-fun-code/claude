@@ -41,7 +41,7 @@
  }
  function analyze(p,input,M,{scan=true,stresses=true}={}){
   const c=config(p,input),plan=prepare({...p,fiConfig:c},M.run),base=copy(plan);delete base.fiConfig;delete base._fiExpenses;delete base._fiPrepared;
-  const original=M.run(base),result=M.run(plan),s=summary(result,plan,c);
+  const original=M.run(p.fiConfig?.enabled?p:base),result=M.run(plan),s=summary(result,plan,c);
   const candidates=[];
   if(scan){const end=Math.min(horizon(c)-1,c.normBirthYear+c.normStopAge-1,horizon(c)-1);
    for(let year=(p.planStartYear||2026)+1;year<=end;year++){const q={...plan,fiConfig:{...c,transitionYear:year}};const t=summary(M.run(q),q,q.fiConfig);candidates.push({year,status:t.status,min:t.min,failYear:t.failYear,peakRate:t.peakRate});}}
