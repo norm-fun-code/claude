@@ -659,10 +659,10 @@ function run(p,rets,compiledGrants){
   // is roughly $300K, so carrying them flat understates net worth by about as much as
   // leaving them out did.
   //
-  // What they are NOT is spendable. They never join `liq`, so the liquidity waterfall cannot
-  // sell them to fund a house or cover a deficit year. That separation is the whole point:
-  // counting them in net worth is honest, counting them as reachable is how a plan looks
-  // solvent right up until the money is needed.
+  // Outside the FI What-If, these remain illiquid and cannot fund expenses.
+  // Within FI, only the configured tradable share becomes eligible for sales from
+  // its specified liquidity year; taxes apply to realized gains on actual sales.
+  // The locked remainder never enters the liquidity waterfall.
   const otherAssetsStart=Math.max(0,Number(p.otherAssets??0)||0);
   let liq=p.startingLiquid,k401=p.k401Start??210000,otherAssets=otherAssetsStart,tT=0,tC=0,tTx=0,tS=0;
    // FI-only: public/otherwise saleable private investments remain in their own pool
