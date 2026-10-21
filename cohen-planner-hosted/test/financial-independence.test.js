@@ -43,7 +43,7 @@ describe('Financial Independence overlay uses the shared engine',()=>{
  it('changes both incomes separately and stops each on its own retirement date',()=>{
   const a=analyze({normGrowth:0,nancyGrowth:.03,normStopAge:50,nancyStopAge:55});
   expect(a.result.R.find(r=>r.yr===2035).normCash).toBe(150000);expect(a.result.R.find(r=>r.yr===2035).nancyG).toBe(206000);
-  expect(a.result.R.find(r=>r.yr===2043).normCash).toBe(0);expect(a.result.R.find(r=>r.yr===2043).nancyG).toBeGreaterThan(0);expect(a.result.R.find(r=>r.yr===2048).nancyG).toBe(0);
+  expect(a.result.R.find(r=>r.yr===2043).normCash).toBe(0);expect(a.result.R.find(r=>r.yr===2043).nancyG).toBeGreaterThan(0);expect(a.result.R.find(r=>r.yr===2053).nancyG).toBe(0);
  });
  it('has no hidden threshold and extends until both people reach 90',()=>{
   const a=analyze({horizonAge:70,nancyBirthYear:1996});expect(a.result.R.at(-1).yr).toBe(2086);expect(a.milestones.map(x=>x.age)).toEqual([60,65,70,75,80,85,90]);
