@@ -25,12 +25,12 @@ describe('SSA retirement method and benefit coordination',()=>{
   expect(S.spouseFactor(62)).toBeCloseTo(.65,10);expect(S.claimFactor(62,67,60)).toBe(1);
  });
  it('pays only the spousal excess and replaces, rather than adds, survivor benefits',()=>{
-  const q={...p,planStartYear:2060,expenseInflation:0},c=F.config(q,{normSSMonthly:3000,nancySSMonthly:1000,ssCola:0,normDeathAge:70});
+  const q={...p,planStartYear:2060,expenseInflation:0},c=F.config(q,{nancyBirthYear:1993,normSSMonthly:3000,nancySSMonthly:1000,ssCola:0,normDeathAge:70});
   const e=S.create(q,c);let r=e.step(2060,0,0);expect(r.norm).toBe(36000);expect(r.nancy).toBe(18000);
   e.step(2061,0,0);e.step(2062,0,0);r=e.step(2063,0,0);expect(r.norm).toBe(0);expect(r.nancy).toBe(36000);
  });
  it('defers spousal excess until the worker claims and does not apply delayed credits to that excess',()=>{
-  const q={...p,planStartYear:2060,expenseInflation:0},c=F.config(q,{normSSMonthly:3000,nancySSMonthly:1000,ssCola:0,normClaimAge:70,nancyClaimAge:70});
+  const q={...p,planStartYear:2060,expenseInflation:0},c=F.config(q,{nancyBirthYear:1993,normSSMonthly:3000,nancySSMonthly:1000,ssCola:0,normClaimAge:70,nancyClaimAge:70});
   const e=S.create(q,c);expect(e.step(2060,0,0).total).toBe(0);
   const r=e.step(2063,0,0);expect(r.norm).toBe(44640);expect(r.nancy).toBe(20880);
  });
@@ -55,14 +55,14 @@ describe('Social Security and later earnings use the shared financial engine',()
   const before=JSON.stringify(p),a=analyze(),low=analyze({normIncome:0,nancyIncome:0});
   expect(JSON.stringify(p)).toBe(before);expect(M.run({...p,fiConfig:{enabled:false}})).toEqual(M.run(p));
   expect(at(a,2060).fiSSNorm).toBeGreaterThan(at(low,2060).fiSSNorm);
-  expect(at(a,2060).fiSSNancy).toBeGreaterThan(at(low,2060).fiSSNancy);
+  expect(at(a,2065).fiSSNancy).toBeGreaterThan(at(low,2065).fiSSNancy);
   const earlier=analyze({transitionYear:2028,normGrowth:0}),later=analyze({transitionYear:2034,normGrowth:0});expect(at(earlier,2060).fiSSNorm).toBeLessThan(at(later,2060).fiSSNorm);
  });
  it('keeps SS separate from earned income and uses each spouse’s claiming age',()=>{
   const a=analyze({normClaimAge:62,nancyClaimAge:70,normStopAge:60});
   expect(at(a,2054).fiSSNorm).toBe(0);expect(at(a,2055).fiSSNorm).toBeGreaterThan(0);
-  expect(at(a,2062).fiSSNancy).toBe(0);expect(at(a,2063).fiSSNancy).toBeGreaterThan(0);
-  expect(at(a,2063).gross).toBe(0);expect(at(a,2063).fiSS).toBeGreaterThan(0);
+  expect(at(a,2067).fiSSNancy).toBe(0);expect(at(a,2068).fiSSNancy).toBeGreaterThan(0);
+  expect(at(a,2068).gross).toBe(0);expect(at(a,2068).fiSS).toBeGreaterThan(0);
  });
  it('turning SS off removes all benefits while 75% pays exactly 75% with unchanged earnings and expenses',()=>{
   const a=analyze();const [none,reduced,full]=a.ssComparisons;
@@ -73,12 +73,12 @@ describe('Social Security and later earnings use the shared financial engine',()
   }
  });
  it('later-life work has independent windows, gross amounts and growth, with no double-counting after late regular retirement',()=>{
-  const a=analyze({normLateIncome:50000,nancyLateIncome:100000,normLateStart:65,nancyLateStart:66,normLateEnd:67,nancyLateEnd:68,normLateGrowth:.03,nancyLateGrowth:0});
+  const a=analyze({nancyBirthYear:1993,normLateIncome:50000,nancyLateIncome:100000,normLateStart:65,nancyLateStart:66,normLateEnd:67,nancyLateEnd:68,normLateGrowth:.03,nancyLateGrowth:0});
   expect(at(a,2058).normCash).toBe(50000);expect(at(a,2058).nancyG).toBe(0);
   expect(at(a,2059).normCash).toBe(51500);expect(at(a,2059).nancyG).toBe(100000);
   expect(at(a,2061).normCash).toBe(0);expect(at(a,2061).nancyG).toBe(100000);expect(at(a,2062).nancyG).toBe(0);
   const b=analyze({normStopAge:68,normLateIncome:50000,normLateGrowth:0});expect(at(b,2060).normCash).toBeGreaterThan(50000);expect(at(b,2061).normCash).toBe(50000);
-  expect(at(a,2059).fiNancyOverhead).toBe(p.nancyPracticeOverhead);expect(at(a,2059).tax).toBeGreaterThan(at(analyze(),2059).tax);
+  expect(at(a,2059).fiNancyOverhead).toBe(p.nancyPracticeOverhead);expect(at(a,2059).tax).toBeGreaterThan(at(analyze({nancyBirthYear:1993}),2059).tax);
  });
  it('includes SS federal tax but excludes SS from payroll and NY/NJ tax',()=>{
   const zero={...p,pretax401k:0,pretaxBenefits:0,_normW2:0,_nancyW2:0,_nancySE:0,_retirementIncome:100000};
@@ -103,7 +103,7 @@ describe('Social Security and later earnings use the shared financial engine',()
  });
  it('adds Medicare once from 65 and applies B/D IRMAA to lagged MAGI',()=>{
   const c=F.config(p,{}),base=S.medicare(p,c,2058,0),high=S.medicare(p,c,2058,1e8);
-  expect(base.people).toBe(2);expect(base.base).toBeCloseTo(202.9*12*2*(1+c.healthInflation)**32);expect(high.irmaa).toBeGreaterThan(0);
+  expect(base.people).toBe(1);expect(base.base).toBeCloseTo(202.9*12*(1+c.healthInflation)**32);expect(S.medicare(p,c,2063,0).people).toBe(2);expect(high.irmaa).toBeGreaterThan(0);
   expect(S.medicare(p,c,2057,1e8).incremental).toBe(0);
   const credit=S.medicare(p,{...c,medicareCredit:1e8},2058,0);expect(credit.incremental).toBe(0);
   const a=analyze();expect(at(a,2058).fiMedicare).toBeGreaterThan(0);
