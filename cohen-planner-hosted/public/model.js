@@ -692,7 +692,7 @@ function run(p,rets,compiledGrants){
     if(fiOn&&!privateUnlocked&&yr>=fi.privateLiquidityYear){
       privateUnlocked=true;
       privateTradable=otherAssets*fi.privateLiquidityPct;
-      privateTradableBasis=privateTradable*fi.privateBasisPct;
+      privateTradableBasis=otherAssetsStart*fi.privateLiquidityPct*fi.privateBasisPct;
     }
     const k401Opening=k401;
     const nk=kids.filter(k=>yr>=k).length;
