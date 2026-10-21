@@ -665,6 +665,9 @@ function run(p,rets,compiledGrants){
   // solvent right up until the money is needed.
   const otherAssetsStart=Math.max(0,Number(p.otherAssets??0)||0);
   let liq=p.startingLiquid,k401=p.k401Start??210000,otherAssets=otherAssetsStart,tT=0,tC=0,tTx=0,tS=0;
+   // FI-only: public/otherwise saleable private investments remain in their own pool
+   // until actually sold. This avoids treating a future listing as cash or taxing it twice.
+   let privateUnlocked=false,privateTradable=0,privateTradableBasis=0;
   // Non-mortgage debt. Absent means zero, and an explicit zero must survive — same
   // nullish-coalescing reason as k401Start above. See the note at `nw` for why this is a
   // flat offset and not a drawdown on liq.
@@ -686,6 +689,11 @@ function run(p,rets,compiledGrants){
   const simplePrices=p.stripeSimplified&&p.stripeGrants?.referenceTender>0?grantEngine.pricePath(p,sy-1,ey+1):null;
   for(let yr=sy;yr<=ey;yr++){
     const fiOn=!!fi&&yr>=fi.transitionYear;
+    if(fiOn&&!privateUnlocked&&yr>=fi.privateLiquidityYear){
+      privateUnlocked=true;
+      privateTradable=otherAssets*fi.privateLiquidityPct;
+      privateTradableBasis=privateTradable*fi.privateBasisPct;
+    }
     const k401Opening=k401;
     const nk=kids.filter(k=>yr>=k).length;
     const yIdx=yr-sy;
@@ -943,6 +951,7 @@ function run(p,rets,compiledGrants){
     // Same return, and the same stub-year fraction: a position observed in September has only
     // the remaining months of growth ahead of it, exactly like the diversified pool.
     otherAssets=otherAssets>0?otherAssets*(1+ret):otherAssets;
+    if(privateUnlocked)privateTradable=privateTradable>0?privateTradable*(1+ret):privateTradable;
     const openingLiquid=liq+(fiOn&&yr===fi.transitionYear?Math.max(0,p._fiExtraCapital||0):0);
     const liqGrown=openingLiquid>0?openingLiquid*(1+ret):openingLiquid;
     // The waterfall trades the AFTER-TAX grant: withheld shares never reach the account, so
@@ -989,6 +998,7 @@ function run(p,rets,compiledGrants){
     // Diversified pool first, but only down to the reserve floor; then Stripe holdings;
     // and only if those are exhausted too does the pool go below the floor.
     let txS=0,sold=0,holdSold=0,holdTax=0,netFlow=netCash+stripeSold-newSaleTax,fiSSGainTax=0,fiRealizedGains=0,fiFinalTax=tax;
+    let privateSold=0,privateGainTax=0,privateRealizedGains=0;
     if(fiOn||socialSecurity>0){
       const operating=surp-dpThis+stripeSold-newSaleTax;
       const floor=fi.reserve*(1+(p.expenseInflation||0))**(yr-sy),half=1+ret/2;
@@ -997,15 +1007,28 @@ function run(p,rets,compiledGrants){
       // Solve sales, distributions and the federal tax on SS together. Capital gains can
       // make more SS taxable; those extra taxes must themselves be funded.
       for(let j=0;j<40;j++){
-        const gains=sold*gp+heldGain+(newSaleTaxRate>0?Math.max(0,stripeSold-vestBasis*stripeSold/Math.max(1,vestAvail)):0);
+        const gains=sold*gp+heldGain+privateRealizedGains+(newSaleTaxRate>0?Math.max(0,stripeSold-vestBasis*stripeSold/Math.max(1,vestAvail)):0);
         const extraTax=ordinaryTax(fiRetDraw,gains).allInTax-tax.allInTax;
-        const need=-(operating+fiRetDraw-extraTax+sold-txS+holdSold-holdTax);
+        const need=-(operating+fiRetDraw-extraTax+sold-txS+holdSold-holdTax+privateSold-privateGainTax);
         if(need<=.01)break;
         const room=Math.max(0,(liqGrown-floor)/half-sold);
         if(room>.01){const take=Math.min(room,need/(1-td));sold+=take;txS+=take*td;continue;}
         if(lotsValue(lots)>.01&&saleBudget-stripeSold-holdSold>.01){
           const raised=sellLots(lots,need,gainsRate,Math.max(0,saleBudget-stripeSold-holdSold));
           holdSold+=raised.gross;holdTax+=raised.tax;heldGain+=raised.gain;if(raised.gross>.01)continue;
+        }
+        // Tradable private investments can fund deficits once the user-assumed
+        // liquidity date arrives. Sell only what is needed; preserve unrealized basis.
+        if(privateTradable>.01){
+          const basisRatio=Math.min(1,privateTradableBasis/privateTradable);
+          const drag=(1-basisRatio)*gainsRate;
+          const gross=Math.min(privateTradable,need/Math.max(.01,1-drag));
+          const basisUsed=gross*basisRatio;
+          privateTradable-=gross;privateTradableBasis=Math.max(0,privateTradableBasis-basisUsed);
+          otherAssets=Math.max(0,otherAssets-gross);
+          privateSold+=gross;privateRealizedGains+=gross-basisUsed;
+          privateGainTax+=(gross-basisUsed)*gainsRate;
+          continue;
         }
         if(retAge>=60&&k401>.01){
           const before=ordinaryTax(fiRetDraw,gains).allInTax;
@@ -1017,10 +1040,10 @@ function run(p,rets,compiledGrants){
         if(below>.01){const take=Math.min(below,need/(1-td));sold+=take;txS+=take*td;continue;}
         break; // Actual assets exhausted. The remaining deficit is unfunded, never a sale.
       }
-      fiRealizedGains=sold*gp+heldGain+(newSaleTaxRate>0?Math.max(0,stripeSold-vestBasis*stripeSold/Math.max(1,vestAvail)):0);
+      fiRealizedGains=sold*gp+heldGain+privateRealizedGains+(newSaleTaxRate>0?Math.max(0,stripeSold-vestBasis*stripeSold/Math.max(1,vestAvail)):0);
       const withGains=ordinaryTax(0,fiRealizedGains);fiFinalTax=ordinaryTax(fiRetDraw,fiRealizedGains);
       fiSSGainTax=withGains.allInTax-tax.allInTax;fiRetTax=fiFinalTax.allInTax-withGains.allInTax;
-      netFlow=operating+fiRetDraw-fiRetTax-fiSSGainTax+holdSold-holdTax-txS;
+      netFlow=operating+fiRetDraw-fiRetTax-fiSSGainTax+holdSold-holdTax+privateSold-privateGainTax-txS;
     }else
     if(netFlow<0){
       let need=-netFlow; // net cash still required after the vest
@@ -1085,7 +1108,7 @@ function run(p,rets,compiledGrants){
     R.push({yr,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
-      fiActive:fiOn,fiHealth:Math.round(fiHealth),fiNormSE:Math.round(fiNormSE),fiNancyOverhead:Math.round(nancyOH),fiRetDraw:Math.round(fiRetDraw),fiRetTax:Math.round(fiRetTax),fiSSGainTax:Math.round(fiSSGainTax),fiSSNorm:Math.round(ss?ss.norm:0),fiSSNancy:Math.round(ss?ss.nancy:0),fiSS:Math.round(socialSecurity),fiSSWithheld:Math.round(ss?ss.withheld:0),fiSSTaxable:fiFinalTax.taxableSS,fiMagi:fiFinalTax.agi+(fiOn?fiRealizedGains:sold*gp+(gainsRate>0?(holdTax+newSaleTax)/gainsRate:0)),fiMedicare:Math.round(medicare.incremental),fiIRMAA:Math.round(medicare.irmaa),fiSSProvisional:fiOn?!(fi.normSSMonthly>0&&fi.nancySSMonthly>0):false,fiNetEarned:fiOn?calcTax(grossIncome,{...taxP,_socialSecurity:0},yr,ctcKids).net:tax.net,fiFundingNeed:fiOn?Math.max(0,-surpFull)+dpThis:0,fiContribution:fiOn?fiContrib:0,fiEmployerMatch:fiOn?0:p.company401kMatch,
+      fiActive:fiOn,fiHealth:Math.round(fiHealth),fiNormSE:Math.round(fiNormSE),fiNancyOverhead:Math.round(nancyOH),fiRetDraw:Math.round(fiRetDraw),fiRetTax:Math.round(fiRetTax),fiSSGainTax:Math.round(fiSSGainTax),fiPrivateSold:Math.round(privateSold),fiPrivateGainTax:Math.round(privateGainTax),fiPrivateRealizedGains:Math.round(privateRealizedGains),fiPrivateTradable:Math.round(privateTradable),fiPrivateBasis:Math.round(privateTradableBasis),fiPrivateUnlocked:privateUnlocked,fiSSNorm:Math.round(ss?ss.norm:0),fiSSNancy:Math.round(ss?ss.nancy:0),fiSS:Math.round(socialSecurity),fiSSWithheld:Math.round(ss?ss.withheld:0),fiSSTaxable:fiFinalTax.taxableSS,fiMagi:fiFinalTax.agi+(fiOn?fiRealizedGains:sold*gp+(gainsRate>0?(holdTax+newSaleTax)/gainsRate:0)),fiMedicare:Math.round(medicare.incremental),fiIRMAA:Math.round(medicare.irmaa),fiSSProvisional:fiOn?!(fi.normSSMonthly>0&&fi.nancySSMonthly>0):false,fiNetEarned:fiOn?calcTax(grossIncome,{...taxP,_socialSecurity:0},yr,ctcKids).net:tax.net,fiFundingNeed:fiOn?Math.max(0,-surpFull)+dpThis:0,fiContribution:fiOn?fiContrib:0,fiEmployerMatch:fiOn?0:p.company401kMatch,
       liv:Math.round(liv),livParts,livFullParts,livSrc,livAdds:Object.fromEntries(Object.entries(itemAdds.lines).map(([k,v])=>[k,Math.round(v)])),cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
       // The WHOLE calendar year, stub or not. On a full year each equals its counterpart.
       // A table comparing a quarter of one year against all of the next answers nothing, so
