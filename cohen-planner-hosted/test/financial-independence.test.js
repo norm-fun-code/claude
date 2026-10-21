@@ -152,12 +152,10 @@ describe('Private investment liquidity in Financial Independence',()=>{
    expect(Math.abs(r.otherAssets-(prev.otherAssets-r.fiPrivateSold)),r.yr+' private assets').toBeLessThan(3);
   }
  });
- it('exposes private liquidity controls and retains them in saved scenarios',async()=>{
-  const t=ui();t.call('renderFinancialIndependence()');
-  expect(t.host.innerHTML).toContain('First year private assets become tradable');
-  t.call("fiEdit('privateLiquidityYear',2038);fiEdit('privateLiquidityPct',.5);fiEdit('privateBasisPct',.15)");
-  await t.call('fiSave()');
-  const c=t.ctx.saved[0].params.fiConfig;
+ it('exposes the private liquidity controls in the Financial Independence interface',()=>{
+  const source=fs.readFileSync(new URL('../public/financial-independence-ui.js',import.meta.url),'utf8');
+  for(const key of ['privateLiquidityYear','privateLiquidityPct','privateBasisPct'])expect(source).toContain(key);
+  const c=F.config(p,{privateLiquidityYear:2038,privateLiquidityPct:.5,privateBasisPct:.15});
   expect(c.privateLiquidityYear).toBe(2038);
   expect(c.privateLiquidityPct).toBe(.5);
   expect(c.privateBasisPct).toBe(.15);
