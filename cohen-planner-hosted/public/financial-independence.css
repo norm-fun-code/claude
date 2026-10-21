@@ -48,3 +48,7 @@
 .fi-simple-more>span{display:none}
 }
 @media(max-width:400px){.fi-simple-inputs{grid-template-columns:1fr}.fi-simple-inputs label:nth-child(4){grid-column:auto}.fi-decision h3{font-size:25px}}
+
+.fi-simple-actions{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-top:18px}
+.fi-simple-actions span{font-size:11px;color:#6c795f}
+.fi-simple-actions button{border-radius:10px;min-height:42px}
