@@ -310,6 +310,19 @@ app.post('/api/logout', (req, res) => {
 
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ ok: true }));
+// Whether the database answers, and if not, the error CODE only — never the message, the connection
+// string or any data. /health stays database-free so a database outage does not stop the app serving
+// the login page; this one says why everything behind the login is failing.
+app.get('/health/db', async (req, res) => {
+  const started = Date.now();
+  try {
+    await Promise.race([db.query('SELECT 1'), new Promise((_, r) => setTimeout(() => r(Object.assign(new Error('timeout'), { code: 'TIMEOUT' })), 8000))]);
+    res.set('Cache-Control', 'no-store').json({ db: 'ok', ms: Date.now() - started, pool: { total: db.pool.totalCount, idle: db.pool.idleCount, waiting: db.pool.waitingCount } });
+  } catch (e) {
+    res.status(503).set('Cache-Control', 'no-store').json({ db: 'error', code: String(e.code || e.errno || 'unknown').slice(0, 40), ms: Date.now() - started,
+      pool: { total: db.pool.totalCount, idle: db.pool.idleCount, waiting: db.pool.waitingCount } });
+  }
+});
 
 // ── Protected static files ────────────────────────────────────────────────────
 app.get('/', requireAuth, (req, res) => {
@@ -2268,6 +2281,16 @@ const PORT = process.env.PORT || 3000;
 // a container restarts and reconnects) took the WHOLE app offline. Combined with Railway's
 // restartPolicyMaxRetries:3, three unlucky blips in a row would leave the app down until
 // someone manually redeployed, even though the DB may have already recovered by then.
+// Last-resort error handler: log the code, tell the browser plainly, and never print a stack.
+app.use((err, req, res, next) => {
+  console.error('Request failed:', req.method, req.path, err && (err.code || ''), err && err.message);
+  if (res.headersSent) return next(err);
+  const dbDown = err && (/^(ECONN|ENOTFOUND|ETIMEDOUT|57P|53300|28P01|3D000|08)/.test(String(err.code || '')));
+  const msg = dbDown ? 'The planner cannot reach its database right now. Your data is safe; try again shortly.' : 'Something went wrong loading the planner.';
+  if (req.path.startsWith('/api/')) return res.status(dbDown ? 503 : 500).json({ error: msg });
+  res.status(dbDown ? 503 : 500).type('text/plain').send(msg);
+});
+
 app.listen(PORT, () => console.log(`Cohen Planner running on port ${PORT}`));
 
 async function initSchemaWithRetry(retries = 5, delayMs = 3000) {
@@ -2286,5 +2309,18 @@ async function initSchemaWithRetry(retries = 5, delayMs = 3000) {
     }
   }
   console.error('DB schema init failed after all retries — server is running but DB-dependent routes will error until this is resolved.');
+  return false;
 }
-initSchemaWithRetry();
+// Logged once at boot so the database credential can be checked without printing it. See db.js.
+console.log('DB credential in use:', JSON.stringify(db.credentialFingerprint()));
+// After the first five attempts, keep trying once a minute. Fixing the database (a password, a restart)
+// then brings the app back by itself, without waiting for someone to restart this service.
+(async function keepTrying() {
+  if (await initSchemaWithRetry() !== false) return;
+  const timer = setInterval(async () => {
+    try { await db.query('SELECT 1'); } catch (e) { console.error('DB still unavailable:', e.code || '', e.message); return; }
+    clearInterval(timer);
+    console.log('DB reachable again; finishing schema init.');
+    await initSchemaWithRetry(3, 3000);
+  }, 60000);
+})();

@@ -6,6 +6,10 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
+// An idle connection the database drops (a restart, a failover, a network blip) emits 'error' on the
+// pool. Unhandled, that event exits the whole process. Logged instead: the pool replaces the client on
+// the next query, and the request that needed it fails on its own.
+pool.on('error', err => console.error('Postgres idle client error:', err.code || '', err.message));
 
 async function initSchema() {
   await pool.query(`
@@ -178,4 +182,18 @@ async function initSchema() {
 
 }
 
-module.exports = { pool, query: (...args) => pool.query(...args), initSchema };
+// Which credential this process is using, without revealing it: user, host, port and database in the
+// clear, and the password only as the first 8 hex characters of its SHA-256. The same fingerprint can be
+// computed inside the Postgres container (printf %s "$POSTGRES_PASSWORD" | sha256sum | cut -c1-8), so the
+// two sides can be compared without either password ever being printed.
+function credentialFingerprint(url = process.env.DATABASE_URL) {
+  if (!url) return { configured: false };
+  try {
+    const u = new URL(url);
+    const pw = decodeURIComponent(u.password || '');
+    return { configured: true, user: decodeURIComponent(u.username || ''), host: u.hostname, port: u.port || '5432',
+      database: u.pathname.replace(/^\//, ''), passwordFingerprint: pw ? require('node:crypto').createHash('sha256').update(pw).digest('hex').slice(0, 8) : '(none)' };
+  } catch { return { configured: true, unparseable: true }; }
+}
+
+module.exports = { pool, query: (...args) => pool.query(...args), initSchema, credentialFingerprint };
