@@ -2301,6 +2301,8 @@ async function initSchemaWithRetry(retries = 5, delayMs = 3000) {
       // household, housing, account or other scenario assumptions.
       const compUpdate = await require('./audited-comp-scenarios').applyAuditedCompScenarios(db.pool);
       console.log('DB schema ready; audited comp scenarios:', JSON.stringify(compUpdate));
+      const promotionUpdate=await require('./promotion-comp-scenarios').applyPromotionCompScenarios(db.pool);
+      console.log('Promotion compensation update:',JSON.stringify(promotionUpdate));
       monarchJobs.start();
       return;
     } catch (err) {
