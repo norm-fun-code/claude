@@ -1301,3 +1301,18 @@ body:has(.demo-banner) .bd-bar{top:46px}
 .bd-grid td.zero{color:var(--t3)}.bd-grid td.neg{color:#c0392b}
 .bd-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:4px;vertical-align:middle;background:#8b5cf6}
 .bd-dot.pin{background:#f59e0b}
+
+/* Monarch MCP check (verification only) */
+.mcp-card p{font-size:12px;color:var(--t2);line-height:1.55;margin:8px 0}
+.mcp-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.mcp-report{border-top:1px solid var(--bd);margin-top:10px;padding-top:6px}
+.mcp-head{font-weight:600;color:var(--tx)!important}
+.mcp-sec{padding:8px 0;border-bottom:1px solid var(--bd);font-size:12px}
+.mcp-sec>span{font-weight:600;color:var(--tx);margin-right:8px}
+.mcp-sec small{display:block;color:var(--t3);margin-top:3px}
+.mcp-pill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px}
+.mcp-pill.ok{background:color-mix(in srgb,var(--gain) 16%,transparent);color:var(--gain)}
+.mcp-pill.bad{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.mcp-sub{margin-top:4px}.mcp-sub summary{cursor:pointer;color:var(--t2);font-size:11.5px}
+.mcp-sub ul{margin:4px 0 0 16px;padding:0;font-size:11.5px;color:var(--t2);font-variant-numeric:tabular-nums}
+.mcp-err{color:var(--warn)!important}.mcp-note{font-size:11px!important;color:var(--t3)!important}

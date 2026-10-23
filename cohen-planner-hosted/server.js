@@ -797,6 +797,103 @@ app.get('/api/wealth/history', requireAuth, async (req, res) => {
   } catch (err) { res.status(503).json({ error: err.message }); }
 });
 
+// ── Monarch MCP: connect and verify, not yet a source ─────────────────────
+// Monarch's official MCP is read here only to check it against the current sync. Nothing below writes to
+// the ledger, the balances or the holdings, and nothing else in the planner reads from it. Switching over
+// is a separate decision, made once the comparison comes back clean on real data.
+const monarchMcp = require('./monarch-mcp').createMonarchMcp({ db });
+const MCPC = require('./monarch-mcp-compare');
+const mcpRedirect = req => `${req.protocol}://${req.get('host')}/api/monarch-mcp/callback`;
+app.get('/api/monarch-mcp/connect', requireAuth, async (req, res) => {
+  try {
+    const { url, pending } = await monarchMcp.startConnect(mcpRedirect(req));
+    req.session.monarchMcp = pending;
+    res.redirect(url);
+  } catch (e) { res.redirect('/?monarch_mcp_error=' + encodeURIComponent(e.message)); }
+});
+app.get('/api/monarch-mcp/callback', requireAuth, async (req, res) => {
+  const pending = req.session.monarchMcp; delete req.session.monarchMcp;
+  if (req.query.error) return res.redirect('/?monarch_mcp_error=' + encodeURIComponent(String(req.query.error)));
+  try { await monarchMcp.finishConnect({ code: req.query.code, state: req.query.state }, pending); res.redirect('/?monarch_mcp=connected'); }
+  catch (e) { res.redirect('/?monarch_mcp_error=' + encodeURIComponent(e.message)); }
+});
+app.get('/api/monarch-mcp/status', requireAuth, async (req, res) => {
+  try { res.set('Cache-Control', 'no-store').json({ ...(await monarchMcp.status()), role: 'verification only' }); }
+  catch (e) { res.status(503).json({ connected: false, error: e.message }); }
+});
+app.post('/api/monarch-mcp/disconnect', requireAuth, async (req, res) => {
+  try { await monarchMcp.disconnect(); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Tool names and the arguments each takes — no financial data — so a mismatch can be diagnosed.
+app.get('/api/monarch-mcp/tools', requireAuth, async (req, res) => {
+  try {
+    const tools = await monarchMcp.tools(true);
+    res.json({ tools: tools.map(t => ({ name: t.name, args: Object.keys(t.inputSchema?.properties || {}),
+      required: t.inputSchema?.required || [], readOnly: !!t.annotations?.readOnlyHint })) });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+// Pages through the MCP's transactions for a window, when the tool can page. A tool that cannot page and
+// returns a full page is reported as incomplete rather than compared as if it were everything.
+async function mcpTransactions(startDate, endDate) {
+  const tools = await monarchMcp.tools();
+  const t = tools.find(x => x.name === 'GetTransactions') || tools.find(x => /^get.*transactions$/i.test(x.name));
+  if (!t) throw new Error("Monarch's MCP has no transactions tool.");
+  const plan = monarchMcp.buildArgs(t, { startDate, endDate, limit: 100, offset: 0 });
+  if (plan.missing.includes('startDate') || plan.missing.includes('endDate')) throw new Error('The MCP transactions tool takes no date range, so a window cannot be compared.');
+  const canPage = !plan.missing.includes('offset') && !plan.missing.includes('limit');
+  const rows = []; let total = null;
+  for (let offset = 0, i = 0; i < 200; i++) {
+    const want = canPage ? { startDate, endDate, limit: 100, offset } : { startDate, endDate };
+    const { payload } = await monarchMcp.call(t.name, want);
+    const page = MCPC.transactionsFrom(payload);
+    if (total == null) total = page.total;
+    rows.push(...page.rows);
+    if (!canPage) break;
+    if (page.rows.length < 100 || (total != null && rows.length >= total)) break;
+    offset += page.rows.length;
+  }
+  const incomplete = total != null ? rows.length < total : false;
+  return { rows, total, canPage, incomplete, tool: t.name };
+}
+app.post('/api/monarch-mcp/compare', requireAuth, async (req, res) => {
+  const days = Math.min(400, Math.max(7, Number(req.body?.days) || 90));
+  const endDate = PlannerTime.day(), start = new Date(endDate + 'T12:00:00Z'); start.setUTCDate(start.getUTCDate() - days);
+  const startDate = start.toISOString().slice(0, 10);
+  const report = { at: new Date().toISOString(), window: { startDate, endDate, days }, sections: {} };
+  const section = async (key, fn) => { try { report.sections[key] = await fn(); } catch (e) { report.sections[key] = { ok: false, error: e.message }; } };
+  const first = async (names, re) => { const t = await monarchMcp.tools(); return (t.find(x => names.includes(x.name)) || t.find(x => re.test(x.name)))?.name; };
+  await section('accounts', async () => {
+    const snap = await monarchLive.getSnapshot();
+    const mine = [...(snap.accounts || []).map(a => ({ id: String(a.id), name: a.displayName, balance: a.currentBalance })),
+      ...(snap.missingAccounts || []).map(a => ({ id: String(a.id), name: a.displayName, balance: null }))];
+    const name = await first(['GetAccounts'], /^get.*accounts$/i);
+    if (!name) throw new Error("Monarch's MCP has no accounts tool.");
+    return MCPC.compareAccounts(mine, MCPC.accountsFrom((await monarchMcp.call(name)).payload));
+  });
+  await section('categories', async () => {
+    const name = await first(['GetCategories'], /^get.*categories$/i);
+    if (!name) throw new Error("Monarch's MCP has no categories tool.");
+    return MCPC.compareCategories((await monarchSync.localCategories()).map(c => ({ id: String(c.id), name: c.name })),
+      MCPC.categoriesFrom((await monarchMcp.call(name)).payload));
+  });
+  await section('transactions', async () => {
+    const theirs = await mcpTransactions(startDate, endDate);
+    const mine = (await monarchSync.ledger({ startDate, endDate })).map(t => ({ ...t, id: String(t.id), categoryId: t.categoryId == null ? null : String(t.categoryId) }));
+    const out = MCPC.compareTransactions(mine, theirs.rows, { startDate, endDate });
+    if (theirs.incomplete) { out.ok = false; out.note = `The MCP reported ${theirs.total} transactions but returned ${theirs.rows.length}.`; }
+    if (!theirs.canPage) out.note = (out.note ? out.note + ' ' : '') + 'The MCP transactions tool does not page, so long windows may be cut short.';
+    return out;
+  });
+  await section('holdings', async () => {
+    const name = await first(['GetInvestments', 'GetHoldings'], /^get.*(investments|holdings)$/i);
+    if (!name) throw new Error("Monarch's MCP has no holdings tool.");
+    const mine = (await readHoldings('1M')).holdings || [];
+    return MCPC.compareHoldings(mine, MCPC.holdingsFrom((await monarchMcp.call(name)).payload));
+  });
+  report.ok = Object.values(report.sections).every(s => s.ok);
+  res.set('Cache-Control', 'no-store').json(report);
+});
+
 app.get('/api/monarch-diagnostics', requireAuth, async (req, res) => {
   try {
     res.json(await monarchLive.diagnose());

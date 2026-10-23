@@ -3308,6 +3308,66 @@ async function runIncremental(){
 // its own and "running well above what is normal for you" means something immediately.
 // Underneath it, two bars on a shared scale: this month against the range this household
 // actually occupies by this day of the month.
+// ── Monarch MCP check ───────────────────────────────────────────────────────
+// Monarch's official MCP, connected for comparison only. The planner keeps reading from its current
+// sync; this panel says whether the MCP returns the same accounts, categories, transactions and holdings,
+// so a switch is made on evidence rather than hope.
+let _mcpStatus=null,_mcpReport=null,_mcpBusy=false;
+async function mcpLoadStatus(){
+  try{const r=await fetch('/api/monarch-mcp/status',{cache:'no-store'});_mcpStatus=r.ok?await r.json():{connected:false,error:'Status unavailable'};}
+  catch{_mcpStatus={connected:false,error:'Status unavailable'};}
+  render();
+}
+async function mcpCompare(days){
+  if(_mcpBusy)return;_mcpBusy=true;render();
+  try{const r=await fetch('/api/monarch-mcp/compare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({days})});
+    _mcpReport=await r.json();}
+  catch(e){_mcpReport={ok:false,sections:{},error:e.message};}
+  _mcpBusy=false;render();
+}
+async function mcpDisconnect(){
+  if(!showConfirm('Disconnect the Monarch MCP check? The planner’s current sync is not affected.'))return;
+  await fetch('/api/monarch-mcp/disconnect',{method:'POST'});_mcpReport=null;mcpLoadStatus();
+}
+function mcpCheckHtml(){
+  if(_demoMode)return '';
+  if(_mcpStatus===null){mcpLoadStatus();return '';}
+  const e=advEscape,M=v=>v==null?'—':UI.money(v,{exact:true}),st=_mcpStatus;
+  const pill=ok=>`<b class="mcp-pill ${ok?'ok':'bad'}">${ok?'Matches':'Differs'}</b>`;
+  const list=(t,rows,f)=>rows&&rows.length?`<details class="mcp-sub"><summary>${t}</summary><ul>${rows.map(r=>`<li>${f(r)}</li>`).join('')}</ul></details>`:'';
+  const tx=t=>`${e(t.date)} · ${e(t.merchant||'—')} · ${M(t.amount)}${t.category?` · ${e(t.category)}`:''}`;
+  let body='';
+  if(!st.connected){
+    body=`<p>${st.needsReconnect?'Monarch access expired. Reconnect to keep checking.':'Not connected. Signing in gives the planner read-only access through Monarch’s official MCP, used only for this comparison.'}</p>
+      <a class="ui-btn" href="/api/monarch-mcp/connect">${st.needsReconnect?'Reconnect':'Connect'} Monarch MCP</a>`;
+  }else{
+    body=`<p>Connected${st.connectedAt?` since ${e(PlannerTime.formatTime(st.connectedAt))}`:''}. The planner still reads from its current sync; this only compares.</p>
+      <div class="mcp-actions"><button class="ui-btn" ${_mcpBusy?'disabled':''} onclick="mcpCompare(90)">${_mcpBusy?'Comparing…':'Compare last 90 days'}</button>
+      <button class="ui-btn" ${_mcpBusy?'disabled':''} onclick="mcpCompare(365)">Compare last 12 months</button>
+      <button class="bd-link" onclick="mcpDisconnect()">Disconnect</button></div>`;
+    const r=_mcpReport;
+    if(r){
+      const S=r.sections||{},err=x=>x&&x.error?`<p class="mcp-err">${e(x.error)}</p>`:'';
+      const a=S.accounts,c=S.categories,t=S.transactions,h=S.holdings;
+      body+=`<div class="mcp-report"><p class="mcp-head">${r.ok?'Everything matches.':'Differences found.'} ${r.window?`Window ${e(r.window.startDate)} to ${e(r.window.endDate)}.`:''}</p>${r.error?`<p class="mcp-err">${e(r.error)}</p>`:''}
+        <div class="mcp-sec"><span>Accounts & balances</span>${a?pill(a.ok):''}${err(a)}${a&&!a.error?`<small>${a.matched} of ${a.planner} matched · MCP lists ${a.mcp}</small>
+          ${list(`${a.balanceDiffs.length} balance${a.balanceDiffs.length===1?'':'s'} differ`,a.balanceDiffs,x=>`${e(x.name)}: planner ${M(x.planner)}, MCP ${M(x.mcp)}`)}
+          ${list(`${a.onlyPlanner.length} only in the planner`,a.onlyPlanner,x=>e(x))}${list(`${a.onlyMcp.length} only in the MCP`,a.onlyMcp,x=>e(x))}`:''}</div>
+        <div class="mcp-sec"><span>Categories</span>${c?pill(c.ok):''}${err(c)}${c&&!c.error?`<small>planner ${c.planner} · MCP ${c.mcp}</small>
+          ${list(`${c.renamed.length} named differently`,c.renamed,x=>`${e(x.planner)} → ${e(x.mcp)}`)}${list(`${c.onlyPlanner.length} only in the planner`,c.onlyPlanner,x=>e(x))}${list(`${c.onlyMcp.length} only in the MCP`,c.onlyMcp,x=>e(x))}`:''}</div>
+        <div class="mcp-sec"><span>Transactions</span>${t?pill(t.ok):''}${err(t)}${t&&!t.error?`<small>${t.matched} of ${t.planner} matched by id · MCP returned ${t.mcp}</small>${t.note?`<p class="mcp-err">${e(t.note)}</p>`:''}
+          ${list(`${t.onlyPlannerCount} only in the planner`,t.onlyPlanner,tx)}${list(`${t.onlyMcpCount} only in the MCP`,t.onlyMcp,tx)}
+          ${list(`${t.amountDiffsCount} amount${t.amountDiffsCount===1?'':'s'} differ`,t.amountDiffs,x=>`${tx(x)} → MCP ${M(x.mcp)}`)}
+          ${list(`${t.dateDiffsCount} date${t.dateDiffsCount===1?'':'s'} differ`,t.dateDiffs,x=>`${tx(x)} → MCP ${e(x.mcp)}`)}
+          ${list(`${t.categoryDiffsCount} categor${t.categoryDiffsCount===1?'y differs':'ies differ'}`,t.categoryDiffs,x=>`${tx(x)} → MCP ${e(x.mcp)}`)}
+          ${list('Month totals',t.months,x=>`${e(x.month)}: planner ${M(x.planner)}, MCP ${M(x.mcp)}${Math.abs(x.diff)>=0.01?` (<b>${M(x.diff)}</b>)`:''}`)}`:''}</div>
+        <div class="mcp-sec"><span>Holdings</span>${h?pill(h.ok):''}${err(h)}${h&&!h.error?`<small>planner ${h.planner} positions, ${M(h.plannerTotal)} · MCP ${h.mcp} positions, ${M(h.mcpTotal)}</small>`:''}</div>
+        <p class="mcp-note">Recent pending transactions and categories you changed in the planner can differ for good reason. Holdings are compared on total value, within half a percent, since prices move during the day.</p>
+      </div>`;
+    }
+  }
+  return `<div class="glass-card mcp-card" style="margin-top:12px;padding:14px 16px"><div style="font-size:11px;font-weight:700;color:var(--tx)">Monarch MCP check · not yet a source</div>${st.lastError?`<p class="mcp-err">${e(st.lastError)}</p>`:''}${body}</div>`;
+}
 function paceCard(p,pt){
   // Total spending leads, as it does in Monarch: it is the figure that has to square with income.
   // Discretionary sits beneath as the part of it you steer. With no total figure (an older server),
@@ -4486,7 +4546,7 @@ function renderSpendingTab(R,P){
 
   // Everything about where the numbers came from, in one place that is out of the way.
   h+=`<details class="cp-card spend-details spend-data"><summary>Data &amp; import · ${nTx.toLocaleString()} transactions${st.lastSyncAt?` · synced ${PlannerTime.formatTime(st.lastSyncAt)}`:''}</summary>
-    <div style="margin-top:12px">${syncCard}</div><p>Automatic daily Monarch refresh · Eastern time${st.automatic?.lastSuccessAt?` · last complete refresh ${advEscape(PlannerTime.formatTime(st.automatic.lastSuccessAt))}`:''}${st.automatic?.lastError?` · ${advEscape(st.automatic.lastError)}`:''}</p>${classificationDetails}${ledgerHtml}</details>`;
+    <div style="margin-top:12px">${syncCard}</div>${mcpCheckHtml()}<p>Automatic daily Monarch refresh · Eastern time${st.automatic?.lastSuccessAt?` · last complete refresh ${advEscape(PlannerTime.formatTime(st.automatic.lastSuccessAt))}`:''}${st.automatic?.lastError?` · ${advEscape(st.automatic.lastError)}`:''}</p>${classificationDetails}${ledgerHtml}</details>`;
 
   h+=`</div>`;
   ca.innerHTML=h;
@@ -7263,6 +7323,8 @@ loadAdvisorState();
 (()=>{
   const p=new URLSearchParams(window.location.search);
   if(p.has('monarch_connected')){showToast('✓ Monarch connected!','green');history.replaceState({},'','/');setTimeout(syncMonarch,500);}
+  if(p.has('monarch_mcp')){showToast('✓ Monarch MCP connected. Compare it under Spending → Data & import.','green');history.replaceState({},'','/');_mcpStatus=null;}
+  if(p.has('monarch_mcp_error')){showToast('Monarch MCP: '+p.get('monarch_mcp_error'),'red');history.replaceState({},'','/');}
   if(p.has('monarch_error')){showToast('Monarch error: '+p.get('monarch_error'),'red');history.replaceState({},'','/');}
 })();
 loadSnapshots().then(()=>{loadFromServer()});
