@@ -67,4 +67,50 @@ async function applyPromotionCompScenarios(pool){
   }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}
   finally{client.release();}
 }
-module.exports={UPDATE_ID,PROMOTIONS,schedule,patchComp,applyPromotionCompScenarios};
+// The working plan and its saved "live plan" snapshot can outlive a case
+// migration (including an autosave from a phone that was already open).
+// Repair ONLY an exact old audited compensation schedule, preserving all other
+// fields and any genuinely edited compensation schedule.
+function legacyCase(params){
+  if(!params)return null;
+  const {DATA}=require('./audited-comp-scenarios');
+  const start=Number(params.planStartYear||2026);
+  for(const key of Object.keys(PROMOTIONS)){
+    let count=0,match=true;
+    for(const [year,cash,stock] of DATA[key]){
+      if(year<2027||year<start)continue;
+      const i=year-start;
+      const c=i<11?params['normCashY'+i]:params.stripeManualLater?.[year]?.cash;
+      const s=i<11?params['normStockY'+i]:params.stripeManualLater?.[year]?.stock;
+      if(c==null&&s==null)continue;
+      count++;
+      if(c!==cash*1000||s!==stock*1000){match=false;break;}
+    }
+    if(match&&count>=5)return key;
+  }
+  return null;
+}
+function repairState(state){
+  const out={...state};let changed=false;
+  for(const field of ['P','livePlanParams']){
+    const key=legacyCase(state[field]);
+    if(key){out[field]=patchComp(state[field],key);changed=true;}
+  }
+  return {state:out,changed};
+}
+async function repairLegacyCompSnapshots(pool){
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[UPDATE_ID+'-snapshots']);
+    const row=(await client.query('SELECT state FROM planner_state WHERE id=1 FOR UPDATE')).rows[0];
+    const fixed=repairState(row?.state||{});
+    if(fixed.changed){
+      await client.query('UPDATE planner_state SET state=$1,updated_at=NOW() WHERE id=1',[JSON.stringify(fixed.state)]);
+      await client.query('INSERT INTO planner_data_updates(id,details) VALUES($1,$2) ON CONFLICT(id) DO NOTHING',[UPDATE_ID+'-snapshots',JSON.stringify({previousState:row.state})]);
+    }
+    await client.query('COMMIT');return {repaired:fixed.changed};
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}
+  finally{client.release();}
+}
+module.exports={UPDATE_ID,PROMOTIONS,schedule,patchComp,applyPromotionCompScenarios,legacyCase,repairState,repairLegacyCompSnapshots};

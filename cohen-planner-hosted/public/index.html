@@ -731,6 +731,9 @@ async function loadFromServer(){
         return{id:s.id,name:s.name,color:s.color||COLORS[i%COLORS.length],params,results};
       });
       if(loadedCaseId!==undefined)activeScenarioIdx=scenarios.findIndex(s=>s.id===loadedCaseId);
+      // A clean selected case is authoritative. P is only a working snapshot
+      // and may predate a server-side update to that case's assumptions.
+      if(activeScenarioIdx>=0&&!scenarioDirty)P=scenarioPlan(scenarios[activeScenarioIdx].params);
       console.log('Loaded',scenarios.length,'scenarios from server');
     }else{
       showToast('⚠️ Could not load scenarios (HTTP '+scRes.status+')','red');

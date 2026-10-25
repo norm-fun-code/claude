@@ -1,5 +1,6 @@
 import {describe,it,expect} from 'vitest';
 import Comp from '../promotion-comp-scenarios.js';
+import Audited from '../audited-comp-scenarios.js';
 describe('approved March promotion compensation',()=>{
  it('keeps 2027 bonuses at L3 Exceeds and pays ten months at L4 salary',()=>{
   for(const key of ['base','optimistic'])expect(Comp.schedule(key)[0]).toEqual({year:2027,cash:271250,stock:175000});
@@ -25,5 +26,24 @@ describe('approved March promotion compensation',()=>{
  });
  it('rejects Conservative rather than silently changing it',()=>{
   expect(()=>Comp.patchComp({},'conservative')).toThrow();
+ });
+ it('repairs an old working/live snapshot without touching dates or household settings',()=>{
+  const old=Audited.patchComp({planStartYear:2026,observedOn:'2026-10-25',homePrice:2000000},'base');
+  const source={P:old,livePlanParams:old,scenarioDirty:true,fiWhatIf:{transitionYear:2034}};
+  const result=Comp.repairState(source);
+  expect(result.changed).toBe(true);
+  expect(result.state.P.normCashY1).toBe(271250);
+  expect(result.state.livePlanParams.normStockY3).toBe(182500);
+  expect(result.state.P.observedOn).toBe('2026-10-25');
+  expect(result.state.P.homePrice).toBe(2000000);
+  expect(result.state.fiWhatIf).toEqual(source.fiWhatIf);
+  expect(result.state.scenarioDirty).toBe(true);
+  expect(source.P.normCashY1).toBe(264000);
+  expect(Comp.repairState(result.state).changed).toBe(false);
+ });
+ it('leaves custom compensation and Conservative snapshots alone',()=>{
+  const old=Audited.patchComp({},'base');old.normCashY4+=1000;
+  expect(Comp.repairState({P:old}).changed).toBe(false);
+  expect(Comp.repairState({P:Audited.patchComp({},'conservative')}).changed).toBe(false);
  });
 });

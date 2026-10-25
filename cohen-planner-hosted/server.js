@@ -404,7 +404,8 @@ for (const asset of ['planner-time.js', 'stripe-grants.js', 'stripe-grants-ui.js
 app.get('/api/planner-state', requireAuth, async (req, res) => {
   try {
     const result = await db.query('SELECT state FROM planner_state WHERE id = 1');
-    res.json(result.rows[0] || { state: {} });
+    const saved=result.rows[0]||{state:{}};
+    res.json({...saved,state:require('./promotion-comp-scenarios').repairState(saved.state).state});
   } catch (err) {
     console.error('GET planner-state error:', err);
     res.status(500).json({ error: 'Database error' });
@@ -413,7 +414,7 @@ app.get('/api/planner-state', requireAuth, async (req, res) => {
 
 app.put('/api/planner-state', requireAuth, async (req, res) => {
   try {
-    const { state } = req.body;
+    const state=require('./promotion-comp-scenarios').repairState(req.body.state||{}).state;
     await db.query(
       `INSERT INTO planner_state (id, state) VALUES (1, $1)
        ON CONFLICT (id) DO UPDATE SET state = $1, updated_at = NOW()`,
@@ -2303,6 +2304,7 @@ async function initSchemaWithRetry(retries = 5, delayMs = 3000) {
       console.log('DB schema ready; audited comp scenarios:', JSON.stringify(compUpdate));
       const promotionUpdate=await require('./promotion-comp-scenarios').applyPromotionCompScenarios(db.pool);
       console.log('Promotion compensation update:',JSON.stringify(promotionUpdate));
+      console.log('Compensation snapshot repair:',JSON.stringify(await require('./promotion-comp-scenarios').repairLegacyCompSnapshots(db.pool)));
       monarchJobs.start();
       return;
     } catch (err) {
