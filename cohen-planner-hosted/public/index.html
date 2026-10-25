@@ -2243,7 +2243,7 @@ function render(){
       const stub=r.stubFrac!=null&&r.stubFrac<1;
       const open=_expOpenYears.has(r.yr);
       return `<tr style="background:${bg}">`+
-        `<td style="font-weight:700;color:var(--tx);white-space:nowrap">${r.yr}${stub?` <span style="color:var(--a);font-weight:600" title="These figures cover the whole of ${r.yr}. The plan opened partway through it, so the closing balances grow from only the ${Math.round(r.stubFrac*100)}% after that date — the earlier months are already in your opening balances.">opened mid-yr</span>`:''}</td>`+
+        `<td class="yr-cell">${r.yr}${stub?`<small class="yr-note" title="These figures cover the whole of ${r.yr}. The plan opened partway through it, so the closing balances grow from only the ${Math.round(r.stubFrac*100)}% after that date — the earlier months are already in your opening balances.">opened mid-yr</small>`:''}</td>`+
         `<td style="color:var(--b)">${fmt(r.normCash)}</td>`+
         `<td style="color:var(--link)">${dash(r.normStock)}</td>`+
         `<td style="font-weight:600" title="Cash + stock — the W-2 figure taxes are computed on">${fmt(r.normG)}</td>`+

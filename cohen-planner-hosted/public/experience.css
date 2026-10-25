@@ -420,6 +420,9 @@ body,body.home-view{background:radial-gradient(ellipse at 75% -20%,#2c2749 0,tra
   .adv-orb::before { border-color:#829575; }
   #main tbody tr:nth-child(even) { background:#edf0e5!important; }
   #main tbody tr:hover,#main tbody tr:hover td { background:#e0e7d7!important; }
+  #main .polish-year-table tbody tr:nth-child(even) td.yr-cell { background:#edf0e5!important; }
+  #main .polish-year-table tbody tr:hover td.yr-cell { background:#e0e7d7!important; }
+  #main .polish-year-table thead th:first-child { background:#e7eadf!important; }
   #main tbody th { color:#203b2c; background:transparent; }
   #main table thead th { background:#e7eadf!important; color:#50634b; }
   #main td[style*="color:var(--accent)"] { color:#365c43!important; }

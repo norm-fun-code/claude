@@ -760,6 +760,14 @@
 .polish-year-table th{position:sticky;top:0;z-index:2;white-space:nowrap}
 .polish-year-table td:first-child,.polish-year-table th:first-child{position:sticky;left:0;background:var(--s1)!important;z-index:1}
 .polish-year-table th:first-child{z-index:3}
+/* The frozen Year column. It has to be opaque or the columns scrolling under it show through, and the
+   theme's blanket "#main tbody td{background:transparent!important}" outranks a class selector, so this
+   one carries the id too. Narrow and left-aligned, with the mid-year note on its own small line, so the
+   frozen strip is just wide enough for the year rather than a quarter of a phone screen. */
+#main .polish-year-table tbody td.yr-cell,#main .polish-year-table thead th:first-child{background:var(--s1)!important;text-align:left;
+  box-shadow:inset -1px 0 0 var(--bd)}
+#main .polish-year-table td.yr-cell{font-weight:700;color:var(--tx);white-space:nowrap;min-width:52px;padding-right:14px}
+.polish-year-table .yr-note{display:block;white-space:normal;max-width:48px;font-size:10px;font-weight:600;color:var(--a);line-height:1.2;margin-top:1px}
 .polish-import{display:inline-flex;gap:8px;align-items:center;color:var(--t2);font-size:13px}
 .polish-import select{border:1px solid var(--bd);border-radius:6px;padding:7px;min-height:36px}
 body[data-view] #chartArea{min-width:0}
