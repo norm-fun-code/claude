@@ -112,10 +112,10 @@
     if (!seg || seg.kind === 'model') return null;
     const infl = ((Number(P.expenseInflation) || 0) * 100).toFixed(1).replace(/\.0$/, '');
     if (seg.kind === 'pct' && M.commonHousehold(P) && category !== EMERGENCY)
-      return `${(seg.value * 100).toFixed(1).replace(/\.0$/, '')}% of the shared reference ${seg.basis === 'gross' ? 'gross' : 'net'} income schedule`;
+      return `${(seg.value * 100).toFixed(1).replace(/\.0$/, '')}% of the shared reference ${seg.basis === 'gross' ? 'gross income' : 'take-home'} schedule`;
     if (seg.kind === 'pct')
-      return `${(seg.value * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.basis === 'gross' ? 'gross' : 'net'} income, every year`;
-    const sized = seg.sized ? `${(seg.sized.pct * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.sized.basis === 'gross' ? 'gross' : 'net'} income in ${seg.from}, then ` : '';
+      return `${(seg.value * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.basis === 'gross' ? 'gross income' : 'take-home'}, every year`;
+    const sized = seg.sized ? `${(seg.sized.pct * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.sized.basis === 'gross' ? 'gross income' : 'take-home'} in ${seg.from}, then ` : '';
     return `${sized}${fmt(seg.value)} in ${seg.from}, +${infl}% a year`;
   }
 
@@ -396,8 +396,8 @@
     if (o.type === 'item') return `${o.label || 'Plan item'}: ${fmt(o.amount)}${o.from === o.to ? ' once' : ' a year'}${o.grow && o.from !== o.to ? ', growing with inflation' : ''}`;
     const seg = o.seg, basis = seg.basis === 'gross' ? 'gross' : 'net';
     if (seg.kind === 'model') return "back to the model's figure";
-    if (seg.kind === 'pct') return `${(seg.value * 100).toFixed(1).replace(/\.0$/, '')}% of ${basis} income, every year`;
-    const sized = seg.sized ? ` (sized from ${(seg.sized.pct * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.sized.basis === 'gross' ? 'gross' : 'net'} income)` : '';
+    if (seg.kind === 'pct') return `${(seg.value * 100).toFixed(1).replace(/\.0$/, '')}% of ${basis === 'gross' ? 'gross income' : 'take-home'}, every year`;
+    const sized = seg.sized ? ` (sized from ${(seg.sized.pct * 100).toFixed(1).replace(/\.0$/, '')}% of ${seg.sized.basis === 'gross' ? 'gross income' : 'take-home'})` : '';
     return `${fmt(seg.value)} a year in ${seg.from}, then rising with inflation${sized}`;
   }
 
@@ -419,10 +419,10 @@
     const group = key => BUCKETS.find(b => b.key === key).lines;
     const extra = Object.keys(liv).filter(k => bucketOf(k) === 'discretionary' && !group('discretionary').includes(k));
     const fixed = spend(group('fixed')) / net, disc = (spend(group('discretionary')) + spend(extra)) / net;
-    if (fixed > 0.60) out.fixed = { status: 'high', text: `Fixed costs are ${pc(fixed)} of net income, above the usual 50–60%. Less room to adjust when something changes.` };
-    else if (fixed < 0.35) out.fixed = { status: 'low', text: `Fixed costs are only ${pc(fixed)} of net income, below the usual 50–60%. Worth checking nothing is missing.` };
-    if (disc > 0.35) out.discretionary = { status: 'high', text: `Discretionary spending is ${pc(disc)} of net income, above the usual 20–35%.` };
-    else if (disc < 0.15) out.discretionary = { status: 'low', text: `Discretionary spending is only ${pc(disc)} of net income, below the usual 20–35%. Lean, or some lines are under-budgeted.` };
+    if (fixed > 0.60) out.fixed = { status: 'high', text: `Fixed costs are ${pc(fixed)} of take-home, above the usual 50–60%. Less room to adjust when something changes.` };
+    else if (fixed < 0.35) out.fixed = { status: 'low', text: `Fixed costs are only ${pc(fixed)} of take-home, below the usual 50–60%. Worth checking nothing is missing.` };
+    if (disc > 0.35) out.discretionary = { status: 'high', text: `Discretionary spending is ${pc(disc)} of take-home, above the usual 20–35%.` };
+    else if (disc < 0.15) out.discretionary = { status: 'low', text: `Discretionary spending is only ${pc(disc)} of take-home, below the usual 20–35%. Lean, or some lines are under-budgeted.` };
     // Housing against what lenders look at: its share of gross income.
     if (gross > 0 && r.hFull / gross > 0.28)
       out.housing = { status: 'high', text: `Housing is ${pc(r.hFull / gross)} of gross income (${usd(r.hFull / 12)} a month), above the 28% lenders usually look for.` };
@@ -432,7 +432,7 @@
     if (a && a.deficit > 0) out.bottom = { status: 'draw', text: `${year} spends ${usd(a.deficit)} more than it takes in, met by selling Stripe shares and drawing on the brokerage.${planned}` };
     else if (a && a.excess / net < 0.10) {
       const kept = a.excess / net;
-      out.investing = { status: 'low', text: `Only ${pc(kept)} of net income is left to save and invest, below the usual 10% or more.${planned}` };
+      out.investing = { status: 'low', text: `Only ${pc(kept)} of take-home is left to save and invest, below the usual 10% or more.${planned}` };
     }
     if (a && a.reserveMonths != null && a.reserveMonths < 3)
       out.saving = { status: 'low', text: `The ${usd(a.reserveFloor)} reserve floor covers only ${a.reserveMonths} months of fixed costs; the usual guidance is 3–6 months.` };

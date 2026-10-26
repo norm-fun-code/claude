@@ -1781,7 +1781,7 @@ function expDetailRow(r,span,stub){
   // choice, so "groceries are 4% of take-home" is the comparison that means something. Gross is a
   // click away, and the setting is shared with the look-ahead card so the two always agree.
   const gross=_planShareBasis==='gross',den=gross?r.gross:r.netTC;
-  const basisWord=gross?'gross income':'net income';
+  const basisWord=gross?'gross income':'take-home';
   const share=v=>den>0&&v?`${(v/den*100).toFixed(1)}%`:'';
   const mo=v=>v?`${fmtF(Math.round(v/12))}/mo`:'';
   const part=(label,v,note,cls)=>`<div class="exp-part${cls?' '+cls:''}"><span${note?` title="${advEscape(note)}"`:''}>${label}</span><strong${v?'':' class="exp-zero"'}>${v?fmt(v):'—'}</strong>${share(v)?`<small class="exp-share" title="Share of ${basisWord}">${share(v)}</small>`:''}${v?`<small class="exp-mo">${mo(v)}</small>`:''}</div>`;
@@ -1813,7 +1813,7 @@ function expDetailRow(r,span,stub){
   };
   const basisChip=(b,l)=>{const on=b==='gross'?gross:!gross;return `<button type="button" class="spend-scope-chip${on?' is-on':''}" aria-pressed="${on}" onclick="planShareBasis('${b}')">${l}</button>`};
   return `<tr class="exp-detail"><td colspan="${span}"><div class="exp-detail-in">
-    <div class="exp-basis"><span>Show each as a share of</span><div class="spend-scope" role="group" aria-label="Share of">${basisChip('net','Net income')}${basisChip('gross','Gross income')}</div></div>
+    <div class="exp-basis"><span>Show each as a share of</span><div class="spend-scope" role="group" aria-label="Share of">${basisChip('net','Take-home')}${basisChip('gross','Gross income')}</div></div>
     <div class="exp-parts">
       ${part('Housing',r.hFull,'Rent, or mortgage + property tax + insurance + maintenance once the home is bought')}
       ${part('Living',livTotal,'Everyday spending — opened out below, including each child\'s share')}
@@ -3586,7 +3586,7 @@ function planShareSet(y){_planShareYear=Number(y);render()}
 function planShareStep(d,first,last){_planShareYear=Math.min(last,Math.max(first,(_planShareYear??first)+d));render()}
 function planShareBasis(b){_planShareBasis=b;render()}
 function lensMode(m){_lensMode=m;render()}
-const _lensWord={spend:'of spending',net:'of net income',gross:'of gross income'};
+const _lensWord={spend:'of spending',net:'of take-home',gross:'of gross income'};
 const _lensPct=x=>x>=0.1?(x*100).toFixed(0)+'%':(x*100).toFixed(1)+'%';
 function _lensRow(name,value,sh,basis,max,color,extra){
   const others=['spend','net','gross'].filter(b=>b!==basis&&sh[b]!=null);
@@ -3616,7 +3616,7 @@ function renderIncomeLens(R,actual){
     const max=Math.max(...list.map(l=>share(l.net)[basis]),1e-9);
     body=`<div class="cl-list">${list.map(l=>_lensRow(l.name,l.net,share(l.net),basis,max,null,{muted:l.muted,perMonth:l.perMonth})).join('')}</div>`;
     headline=haveIncome
-      ?`Over this period you spent <strong>${fmt(closedTotal)}</strong> (<strong>${fmtF(Math.round(perMonthAll))}</strong> a month) — <strong>${_lensPct(closedTotal/inc.net)}</strong> of net income, <strong>${_lensPct(closedTotal/inc.gross)}</strong> of gross.`
+      ?`Over this period you spent <strong>${fmt(closedTotal)}</strong> (<strong>${fmtF(Math.round(perMonthAll))}</strong> a month) — <strong>${_lensPct(closedTotal/inc.net)}</strong> of take-home, <strong>${_lensPct(closedTotal/inc.gross)}</strong> of gross.`
       :`Over this period you spent <strong>${fmt(closedTotal)}</strong> (<strong>${fmtF(Math.round(perMonthAll))}</strong> a month). Income shares need the plan to cover these months.`;
     foot=haveIncome
       ?'Net of refunds. Income is the plan\'s figure for the same months, not your deposits — the ledger records what landed in accounts, not gross pay or Stripe vests. Net is after tax, 401(k) and benefits.'
@@ -3673,7 +3673,7 @@ function renderIncomeLens(R,actual){
   return `<section class="cp-card cl-card">
     <div class="ps-head"><div><h3>Categories against your income</h3><p>${mode==='actual'?(actualExtra.scopeNote||'What your records show'):'What the plan says a year will cost'}</p></div>
       <div class="ps-controls"><div class="spend-scope" role="group" aria-label="Actual or plan">${modeChip('actual','Actual')}${modeChip('plan','Plan')}</div>${ctl}</div></div>
-    <div class="cl-measure"><span>Measured against</span><div class="spend-scope" role="group" aria-label="Measure each line as a share of">${chip('net','Net income')}${chip('gross','Gross income')}${chip('spend','Spending')}</div></div>
+    <div class="cl-measure"><span>Measured against</span><div class="spend-scope" role="group" aria-label="Measure each line as a share of">${chip('net','Take-home')}${chip('gross','Gross income')}${chip('spend','Spending')}</div></div>
     ${mode==='actual'&&actualExtra.scopeControl?`<div class="cl-measure"><span>Period</span>${actualExtra.scopeControl}</div>`:''}
     <p class="ps-headline">${headline}</p>
     ${body}
@@ -3771,7 +3771,7 @@ function budgetGridHtml(R,yr,allOv,series,mo){
   };
   const hasOne=R.some(r=>r.eAdj);
   return `<div class="bd-grid-wrap" tabindex="0" aria-label="Every budget line, every year"><table class="bd-grid"><thead>${head}</thead><tbody>
-    ${row('Net income',r=>r.netTC,{cls:'inc'})}
+    ${row('Take-home',r=>r.netTC,{cls:'inc'})}
     ${group('fixed','Fixed costs')}${group('discretionary','Discretionary')}
     ${hasOne?row('One-off costs',r=>r.eAdj,{cls:'ln'}):''}
     ${row('Total spending',r=>r.totEFull,{cls:'tot'})}
@@ -4070,7 +4070,7 @@ function renderBudgetTab(R,P){
   const unitWord=mo?'/mo':'/yr',per=v=>mo?Math.round(v/12):Math.round(v);
   const amt=v=>fmtF(per(v)),amtShort=v=>fmt(per(v));
   const basis=budgetBasisKey(),den=basis==='gross'?row.gross:row.netTC,pct=v=>den>0?_lensPct(v/den):'—';
-  const basisWord=basis==='gross'?'gross':'net';
+  const basisWord=basis==='gross'?'gross income':'take-home';
   const modelRow=run(B.modelPlan(P)).R.find(r=>r.yr===yr);
   const f=B.funding(row),ph=B.phases(R);
   // Actual pace, for the year we are in and only then: a past or future year has no records to hold up
@@ -4085,7 +4085,7 @@ function renderBudgetTab(R,P){
 
   // Net/Gross, the inflation rate and the section chips. Built once and used twice: in the pinned bar on a
   // wide screen, and above the lines on a phone, where the pinned bar has to stay slim.
-  const toolsInner=`<div class="spend-scope" role="group" aria-label="Share of">${chip(basis==='net',"planShareBasis('net')",'Net')}${chip(basis==='gross',"planShareBasis('gross')",'Gross')}</div>${expInflControl()}@@JUMP@@`;
+  const toolsInner=`<div class="spend-scope" role="group" aria-label="Share of">${chip(basis==='net',"planShareBasis('net')",'Take-home')}${chip(basis==='gross',"planShareBasis('gross')",'Gross')}</div>${expInflControl()}@@JUMP@@`;
   // ── Header ──
   const yrOptions=R.map(r=>`<option value="${r.yr}"${r.yr===yr?' selected':''}>${r.yr}</option>`).join('');
   let h=`<div class="bd">
@@ -4149,7 +4149,7 @@ function renderBudgetTab(R,P){
   const seg=[['cash','Cash pay',f.fromCash],['stock','Stripe stock',f.fromStock],['savings','Savings',f.fromSavings],['left','Left over',f.leftover]].filter(s=>s[2]>0);
   const ftot=seg.reduce((t,s)=>t+s[2],0)||1;
   const fundHtml=`<section class="cp-card bd-fund"><div class="ps-head"><div><h3>Where ${yr}'s spending comes from</h3>
-    <p>${fmt(f.spend)} of spending against ${fmt(f.cash+f.stock)} of net income (${fmt(f.cash)} cash pay${f.stock?` + ${fmt(f.stock)} Stripe stock`:''}).</p></div></div>
+    <p>${fmt(f.spend)} of spending against ${fmt(f.cash+f.stock)} of take-home (${fmt(f.cash)} cash pay${f.stock?` + ${fmt(f.stock)} Stripe stock`:''}).</p></div></div>
     <div class="ps-bar" role="img" aria-label="${yr} spending is paid ${seg.map(s=>s[1]+' '+fmt(s[2])).join(', ')}">${seg.map(s=>`<span style="width:${(s[2]/ftot*100).toFixed(2)}%;background:${BD_COLOR[s[0]]}" title="${s[1]} · ${fmt(s[2])}"></span>`).join('')}</div>
     <div class="cl-legend">${seg.map(s=>`<span><i style="background:${BD_COLOR[s[0]]}"></i>${s[1]} <b>${fmt(s[2])}</b></span>`).join('')}</div>
     ${f.stockShare>=0.05?`<p class="bd-warn">${_lensPct(f.stockShare)} of ${yr}'s spending depends on Stripe stock you sell. It is the plan — but it is the part that moves with the share price.</p>`:''}
@@ -4236,7 +4236,7 @@ function renderBudgetTab(R,P){
     return `<div class="bd-row" data-line="${k}" data-planned="${value}" style="--tier:${o.color}">
       <div class="cl-top"><span class="cl-name">${advEscape(label)}${tag}</span>${inputHtml}</div>
       <div class="cl-track"><i style="width:${Math.max(1.5,(o.max>0?value/o.max:0)*100).toFixed(1)}%"></i></div>
-      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord} income</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord} income"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord} income" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord} income</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${actualStrip(k,value,o.readonly)}${changeChips(k)}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${k==='housing'?budgetRentHtml(yr,row,unitWord,mo):''}${k==='housing'?embedControls('home').replace(/<div class="sr"><div class="sh"><span class="sl">Monthly rent<\/span>[\s\S]*?<\/div><input[^>]*><\/div>/,''):embedControls(k)}</div>`:''}`;
+      <div class="cl-sub">${o.readonly?`<span>${pct(value)} of ${basisWord}</span>`:`<span class="bd-pctwrap" title="Type a percentage to set this line as a share of ${basisWord}"><input class="bd-pct" type="text" inputmode="decimal" value="${den>0?(value/den*100).toFixed(1):'0.0'}" aria-label="${advEscape(label)} as a percent of ${basisWord}" onfocus="this.select()" onchange="budgetCommit('${k}',this.value.replace(/[^0-9.]/g,'')+'%')" onkeydown="if(event.key==='Enter')this.blur()">% of ${basisWord}</span>`}${why?`<span class="bd-why">${advEscape(why)}</span>`:''}${differs?`<span class="bd-model">model says ${amt(m)}${unitWord}</span>`:''}${added?`<span class="bd-model">includes ${amt(added)}${unitWord} from plan items</span>`:''}<span class="bd-actions${o.readonly?' show':''}">${actions}</span></div>${actualStrip(k,value,o.readonly)}${changeChips(k)}</div>${open?`<div class="bd-panel" style="--tier:${o.color}"><div class="bd-panel-head"><strong>${advEscape(label)}${k==='housing'?' — how the home is set':''}</strong><button type="button" class="bd-link" onclick="budgetEdit('${k}')">Close</button></div>${k==='housing'?budgetRentHtml(yr,row,unitWord,mo):''}${k==='housing'?embedControls('home').replace(/<div class="sr"><div class="sh"><span class="sl">Monthly rent<\/span>[\s\S]*?<\/div><input[^>]*><\/div>/,''):embedControls(k)}</div>`:''}`;
   };
   const living=row.livFullParts||{};
   const c=IS.compute(row,'net');
@@ -4258,7 +4258,7 @@ function renderBudgetTab(R,P){
     const mx=Math.max(1,...ks.map(k=>living[k]),...(key==='fixed'?fixedExtra.map(x=>x[2]):[]));
     return (key==='fixed'?fixedExtra.filter(x=>x[2]>0||x[0]==='housing').map(x=>lineOf(x[0],x[1],x[2],'model',true,mx)):[]).join('')+ks.map(k=>lineOf(k,LIV_LABEL[k]||k,living[k],(row.livSrc||{})[k]||'model',false,mx)).join('');
   };
-  const computedRow=(key,label,v,sub)=>`<div class="bd-row" style="--tier:${RM_COLOR[key]}"><div class="cl-top"><span class="cl-name">${label}</span><strong class="bd-fixed">${amt(v)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span>${pct(v)} of ${basisWord} income</span><span class="bd-why">${sub}</span></div></div>`;
+  const computedRow=(key,label,v,sub)=>`<div class="bd-row" style="--tier:${RM_COLOR[key]}"><div class="cl-top"><span class="cl-name">${label}</span><strong class="bd-fixed">${amt(v)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span>${pct(v)} of ${basisWord}</span><span class="bd-why">${sub}</span></div></div>`;
   const savingRows=()=>{
     const sv=alloc.saving,have=B.emergencySaved(P,R,yr);
     const bits=[];
@@ -4281,7 +4281,7 @@ function renderBudgetTab(R,P){
       :`$0 because ${yr}'s surplus is vested Stripe shares, which the plan keeps as shares. The brokerage only gets cash left after savings and shares.`;
     return computedRow('investing','Fidelity brokerage',alloc.investing.portfolio,why0)
       +computedRow('investing','Stripe shares kept',alloc.investing.stripe,'Vested shares the plan does not need to sell')
-      +`<p class="spend-caption" style="margin:4px 0 0">Plus <strong style="color:var(--t2)">${fmtF(Math.round(alloc.investing.k401/(mo?12:1)))}${unitWord}</strong> into your 401(k), taken from pay before it counts as net income.</p>`;
+      +`<p class="spend-caption" style="margin:4px 0 0">Plus <strong style="color:var(--t2)">${fmtF(Math.round(alloc.investing.k401/(mo?12:1)))}${unitWord}</strong> into your 401(k), taken from pay before it counts as take-home.</p>`;
   };
   const groupTotal=key=>key==='saving'?alloc.saving.total:key==='investing'?alloc.investing.total
     :B.BUCKETS.find(x=>x.key===key).lines.reduce((t,k)=>t+(k==='housing'?row.hFull:k==='childcare'?row.ccFull:k==='tuition'?row.tuFull:(living[k]||0)),0)
@@ -4298,11 +4298,11 @@ function renderBudgetTab(R,P){
   const inRow=(label,v,go,goLabel,sub)=>`<div class="bd-row" style="--tier:${RM_COLOR.income}"><div class="cl-top"><span class="cl-name">${label}</span><strong class="bd-fixed">${amt(v)}<small>${unitWord}</small></strong></div><div class="cl-sub"><span>${gross>0?_lensPct(v/gross):'—'} of gross income</span>${sub?`<span class="bd-why">${sub}</span>`:''}${go?`<span class="bd-actions show"><button type="button" class="bd-link" onclick="budgetGo('${go}')">${goLabel} →</button></span>`:''}</div></div>`;
   const subRow=(label,v,sign,strong)=>`<div class="bd-pl${strong?' strong':''}"><span>${label}</span><span>${sign}${amt(Math.abs(v))}<small>${unitWord}</small></span></div>`;
   const incomeSec=`<div class="cl-group bd-sec" id="bd-g-income" style="--tier:${RM_COLOR.income}"><div class="cl-ghead"><span><i></i>Income</span><span class="cl-gtot">${amtShort(net)}<small>${unitWord} net</small></span></div>
-      <p class="cl-gnote">What ${yr} brings in, and what comes off before you can spend it. Net income is what the groups below divide up.</p>
+      <p class="cl-gnote">What ${yr} brings in, and what comes off before you can spend it. Take-home is what the groups below divide up.</p>
       <div class="cl-list">${inRow('Norm — cash pay',row.normCash,'comp','Compensation')}${inRow('Norm — Stripe stock at vest',row.normStock,'comp','Compensation','Counted at its vest value; you cannot spend it until you sell it')}${inRow('Nancy',row.nancyG,'nancy','Inputs')}</div>
-      <div class="bd-pls">${subRow('Gross income',gross,'',true)}${subRow('Taxes',taxes,'−')}${subRow('401(k), benefits & practice costs',pretaxCosts,'−')}${subRow('Net income',net,'',true)}</div></div>`;
+      <div class="bd-pls">${subRow('Gross income',gross,'',true)}${subRow('Taxes',taxes,'−')}${subRow('401(k), benefits & practice costs',pretaxCosts,'−')}${subRow('Take-home',net,'',true)}</div></div>`;
   const spendTotal=Math.round(row.totEFull),left=net-spendTotal;
-  const bottomLine=`<div class="bd-bottom"><div><span>Net income</span><strong>${amt(net)}<small>${unitWord}</small></strong></div><b>−</b><div><span>Spending</span><strong>${amt(spendTotal)}<small>${unitWord}</small></strong></div><b>=</b><div class="${left<0?'neg':'pos'}"><span>${left<0?'Drawn from savings & Stripe':'Left over'}</span><strong>${left<0?'−':''}${amt(Math.abs(left))}<small>${unitWord}</small></strong></div><p>${left<0?'That is the shortfall the plan covers by selling Stripe shares and drawing on the brokerage.':'Savings and investments below divide this.'}</p>${callout(gc.bottom)}</div>`;
+  const bottomLine=`<div class="bd-bottom"><div><span>Take-home</span><strong>${amt(net)}<small>${unitWord}</small></strong></div><b>−</b><div><span>Spending</span><strong>${amt(spendTotal)}<small>${unitWord}</small></strong></div><b>=</b><div class="${left<0?'neg':'pos'}"><span>${left<0?'Drawn from savings & Stripe':'Left over'}</span><strong>${left<0?'−':''}${amt(Math.abs(left))}<small>${unitWord}</small></strong></div><p>${left<0?'That is the shortfall the plan covers by selling Stripe shares and drawing on the brokerage.':'Savings and investments below divide this.'}</p>${callout(gc.bottom)}</div>`;
   // Income, then the spending groups, then what is left, then what is done with it.
   const groups=incomeSec+bucketParts[0]+bucketParts[1]+bottomLine+bucketParts[2]+bucketParts[3];
   // A way to move between the sections without scrolling for them: each chip is a section, with its
@@ -4324,7 +4324,7 @@ function renderBudgetTab(R,P){
       ${(P.planItems||[]).map((it,i)=>`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
         <label class="bd-sug-amt"><span class="ui-sr">Amount</span><input type="text" inputmode="decimal" value="${fmtF(it.amount)}" aria-label="${advEscape(it.label)} amount" onfocus="this.select()" onchange="budgetItemAmount(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${it.from===it.to?'once':'/yr'}</small></label>
         <button type="button" class="bd-btn" onclick="budgetRemoveItem(${i})" aria-label="Remove ${advEscape(it.label)}">Remove</button></div>`).join('')}</div>`:''}
-    <p class="spend-caption">Net income includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${gridFold}${overTimeHtml}${ledgerFold}${mapFold}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
+    <p class="spend-caption">Take-home includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${gridFold}${overTimeHtml}${ledgerFold}${mapFold}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
 }

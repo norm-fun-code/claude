@@ -122,8 +122,8 @@ describe('turning typing into a rule',()=>{
  it('describes a rule in words',()=>{
   const f=v=>'$'+v;
   expect(B.describe(plan({budgetRules:{misc:[{from:2027,kind:'amount',value:9000}]}}),'misc',2030,f)).toBe('$9000 in 2027, +3% a year');
-  expect(B.describe(plan({budgetRules:{misc:[{from:2027,kind:'pct',value:.04,basis:'net'}]}}),'misc',2030,f)).toBe('4% of net income, every year');
-  expect(B.describe(plan({budgetRules:{misc:[{from:2027,kind:'amount',value:16000,sized:{pct:.04,basis:'net'}}]}}),'misc',2030,f)).toBe('4% of net income in 2027, then $16000 in 2027, +3% a year');
+  expect(B.describe(plan({budgetRules:{misc:[{from:2027,kind:'pct',value:.04,basis:'net'}]}}),'misc',2030,f)).toBe('4% of take-home, every year');
+  expect(B.describe(plan({budgetRules:{misc:[{from:2027,kind:'amount',value:16000,sized:{pct:.04,basis:'net'}}]}}),'misc',2030,f)).toBe('4% of take-home in 2027, then $16000 in 2027, +3% a year');
   expect(B.describe(plan(),'misc',2030,f)).toBe(null);
  });
 });
@@ -394,14 +394,14 @@ describe('the Budget reads like a P&L, and every line can be set as a share of i
  const ui=html.slice(html.indexOf('let _budgetYear='),html.indexOf('function renderSpendingTab('));
  it('starts with income: each source, gross, what comes off, and net — read from the projection',()=>{
   expect(ui).toContain('const incomeSec=');
-  for(const piece of ["inRow('Norm — cash pay',row.normCash","inRow('Norm — Stripe stock at vest',row.normStock","inRow('Nancy',row.nancyG","subRow('Gross income'","subRow('Taxes'","subRow('Net income'"])expect(ui).toContain(piece);
+  for(const piece of ["inRow('Norm — cash pay',row.normCash","inRow('Norm — Stripe stock at vest',row.normStock","inRow('Nancy',row.nancyG","subRow('Gross income'","subRow('Taxes'","subRow('Take-home'"])expect(ui).toContain(piece);
   const r=at(M.run(plan()).R,2031);
   expect(r.normCash+r.normStock+r.nancyG).toBe(r.gross);                       // the three rows add to the gross shown
   expect(r.gross-r.tax-(r.gross-r.tax-r.netTC)).toBe(r.netTC);
  });
  it('orders it income, fixed, discretionary, the bottom line, savings, investments',()=>{
   expect(ui).toContain('const groups=incomeSec+bucketParts[0]+bucketParts[1]+bottomLine+bucketParts[2]+bucketParts[3];');
-  expect(ui).toContain("<span>Net income</span>");expect(ui).toContain('Left over');
+  expect(ui).toContain("<span>Take-home</span>");expect(ui).toContain('Left over');
   expect(ui).toContain("budgetJump('income')");
  });
  it('sends income edits to where income is set',()=>{
@@ -427,7 +427,7 @@ describe('the Budget reads like a P&L, and every line can be set as a share of i
   expect(M.commonHousehold(shared)).toBe(true);
   expect(M.budgetValue(shared,'emergency',2030,income)).toBe(12000);        // 4% of THIS case's net
   expect(M.budgetValue(shared,'dining',2030,income)).toBe(40000);           // spending still uses the shared reference
-  expect(B.describe(shared,'emergency',2030,v=>'$'+v)).toBe('4% of net income, every year');
+  expect(B.describe(shared,'emergency',2030,v=>'$'+v)).toBe('4% of take-home, every year');
  });
  it('keeps calibration checks available without repeating generic judgments on each row',()=>{
   expect(ui).toContain('Suggestions for a family like yours');expect(ui).not.toContain('class="bd-callout ${chk.status}"');
@@ -589,10 +589,10 @@ describe('everything you have changed',()=>{
  });
  it('writes one plain sentence for each kind',()=>{
   const t=o=>B.overrideText(P0,o,f);const o=B.overrides(P0);
-  expect(t(o.find(x=>x.type==='rule'&&x.from===2027))).toBe('5% of net income, every year');
+  expect(t(o.find(x=>x.type==='rule'&&x.from===2027))).toBe('5% of take-home, every year');
   expect(t(o.find(x=>x.type==='rule'&&x.from===2030))).toBe('$20,000 a year in 2030, then rising with inflation');
   expect(t(o.find(x=>x.type==='rule'&&x.from===2040))).toBe("back to the model's figure");
-  expect(t(o.find(x=>x.type==='rule'&&x.category==='emergency'))).toBe('$15,000 a year in 2028, then rising with inflation (sized from 5% of net income)');
+  expect(t(o.find(x=>x.type==='rule'&&x.category==='emergency'))).toBe('$15,000 a year in 2028, then rising with inflation (sized from 5% of take-home)');
   expect(t(o.find(x=>x.type==='pin'&&x.category==='groceries'))).toBe('$30,000 a year, for 2035 only');
   expect(t(o.find(x=>x.type==='item'&&x.label==='Camp'))).toBe('Camp: $8,000 a year, growing with inflation');
   expect(t(o.find(x=>x.type==='item'&&x.label==='Gear'))).toBe('Gear: $6,000 once');
