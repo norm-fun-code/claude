@@ -182,7 +182,7 @@ describe('what the advisor is told, and what the table shows', () => {
   });
 
   it('says the figure opens, since a control nobody notices is not one', () => {
-    expect(html).toContain("const openNote=' · click any Expenses figure to see what makes it up';");
+    expect(html).toContain("const openNote=' · click any Expenses figure to see what makes it up · ");
     expect(html).not.toContain('hover the expenses cell for the full-year cost');
   });
 

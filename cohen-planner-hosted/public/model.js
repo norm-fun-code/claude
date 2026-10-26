@@ -229,7 +229,10 @@ function calcTax(grossIncome,p,yr,numKids){
     allInTax:Math.round(allInTax),incomeTax:Math.round(incomeTax),
     fica:Math.round(Math.max(0,totalFICA)),federal:Math.round(federal),
     njTaxable,njGrossTax:Math.round(njGrossTax),nySourceTax:Math.round(nySourceTax),njCredit:Math.round(njCredit),state:Math.round(stateT),city:Math.round(cityT),effRate,
-    net:Math.round(net),gross:Math.round(grossIncome),agi:Math.round(agi),taxableSS:Math.round(taxableSS),socialSecurity,
+    net:Math.round(net),gross:Math.round(grossIncome),agi:Math.round(agi),
+    // The steps between gross and net, so a table can show them instead of leaving a gap to explain:
+    // pre-tax 401(k) and benefits, practice overhead, and income that is not in gross (retirement draws, Social Security).
+    pretax:Math.round(pretax),overhead:Math.round(overhead),otherIncome:Math.round(retirementIncome+socialSecurity),taxableSS:Math.round(taxableSS),socialSecurity,
     deduction:Math.round(deduction),qbi:Math.round(qbi),saltCap:Math.round(saltCap),
     // What was actually deducted, and what was eligible — reporting only the cap made it
     // impossible to see that the cap was being deducted regardless of taxes paid.
@@ -1107,7 +1110,7 @@ function run(p,rets,compiledGrants){
     const nw=Math.round(liq)+Math.round(stripeEnd)+Math.round(eq)+Math.round(otherAssets)-Math.round(otherDebt);
     R.push({yr,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
-      inc:Math.round(inc),netTC:tax.net,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
+      inc:Math.round(inc),netTC:tax.net,preTax:tax.pretax,bizOverhead:tax.overhead,otherInc:tax.otherIncome,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
       fiActive:fiOn,fiHealth:Math.round(fiHealth),fiNormSE:Math.round(fiNormSE),fiNancyOverhead:Math.round(nancyOH),fiRetDraw:Math.round(fiRetDraw),fiRetTax:Math.round(fiRetTax),fiSSGainTax:Math.round(fiSSGainTax),fiPrivateSold:Math.round(privateSold),fiPrivateGainTax:Math.round(privateGainTax),fiPrivateRealizedGains:Math.round(privateRealizedGains),fiPrivateTradable:Math.round(privateTradable),fiPrivateBasis:Math.round(privateTradableBasis),fiPrivateUnlocked:privateUnlocked,fiSSNorm:Math.round(ss?ss.norm:0),fiSSNancy:Math.round(ss?ss.nancy:0),fiSS:Math.round(socialSecurity),fiSSWithheld:Math.round(ss?ss.withheld:0),fiSSTaxable:fiFinalTax.taxableSS,fiMagi:fiFinalTax.agi+(fiOn?fiRealizedGains:sold*gp+(gainsRate>0?(holdTax+newSaleTax)/gainsRate:0)),fiMedicare:Math.round(medicare.incremental),fiIRMAA:Math.round(medicare.irmaa),fiSSProvisional:fiOn?!(fi.normSSMonthly>0&&fi.nancySSMonthly>0):false,fiNetEarned:fiOn?calcTax(grossIncome,{...taxP,_socialSecurity:0},yr,ctcKids).net:tax.net,fiFundingNeed:fiOn?Math.max(0,-surpFull)+dpThis:0,fiContribution:fiOn?fiContrib:0,fiEmployerMatch:fiOn?0:p.company401kMatch,
       liv:Math.round(liv),livParts,livFullParts,livSrc,livAdds:Object.fromEntries(Object.entries(itemAdds.lines).map(([k,v])=>[k,Math.round(v)])),cc:Math.round(cc),tu:Math.round(tu),eAdj,totE,
       // The WHOLE calendar year, stub or not. On a full year each equals its counterpart.

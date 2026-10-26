@@ -271,7 +271,7 @@ describe('the full-year cost of a stub year', () => {
     expect(html).toContain('${fmt(r.totEFull)}</span><span class="exp-caret">');
     expect(html).toContain('${fmt(r.incFull)}</td>');
     expect(html).toContain('${(r.flowFull>=0?\'+\':\'−\')+fmt(Math.abs(r.flowFull))}');
-    expect(html).toContain("${r.gapFull>0?'−'+fmt(r.gapFull):'—'}");
+    expect(html).toContain("${(r.incFull-r.totEFull>=0?'+':'−')+fmt(Math.abs(r.incFull-r.totEFull))}");
   });
 
   it('marks the stub row for what the stub actually changes: the closing balances', () => {
@@ -281,5 +281,22 @@ describe('the full-year cost of a stub year', () => {
     expect(html).toMatch(/closing balances grow from only the \$\{stubPct\}%/);
     // …and nothing is marked when the plan really does open on 1 January.
     expect(html).toContain("const stubNote=stubRow?");
+  });
+});
+
+describe('the annual table adds up on screen',()=>{
+  const fs2=require('node:fs'),vm2=require('node:vm');
+  const page=fs2.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+  const D2=vm2.runInNewContext('('+page.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
+  const M2=require('../public/model.js');
+  it('gross − tax − pre-tax − overhead (+ other income) is take-home, and take-home − expenses is net income flow',()=>{
+    for(const r of M2.run({...D2,planStartYear:2026,observedOn:null}).R){
+      expect(Math.abs(r.gross+r.otherInc-r.tax-r.preTax-r.bizOverhead-r.netTC)).toBeLessThanOrEqual(2);
+      expect(Math.abs(r.netTC-r.totEFull-r.flowFull)).toBeLessThanOrEqual(1);
+    }
+  });
+  it('shows every step: pre-tax & overhead, take-home, both flows, and cash take-home',()=>{
+    for(const c of ["'Pre-tax & overhead'","'Take-home'","'Net income flow'","'Cash take-home'","'Net cash flow'"])expect(page).toContain(c);
+    expect(page).not.toContain("'Cash gap'");
   });
 });

@@ -767,6 +767,7 @@
 #main .polish-year-table tbody td.yr-cell,#main .polish-year-table thead th:first-child{background:var(--s1)!important;text-align:left;
   box-shadow:inset -1px 0 0 var(--bd)}
 #main .polish-year-table td.yr-cell{font-weight:700;color:var(--tx);white-space:nowrap;min-width:52px;padding-right:14px}
+.polish-year-table th.flow-start,.polish-year-table td.flow-start{border-left:2px solid var(--bd)!important}
 .polish-year-table .yr-note{display:block;white-space:normal;max-width:48px;font-size:10px;font-weight:600;color:var(--a);line-height:1.2;margin-top:1px}
 .polish-import{display:inline-flex;gap:8px;align-items:center;color:var(--t2);font-size:13px}
 .polish-import select{border:1px solid var(--bd);border-radius:6px;padding:7px;min-height:36px}

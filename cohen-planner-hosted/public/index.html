@@ -1050,7 +1050,7 @@ function deflK(v,yr){return Math.round(deflate(v,yr)/1000)}
 // A whole projection row in today's purchasing power: every dollar figure scaled by the same factor,
 // rates and counts left alone. The table and its expense breakdown read this when Real $ is on, so the
 // parts still add to the total — they were all scaled by one factor and rounded the same way.
-const _REAL_KEYS=['normCash','normStock','normG','nancyG','gross','tax','netTC','inc','incFull','totE','totEFull','h','hFull','liv','cc','ccFull','tu','tuFull','eAdj','ptax','flow','flowFull','surp','gap','gapFull','incGap','need','sNew','sSold','sRet','sHold','sGainTax','sAppr','sEnd','sold','txS','liq','eq','nw','netWorth','k401'];
+const _REAL_KEYS=['preTax','bizOverhead','otherInc','normCash','normStock','normG','nancyG','gross','tax','netTC','inc','incFull','totE','totEFull','h','hFull','liv','cc','ccFull','tu','tuFull','eAdj','ptax','flow','flowFull','surp','gap','gapFull','incGap','need','sNew','sSold','sRet','sHold','sGainTax','sAppr','sEnd','sold','txS','liq','eq','nw','netWorth','k401'];
 function deflateRow(r){
   if(!inflationView)return r;
   const o={...r},f=1/Math.pow(1+(P.expenseInflation||.03),r.yr-(P.planStartYear||2026));
@@ -2227,8 +2227,17 @@ function render(){
     // the one column a reader cannot check, and it was also the one the advisor could quote
     // but not break down. Housing, living, childcare and tuition sum to the total exactly.
     // The one-off column appears only when a year actually carries one.
-    const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross','Tax','Eff%','Cash avail','Expenses',
-      'Cash gap','Net flow','Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW ex-retirement'];
+    // Two waterfalls, each adding up on the screen. INCOME FLOW: gross (+ any retirement or Social
+    // Security income) − tax − pre-tax 401(k), benefits and practice overhead = take-home, and take-home −
+    // expenses = net income flow. CASH FLOW: take-home less the vested stock that lands as shares is cash
+    // take-home, and cash take-home − expenses = net cash flow; when that is negative the year is selling
+    // Stripe to cover it. The old table showed tax and take-home with nothing between them, so $36K of
+    // 401(k) and benefits read as money that had gone missing.
+    const hasOther=R.some(r=>(r.otherInc||0)>0);
+    const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross',...(hasOther?['Retirement & SS']:[]),'Tax','Eff%',
+      'Pre-tax & overhead','Take-home','Expenses','Net income flow','Cash take-home','Net cash flow',
+      'Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW ex-retirement'];
+    const FLOW_START=new Set(['Pre-tax & overhead','Cash take-home','Stripe sold']);
     // Every row is a WHOLE calendar year, the first one included. The engine still opens
     // partway through it — the months before the observation date are already in the opening
     // balances and must not be compounded twice — but a table comparing a quarter of 2026
@@ -2237,9 +2246,9 @@ function render(){
     // changes is the year-end BALANCES beside them, and that is what the note now says.
     const stubRow=R.find(r=>r.stubFrac!=null&&r.stubFrac<1);
     const stubPct=stubRow?Math.round(stubRow.stubFrac*100):0;
-    const openNote=' · click any Expenses figure to see what makes it up';
+    const openNote=' · click any Expenses figure to see what makes it up · <strong>Net income flow</strong> = take-home (after tax, 401(k), benefits and overhead; cash and vested stock) − expenses · <strong>Net cash flow</strong> = cash take-home (take-home less vested stock kept as shares) − expenses, so a negative figure is what Stripe sales cover';
     const stubNote=stubRow?` · <strong>${stubRow.yr} is shown as a full year</strong>, like every row. Your plan opened ${advEscape(String(P.observedOn||'').slice(0,10)||'partway through it')}, so that year's closing balances grow from only the ${stubPct}% after that date — the months before it are already inside your opening balances.`:'';
-    ca.innerHTML=`<div class="polish-table-note">Year-end projections · ${inflationView?`<strong>today's dollars</strong> (${P.planStartYear||2026} purchasing power)`:'future dollars'} · scroll for all columns · net worth excludes retirement${openNote}${stubNote}</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r0=>{
+    ca.innerHTML=`<div class="polish-table-note">Year-end projections · ${inflationView?`<strong>today's dollars</strong> (${P.planStartYear||2026} purchasing power)`:'future dollars'} · scroll for all columns · net worth excludes retirement${openNote}${stubNote}</div><div class="tw polish-year-table" tabindex="0" aria-label="Annual projection details"><table><thead><tr>${cols.map(x=>`<th${FLOW_START.has(x)?' class="flow-start"':''}>${x}</th>`).join('')}</tr></thead><tbody>${R.map(r0=>{
       const r=deflateRow(r0);
       const bg=P.housingMode!=='rent'&&r.yr===P.homePurchaseYear?'rgba(191,105,0,.06)':r.tu>150000?'rgba(205,61,100,.04)':'';
       const dash=v=>v>0?fmt(v):'—';
@@ -2252,16 +2261,20 @@ function render(){
         `<td style="font-weight:600" title="Cash + stock — the W-2 figure taxes are computed on">${fmt(r.normG)}</td>`+
         `<td style="color:var(--p)">${fmt(r.nancyG)}</td>`+
         `<td>${fmt(r.gross)}</td>`+
+        (hasOther?`<td title="Retirement draws and Social Security: income that is not pay, so not in gross">${dash(r.otherInc||0)}</td>`:'')+
         `<td style="color:var(--r)">${fmt(r.tax)}</td>`+
         `<td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td>`+
-        `<td style="color:var(--g)">${fmt(r.incFull)}</td>`+
+        `<td class="flow-start" title="401(k) ${fmt(r.preTax||0)} and benefits come out before tax${r.bizOverhead?`; practice overhead ${fmt(r.bizOverhead)}`:''}. The 401(k) part is saved, in retirement accounts, not spent.">${(r.preTax||0)+(r.bizOverhead||0)>0?'−'+fmt((r.preTax||0)+(r.bizOverhead||0)):'—'}</td>`+
+        `<td style="font-weight:600" title="Everything that reaches you after tax, 401(k), benefits and overhead — cash and vested stock together">${fmt(r.netTC)}</td>`+
         // Expenses opens rather than spreading into four more columns. A breakdown is wanted
         // for one year at a time, and paying for it with permanent width on all thirty-three
         // pushes the balances off the right edge for everyone who never asks.
         `<td class="exp-cell"><button type="button" class="exp-toggle" aria-expanded="${open}" onclick="toggleExpRow(${r.yr})" title="What makes up ${r.yr}'s expenses">`+
           `<span>${fmt(r.totEFull)}</span><span class="exp-caret">${open?'▾':'▸'}</span></button></td>`+
-        `<td style="color:${r.gapFull>0?'var(--a)':'var(--t3)'}" title="Shortfall against cash pay alone — how much of the year's vest must be sold">${r.gapFull>0?'−'+fmt(r.gapFull):'—'}</td>`+`<td style="color:${r.flowFull>=0?'var(--g)':'var(--r)'};font-weight:600" title="Total after-tax pay minus total spending, across the whole calendar year. Negative means the year genuinely draws on savings or held Stripe.">${(r.flowFull>=0?'+':'−')+fmt(Math.abs(r.flowFull))}</td>`+
-        `<td style="color:var(--link)">${dash(r.sSold)}</td>`+
+        `<td style="color:${r.flowFull>=0?'var(--g)':'var(--r)'};font-weight:600" title="Take-home minus expenses, for the whole calendar year. Includes vested stock, so it is wealth added, not cash in the bank. Negative means the year draws on savings or held Stripe.">${(r.flowFull>=0?'+':'−')+fmt(Math.abs(r.flowFull))}</td>`+
+        `<td class="flow-start" style="color:var(--g)" title="Take-home less the vested stock that lands as shares (${fmt(Math.max(0,r.netTC-r.incFull))} after withholding): the cash that reaches your accounts">${fmt(r.incFull)}</td>`+
+        `<td style="color:${r.incFull-r.totEFull>=0?'var(--g)':'var(--a)'};font-weight:600" title="Cash take-home minus expenses. Negative is the shortfall the plan covers by selling vested Stripe.">${(r.incFull-r.totEFull>=0?'+':'−')+fmt(Math.abs(r.incFull-r.totEFull))}</td>`+
+        `<td class="flow-start" style="color:var(--link)">${dash(r.sSold)}</td>`+
         `<td style="color:var(--link);font-weight:600">${dash(r.sRet)}</td>`+
         `<td style="color:var(--b)">${fmt(r.liq)}</td>`+
         `<td style="color:var(--link);font-weight:600">${dash(r.sEnd)}</td>`+
