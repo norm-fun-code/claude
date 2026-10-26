@@ -110,9 +110,12 @@ function calcTax(grossIncome,p,yr,numKids){
 
   // ── FICA / SE tax (computed first: half SE tax is deductible above the line) ──
   const normSEBase=normSE*.9235;
-  const normSS=Math.min(normW2,ssCap)*.062+Math.min(normSEBase,Math.max(0,ssCap-normW2))*.124;
-  const normMed=normW2*.0145+normSEBase*.029;
-  const normSEHalf=.5*(Math.min(normSEBase,Math.max(0,ssCap-normW2))*.124+normSEBase*.029);
+  // FICA wages are W-2 wages less §125 cafeteria-plan benefits (health, dental, FSA premiums), which are
+  // exempt from Social Security and Medicare. 401(k) deferrals are NOT exempt, so only benefits come off.
+  const normFicaW2=Math.max(0,normW2-Math.min(normW2,p.pretaxBenefits||0));
+  const normSS=Math.min(normFicaW2,ssCap)*.062+Math.min(normSEBase,Math.max(0,ssCap-normFicaW2))*.124;
+  const normMed=normFicaW2*.0145+normSEBase*.029;
+  const normSEHalf=.5*(Math.min(normSEBase,Math.max(0,ssCap-normFicaW2))*.124+normSEBase*.029);
   let nancySS=0,nancyMed=0,seTaxHalf=0;
   if(nancySE>0){
     const seBase=nancySE*.9235;
@@ -123,7 +126,7 @@ function calcTax(grossIncome,p,yr,numKids){
     nancySS=Math.min(nancyW2,ssCap)*.062;
     nancyMed=nancyW2*.0145;
   }
-  const combinedMedWages=normW2+normSEBase+(nancySE>0?nancySE*.9235:nancyW2);
+  const combinedMedWages=normFicaW2+normSEBase+(nancySE>0?nancySE*.9235:nancyW2);
   const addlMedicare=Math.max(0,combinedMedWages-(single?200000:250000))*.009;
   const totalFICA=normSS+normMed+nancySS+nancyMed+addlMedicare;
 
@@ -139,7 +142,9 @@ function calcTax(grossIncome,p,yr,numKids){
   // be first, because the SALT deduction is a deduction for taxes actually PAID.
   const propertyTaxPaid=p.housingMode!=='rent'&&yr>=p.homePurchaseYear
     ?locationPropertyRate(p,yr)*p.homePrice*(1+p.homeAppreciation)**(yr-p.homePurchaseYear):0;
-  const nysTaxable=Math.max(0,earnedAgi-(single?8000:16050));
+  // NY Tax Law § 616: a $1,000 exemption for each dependent, on both the state and city return.
+  const nyDependents=Math.max(0,Number(p._taxDependents??numKids)||0);
+  const nysTaxable=Math.max(0,earnedAgi-(single?8000:16050)-1000*nyDependents);
   const stateTable=bracketTax(nysTaxable,NYS_BR);
   const nyResident=stateTable+nyRecapture(nysTaxable,earnedAgi,yr,stateTable,sf);
   let stateT=nyResident,cityT=bracketTax(nysTaxable,NYC_BR),njTaxable=0,njGrossTax=0,nySourceTax=0,njCredit=0;

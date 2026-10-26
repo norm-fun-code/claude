@@ -206,7 +206,8 @@ describe('net flow describes the same months as the spending', () => {
   });
 
   it('is income and spending over the same window, to the dollar', () => {
-    expect(stub.flow).toBeCloseTo(stub.inc + stub.sAvailable - stub.totE, 0);
+    // Each of the three parts is rounded on its own, so their sum can sit a dollar from the rounded total.
+    expect(Math.abs(stub.flow - (stub.inc + stub.sAvailable - stub.totE))).toBeLessThanOrEqual(1);
     expect(full.flow).toBe(Math.round(full.netTC - full.totE));
   });
 
@@ -220,7 +221,7 @@ describe('net flow describes the same months as the spending', () => {
   it('measures the income shortfall over the same window too', () => {
     const tight = { ...D, observedOn: '2026-09-11', baseShopping: 400000 };
     const r = M.run(tight).R[0];
-    expect(r.incGap).toBeCloseTo(Math.max(0, r.totE - r.inc - r.sAvailable), 0);
+    expect(Math.abs(r.incGap - Math.max(0, r.totE - r.inc - r.sAvailable))).toBeLessThanOrEqual(1);
   });
 
   it('has every monthly-margin surface use the rate, not flow/12', () => {
@@ -295,8 +296,9 @@ describe('the annual table adds up on screen',()=>{
       expect(Math.abs(r.netTC-r.totEFull-r.flowFull)).toBeLessThanOrEqual(1);
     }
   });
-  it('shows every step: pre-tax & overhead, take-home, both flows, and cash take-home',()=>{
-    for(const c of ["'Pre-tax & overhead'","'Take-home'","'Net income flow'","'Cash take-home'","'Net cash flow'"])expect(page).toContain(c);
+  it('shows take-home, both flows and cash take-home, with the steps in hover text',()=>{
+    for(const c of ["'Take-home'","'Net income flow'","'Cash take-home'","'Net cash flow'"])expect(page).toContain(c);
+    expect(page).not.toContain("'Pre-tax & overhead'");
     expect(page).not.toContain("'Cash gap'");
   });
 });
