@@ -60,7 +60,7 @@ function experienceMetric(label,value,note,tone=''){
   return `<div class="ex-metric ${tone}"><span>${label}</span><strong>${value}</strong><small>${note}</small></div>`;
 }
 function experienceHeader(kicker,title,description,action=''){
-  return `<header class="ex-heading"><div><span class="ex-kicker">${kicker}</span><h2>${title}</h2><p>${description}</p></div>${action}</header>`;
+  return `<header class="ex-heading"><div><span class="ex-kicker">${kicker}</span><h2>${title}</h2>${description?'<p>'+description+'</p>':''}</div>${action}</header>`;
 }
 function experienceFold(parent,nodes,title,key){
   const items=[...nodes].filter(Boolean);if(!items.length)return null;
@@ -122,7 +122,7 @@ function experienceOverview(R){
   const description=flexView?`${counts.cash} of ${years.length} years covered by cash pay · ${counts.arg} more potentially covered by ARG · ${counts.extra} requiring additional funding.`:
     gaps.length?`${gaps.length} of ${years.length} modeled years spend more than after-tax ${basis}.`:`After-tax ${basis} covers spending in all ${years.length} modeled years.`;
   const unit=inflationView?'today’s dollars ('+P.planStartYear+')':'future dollars';
-  brief.innerHTML=`<div class="so-story-copy"><span class="so-eyebrow">THE PLAN IN ONE MINUTE</span><div class="ex-segments so-income-toggle" role="group" aria-label="Income comparison"><button aria-pressed="${cashOnly}" onclick="setOverviewIncomeView('cash')">Cash pay</button><button aria-pressed="${flexView}" onclick="setOverviewIncomeView('flex')">Cash + ARG</button><button aria-pressed="${overviewIncomeView==='income'}" onclick="setOverviewIncomeView('income')">Total comp</button></div><h2>${headline}</h2><p>${description}</p><div class="so-story-actions"><button onclick="lifeOpenYear(${pressure.yr})">Explore the tightest year <span>↗</span></button><button onclick="_homeView='explore';experienceUtility('home')">Test a different outcome</button></div></div><div class="so-key-number"><span>${gaps.length?'Largest monthly '+basis+' gap':'Smallest monthly '+basis+' surplus'}</span><strong>${experienceMoney(deflate(monthly,pressure.yr))}</strong><span>${pressure.yr} · ${unit}</span><small>${flexView?'Optional after-tax ARG election capacity; no actual cash election assumed.':cashOnly?'Cash pay only · excludes stock compensation.':'After-tax compensation · includes stock pay.'}<br>Excludes investment returns and existing assets.</small></div><div class="so-cash-path"><div class="so-path-head"><span>WHEN ${cashOnly?'CASH PAY':flexView?'CASH PAY + ARG':'INCOME'} COVERS YOUR LIFE</span><span>Annual ${basis} less spending · ${unit}</span></div>${experienceCashPath(years,pressure.yr,overviewIncomeView)}<div class="so-path-key">${flexView?'<span><i class="so-key-cash"></i>Cash pay covers</span><span><i class="so-key-arg"></i>ARG could bridge</span><span><i class="so-key-extra"></i>More funding needed</span>':`<span><i class="so-key-cash"></i>${cashOnly?'Cash':'Income'} remaining</span><span><i class="so-key-short"></i>Spending above ${basis}</span>`}<span>Choose a year to explore</span></div></div>`;
+  brief.innerHTML=`<div class="so-story-copy"><span class="so-eyebrow">THE PLAN IN ONE MINUTE</span><div class="ex-segments so-income-toggle" role="group" aria-label="Income comparison"><button aria-pressed="${cashOnly}" onclick="setOverviewIncomeView('cash')">Cash pay</button><button aria-pressed="${flexView}" onclick="setOverviewIncomeView('flex')">Cash + ARG</button><button aria-pressed="${overviewIncomeView==='income'}" onclick="setOverviewIncomeView('income')">Total comp</button></div><h2>${headline}</h2>${description?'<p>'+description+'</p>':''}<div class="so-story-actions"><button onclick="lifeOpenYear(${pressure.yr})">Explore the tightest year <span>↗</span></button><button onclick="_homeView='explore';experienceUtility('home')">Test a different outcome</button></div></div><div class="so-key-number"><span>${gaps.length?'Largest monthly '+basis+' gap':'Smallest monthly '+basis+' surplus'}</span><strong>${experienceMoney(deflate(monthly,pressure.yr))}</strong><span>${pressure.yr} · ${unit}</span><small>${flexView?'Optional after-tax ARG election capacity; no actual cash election assumed.':cashOnly?'Cash pay only · excludes stock compensation.':'After-tax compensation · includes stock pay.'}<br>Excludes investment returns and existing assets.</small></div><div class="so-cash-path"><div class="so-path-head"><span>WHEN ${cashOnly?'CASH PAY':flexView?'CASH PAY + ARG':'INCOME'} COVERS YOUR LIFE</span><span>Annual ${basis} less spending · ${unit}</span></div>${experienceCashPath(years,pressure.yr,overviewIncomeView)}<div class="so-path-key">${flexView?'<span><i class="so-key-cash"></i>Cash pay covers</span><span><i class="so-key-arg"></i>ARG could bridge</span><span><i class="so-key-extra"></i>More funding needed</span>':`<span><i class="so-key-cash"></i>${cashOnly?'Cash':'Income'} remaining</span><span><i class="so-key-short"></i>Spending above ${basis}</span>`}<span>Choose a year to explore</span></div></div>`;
   if(flexView){
     const top=brief.querySelector('.so-key-number');
     const annualGap=pressureDetail.cashGap,available=pressureDetail.arg.net,residual=pressureDetail.residual;
@@ -184,7 +184,7 @@ function renderLifeTimeline(R){
   const floor=R.reduce((a,b)=>b.liq<a.liq?b:a),peak=R.reduce((a,b)=>b.tuFull>a.tuFull?b:a);
   const value=lifeMode==='wealth'?(cockpitExRet?'Year-end wealth · excludes retirement':'Year-end wealth · includes retirement'):'Monthly surplus / shortfall before equity sales';
   document.getElementById('chartArea').innerHTML=`<div class="life-workspace">
-    ${experienceHeader('FUTURE / LIFE TIMELINE','Your life. In perspective.','Follow the years, see the pressure points, and understand how your choices shape the path.')}
+    ${experienceHeader('FUTURE / LIFE TIMELINE','Life timeline','')}
     <section class="ex-panel life-chart-panel"><div class="ex-panel-head"><div><span class="ex-kicker">${value}</span><h3 id="lifeChartValue"></h3><p>Projected · ${experienceEscape(scenarios[activeScenarioIdx]?.name||'Working plan')} · ${inflationView?'today’s dollars ('+P.planStartYear+')':'future dollars'}</p></div>
       <div class="ex-segments" aria-label="Timeline chart mode"><button aria-pressed="${lifeMode==='wealth'}" onclick="lifeSetMode('wealth')">Wealth</button><button aria-pressed="${lifeMode==='cash'}" onclick="lifeSetMode('cash')">Cash flow</button></div></div>
     ${lifeMode==='wealth'?`<label class="cp-basis"><input type="checkbox" ${cockpitExRet?'':'checked'} onchange="cockpitSetExRet(!this.checked)"><span>Include retirement</span></label>`:''}
@@ -236,7 +236,7 @@ function experienceBudget(R){
   const yr=Math.min(R.at(-1).yr,Math.max(R[0].yr,_budgetYear??PlannerTime.year())),r=R.find(x=>x.yr===yr),mo=_budgetUnit==='month';
   const a=PlannerBudget.allocation(P,R,yr),act=yr===PlannerTime.year()?PlannerBudget.actuals(_spend,yr,P.monarchLineMap):null;
   const amt=v=>experienceMoney(v/(mo?12:1));
-  bd.querySelector('.bd-head').outerHTML=experienceHeader('SPENDING & BUDGET / PLAN','Your spending, against your plan.',`Household totals · ${yr} · ${mo?'monthly':'annual'} amounts. ${locationActive(P,yr)?'Deal-area spending and NJ taxes':'Brooklyn spending and taxes'}. Housing follows the selected case.`);
+  bd.querySelector('.bd-head').outerHTML=experienceHeader('SPENDING & BUDGET / PLAN','Budget','');
   const bar=bd.querySelector('.bd-bar');
   const tools=bar?.querySelector('.bd-tools');if(tools){const advanced=document.createElement('details');advanced.className='ex-budget-settings';advanced.innerHTML='<summary>Budget settings</summary>';tools.before(advanced);advanced.append(tools);}
   const mobileTools=bd.querySelector('.bd-tools-m');if(mobileTools)mobileTools.remove();
@@ -287,7 +287,7 @@ function experienceBudget(R){
 }
 function experienceSpending(){
   const w=document.querySelector('.spending-workspace');if(!w)return;
-  w.insertAdjacentHTML('afterbegin',experienceHeader('SPENDING & BUDGET / ACTUALS','Know where your money goes.','Your imported spending, the categories driving it, and how the trend is changing.'));
+  w.insertAdjacentHTML('afterbegin',experienceHeader('SPENDING & BUDGET / ACTUALS','Spending',''));
   const nodes=[...w.children];
   const monthly=w.querySelector('#spendMonthlyChart')?.closest('section');
   if(monthly)experienceFold(w,[monthly],'Monthly income & spending history','spending-monthly');
@@ -299,12 +299,11 @@ function experienceHousingSelect(v){experienceHousingView=v;render();}
 function experienceHousing(R){
   const ca=document.getElementById('chartArea'),rb=document.getElementById('homeRB'),hs=document.getElementById('homeHS');if(!rb||!hs)return;
   ca.querySelector('.home-sec')?.remove();
-  ca.insertAdjacentHTML('afterbegin',experienceHeader('DECISIONS / HOUSING','Find the home that fits your life.','Explore affordability, monthly costs and renting versus buying with the same assumptions.'));
+  ca.insertAdjacentHTML('afterbegin',experienceHeader('DECISIONS / HOUSING','Housing',''));
   const views=document.createElement('div');views.className='ex-housing-tabs ex-segments';views.setAttribute('aria-label','Housing question');
   views.innerHTML=[['afford','How much can we afford?'],['payment','What would it cost?'],['rentbuy','Should we rent or buy?']].map(([v,l])=>`<button aria-pressed="${experienceHousingView===v}" onclick="experienceHousingSelect('${v}')">${l}</button>`).join('');
   ca.querySelector('.ex-heading').after(views);
   rb.hidden=experienceHousingView!=='rentbuy';hs.hidden=experienceHousingView==='rentbuy';
-  const q=rbParams(),model=run(q).R,py=q.homePurchaseYear,owned=model.find(r=>r.yr===py),floor=model.reduce((a,b)=>b.liq<a.liq?b:a);
   // These preview controls share the existing rent/buy override state; no saved input is changed.
   const controls=document.createElement('section');controls.className='ex-panel ex-home-controls';
   const keys=['homePrice','homePurchaseYear','downPctg','mortgageRate'];
@@ -346,14 +345,12 @@ function experienceHousing(R){
 }
 function experienceHomePeek(key,value){
   const q=rbParams();if(key){q[key]=Number(value);const f=RB_LEVERS.find(x=>x[0]===key);document.getElementById('exHome-'+key).textContent=f[5](Number(value));}
-  const loan=q.homePrice*(1-q.downPctg/100),mr=q.mortgageRate/1200;
-  const pi=loan<=0?0:mr>0?loan*mr/(1-Math.pow(1+mr,-360)):loan/360;
-  const cost=pi+locationPropertyRate(q,q.homePurchaseYear)*q.homePrice/12+(q.maintBase||0)/12;
-  const el=document.getElementById('exHomeLive');if(el)el.innerHTML=experienceMetric('Monthly carrying cost',experienceMoney(cost),'Principal, interest, property tax & modeled maintenance')+experienceMetric('Down payment',experienceMoney(q.homePrice*q.downPctg/100),'Closing costs and sale taxes are additional')+experienceMetric('Purchase year',q.homePurchaseYear,'Release a slider to update the full projection');
+  const cost=housingMonthlyCost(q).all;
+  const el=document.getElementById('exHomeLive');if(el)el.innerHTML=experienceMetric('Monthly carrying cost',experienceMoney(cost),'Mortgage, tax, maintenance & insurance')+experienceMetric('Down payment',experienceMoney(q.homePrice*q.downPctg/100),'Excludes closing costs')+experienceMetric('Purchase year',q.homePurchaseYear,'');
 }
 function experienceCompare(){
   const ca=document.getElementById('chartArea');
-  ca.insertAdjacentHTML('afterbegin',experienceHeader('DECISIONS / SCENARIOS','Understand the tradeoff.','Choose a case to compare with your current working assumptions. Then inspect the full matrix if needed.'));
+  ca.insertAdjacentHTML('afterbegin',experienceHeader('DECISIONS / SCENARIOS','Compare scenarios',''));
   const children=[...ca.children],diff=children[1];
   if(diff){const label=[...diff.querySelectorAll('div')].find(n=>n.children.length===0&&n.textContent.includes('Diff view'));if(label)label.textContent='Current plan compared with';}
   const rest=children.slice(2);if(rest.length)experienceFold(ca,rest,'All cases & parameter differences','compare-full');
@@ -389,21 +386,20 @@ function walkthroughShow(){
   el.innerHTML=`<span class="ex-kicker">WALKTHROUGH · ${walkthroughIndex+1} / ${walkthroughSteps.length}</span><button class="ex-walk-close" aria-label="Close walkthrough" onclick="document.getElementById('exWalkthrough').remove()">×</button><h3>${title}</h3><p>${desc}</p><div><button class="ui-btn" ${walkthroughIndex===0?'disabled':''} onclick="walkthroughIndex--;walkthroughShow()">Back</button><button class="ui-btn ui-btn-primary" onclick="${walkthroughIndex===walkthroughSteps.length-1?"document.getElementById('exWalkthrough').remove()":"walkthroughIndex++;walkthroughShow()"}">${walkthroughIndex===walkthroughSteps.length-1?'Finish':'Next →'}</button></div>`;
   document.body.append(el);
 }
-function experienceEnhance(){
+function experienceEnhance(R){
   if(!_planLoaded)return;
   experienceNavigation();
-  const R=run(P).R;
   if(activeTab==='cockpit')experienceOverview(R);
-  if(activeTab==='today'&&_todayView==='budget')experienceBudget(R);
-  if(activeTab==='today'&&_todayView==='spending')experienceSpending();
+  if(activeTab==='today'&&_todayView==='budget'){experienceBudget(R);experienceBudgetVisual(R);}
+  if(activeTab==='today'&&_todayView==='spending'){experienceSpending();experienceSpendingVisual();}
   if(activeTab==='home'&&['housing','rentbuy'].includes(_homeView))experienceHousing(R);
   if(activeTab==='home'&&_homeView==='compare')experienceCompare();
   if(activeTab==='home'&&_homeView==='explore')experienceWhatIf();
   if(activeTab==='advisor')experienceAdvisor();
+  experienceChartFormatting();
+  experienceLocation();
   document.body.dataset.experience='cockpit';
 }
-const experienceOriginalRender=render;
-render=function(){experienceOriginalRender();experienceEnhance();};
 // Complete a focused comparison by default; original matrix remains accessible.
 const experienceOriginalHome=renderHomeTab;
 renderHomeTab=function(R,p){
@@ -418,7 +414,6 @@ renderCompareTab=function(R,p){if(_compareDiffIdx<0&&scenarios.length)_compareDi
 // Header captions used by the original chart modes.
 SUB_VIEWS.projection.views.unshift(['life','spark','Life timeline']);
 MORE_ACTIONS.unshift(['↗','Guided walkthrough','openGuidedWalkthrough()']);
-if(_planLoaded)render();
 
 function experienceMobileTools(){
  document.getElementById('exToolsOverlay')?.remove();const el=document.createElement('div');el.id='exToolsOverlay';el.className='ex-tools-overlay';el.innerHTML='<div class="ex-tools-sheet"><button class="ex-tools-close ui-btn" onclick="document.getElementById(\'exToolsOverlay\').remove()">Close ×</button><h3>Details & tools</h3>'+[['Accounts & holdings',"experienceUtility('today','overview')"],['Stripe equity',"experienceUtility('stripe')"],['Watchlist',"experienceUtility('today','watch')"],['Plan assumptions',"experienceUtility('inputs')"],['Guided walkthrough','openGuidedWalkthrough()'],['Present with demo numbers','enterDemoMode()'],['Export CSV','exportCSV()'],['Print / PDF','printPDF()']].map(([l,fn])=>'<button onclick="document.getElementById(\'exToolsOverlay\').remove();'+fn+'">'+l+' ↗</button>').join('')+'</div>';document.body.append(el);}
@@ -439,9 +434,6 @@ function experienceDonut(entries,total,label,note){
   const arcs=top.map((x,i)=>{const share=scale?x.value/scale:0,len=Math.max(0,share*circ-4),arc=`<circle cx="110" cy="110" r="86" fill="none" stroke="${visualPalette[i]}" stroke-width="13" stroke-dasharray="${len} ${circ-len}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)"><title>${experienceEscape(x.label)} · ${experienceMoney(x.value)} · ${(share*100).toFixed(1)}%</title></circle>`;offset+=share*circ;return arc;}).join('');
   return `<div class="ex-composition"><div class="ex-donut"><svg viewBox="0 0 220 220" role="img" aria-label="${experienceEscape(label)} by category"><circle cx="110" cy="110" r="86" fill="none" stroke="#d8ddcd" stroke-width="13"/>${arcs}</svg><div><span>${label}</span><strong>${experienceMoney(total)}</strong><small>${note}</small></div></div><div class="ex-composition-key">${top.map((x,i)=>`<div><i style="background:${visualPalette[i]}"></i><span>${experienceEscape(x.label)}</span><strong>${experienceMoney(x.value)}</strong><small>${scale?(x.value/scale*100).toFixed(0):0}%</small></div>`).join('')}</div></div>`;
 }
-function experienceSignal(icon,kicker,title,body,tone='neutral'){
-  return `<article class="ex-signal" data-tone="${tone}"><span class="ex-signal-icon">${UI.icon(icon)}</span><div><span class="ex-kicker">${kicker}</span><h3>${title}</h3><p>${body}</p></div></article>`;
-}
 function experienceBudgetVisual(R){
  const bd=document.querySelector('.bd');if(!bd)return;
  const yr=Math.min(R.at(-1).yr,Math.max(R[0].yr,_budgetYear??PlannerTime.year())),r=R.find(x=>x.yr===yr),mo=_budgetUnit==='month';
@@ -453,7 +445,7 @@ function experienceBudgetVisual(R){
  const hero=document.createElement('section');hero.className='ex-briefing ex-budget-briefing';hero.dataset.tone=tone;hero.dataset.state=act?(diff>0?'over':'under'):'plan';
  const headline=act?Math.abs(diff)<100?'Your spending pace is close to plan.':`Spending pace is ${displayed(Math.abs(diff))}${unit} ${diff>0?'above':'below'} plan.`:`Your ${yr} household spending plan.`;
  const future=yr>PlannerTime.year();
- const summary=future?`For ${PlannerSuggest.household(P,yr)} · includes modeled inflation and family costs. Review the year’s assumptions and upcoming costs below.`:act?`${act.months} past months with records · actual monthly average compared with the full-year plan. Import gaps can affect this comparison.`:'No comparable closed-month actuals are available for this year. Explore the planned categories below.';
+ const summary=future?PlannerSuggest.household(P,yr):act?`${act.months} months · through ${monthLabel(act.through)}`:'No comparable actuals';
  hero.innerHTML=`<div class="ex-briefing-copy"><span class="ex-kicker">YOUR BUDGET / THE READOUT</span><h2>${headline}</h2><p>${summary}</p>${future?'':`<div class="ex-budget-meter"><div><span>Planned ${displayed(plan)}${unit}</span><strong>${ratio==null?'Actuals unavailable':(ratio*100).toFixed(0)+'% of planned pace'}</strong></div><div class="ex-budget-meter-track"><i style="width:${ratio==null?0:Math.min(100,ratio/1.3*100)}%"></i><b style="left:${100/1.3}%" title="100% of plan"></b></div><small>Budget marker = 100% · scale ends at 130%${ratio>1.3?' (actual is above the scale)':''}</small></div>`}</div><div class="ex-briefing-stat"><span>${act?'Actual spending pace':'Planned household spending'}</span><strong>${displayed(act?act.perMonth:plan)}</strong><small>${mo?'Per month':act?'Annualized / year':'Per year'} · household total</small></div>`;
  const anchor=bd.querySelector('.bd-bar');anchor.after(hero);
  const allocationBand=bd.querySelector('.ex-budget-answer');if(allocationBand)experienceFold(bd,[allocationBand],'Planned cash investing & retained equity','budget-invest-summary');
@@ -482,28 +474,31 @@ function experienceSpendingVisual(){
  const section=document.createElement('section');section.className='ex-spending-visual';
  const partial=_spendScope.kind==='month'&&_spendScope.month===String(_spend.endDate).slice(0,7);
  const sum=rows.reduce((a,x)=>a+x.perMonth,0),max=Math.max(1,...rows.map(x=>x.perMonth));
- section.innerHTML=`<section class="so-spend-chart"><div class="ex-panel-head"><div><span class="ex-kicker">WHERE THE MONEY GOES</span><h3>${experienceMoney(sum)}<small> ${partial?'so far':'average / month'}</small></h3><p>${experienceEscape(period)} · net of refunds${!partial&&allMonths.some(m=>m.month===String(asOf).slice(0,7))&&['ytd','all'].includes(_spendScope.kind)?' · current month included as recorded, not extrapolated':''}</p></div><div class="ex-segments">${[['ytd',null,'YTD'],...[3,6,12].filter(n=>closed.length>=n).map(n=>['recent',n,n+'M']),['all',null,'All']].map(([kind,n,label])=>`<button aria-pressed="${_spendScope.kind===kind&&(kind!=='recent'||Number(_spendScope.months)===n)}" onclick="setSpendScope('${kind}',${n})">${label}</button>`).join('')}</div></div><div class="so-spend-bars">${rows.slice(0,8).map((x,i)=>`<div class="so-spend-row"><span>${experienceEscape(x.name)}</span><div><i style="width:${Math.max(0,x.perMonth)/max*100}%;opacity:${1-i*.065}"></i></div><strong>${experienceMoney(x.perMonth)}</strong><small>${sum>0?(x.perMonth/sum*100).toFixed(0)+'%':'—'}</small></div>`).join('')}</div><p class="ex-chart-caption">${rows.length>8?'Largest 8 of '+rows.length+' categories · ':''}Import coverage can affect these amounts. Negative values are net refunds.</p><details class="ex-detail"><summary>Category composition</summary>${experienceDonut(rows.map(x=>({label:x.name,value:x.perMonth})),sum,'Recorded spending',partial?'month to date':'per month')}<p class="ex-chart-caption">The ring shows positive net categories; refund-only categories remain in the full table.</p></details></section>`;
+ section.innerHTML=`<section class="so-spend-chart"><div class="ex-panel-head"><div><span class="ex-kicker">WHERE THE MONEY GOES</span><h3>${experienceMoney(sum)}<small> ${partial?'so far':'average / month'}</small></h3><p>${experienceEscape(period)}</p></div><div class="ex-segments">${[['ytd',null,'YTD'],...[3,6,12].filter(n=>closed.length>=n).map(n=>['recent',n,n+'M']),['all',null,'All']].map(([kind,n,label])=>`<button aria-pressed="${_spendScope.kind===kind&&(kind!=='recent'||Number(_spendScope.months)===n)}" onclick="setSpendScope('${kind}',${n})">${label}</button>`).join('')}</div></div><div class="so-spend-bars">${rows.slice(0,8).map((x,i)=>`<div class="so-spend-row"><span>${experienceEscape(x.name)}</span><div><i style="width:${Math.max(0,x.perMonth)/max*100}%;opacity:${1-i*.065}"></i></div><strong>${experienceMoney(x.perMonth)}</strong><small>${sum>0?(x.perMonth/sum*100).toFixed(0)+'%':'—'}</small></div>`).join('')}</div><p class="ex-chart-caption">${rows.length>8?'Largest 8 of '+rows.length+' categories':''}</p><details class="ex-detail"><summary>Category composition</summary>${experienceDonut(rows.map(x=>({label:x.name,value:x.perMonth})),sum,'Recorded spending',partial?'month to date':'per month')}<p class="ex-chart-caption">The ring shows positive net categories; refund-only categories remain in the full table.</p></details></section>`;
  const averages=w.querySelector('.ex-spend-averages');if(averages)experienceFold(w,[averages],'Compare 3-, 6- and 12-month averages','spending-averages');
 
  const lens=[...w.children].find(n=>n.textContent.includes('Categories against your income'));
  if(lens)experienceFold(w,[lens],'All categories, exact amounts & income comparison','spending-category-detail');
  const drift=w.querySelector('#spendLtmChart')?.closest('section'),pace=w.querySelector('.pace');
+ const paceData=_spend.paceTotal?.status==='ok'?_spend.paceTotal:_spend.pace;
+ const views=[['categories','Where it goes'],...(drift?[['trend','How it’s changing']]:[]),...(pace?[['month',spendPacePeriod(paceData?.month)]]:[])];
+ if(!views.some(([key])=>key===spendingStoryView))spendingStoryView='categories';
  const stage=document.createElement('section');stage.className='so-spending-stage';
- stage.innerHTML=`<div class="so-spending-toolbar"><div class="so-question-tabs" aria-label="Spending question">${[['categories','Where it goes'],['trend','How it’s changing'],['month','This month']].map(([v,label])=>`<button aria-pressed="${spendingStoryView===v}" onclick="spendingStoryView='${v}';render()">${label}</button>`).join('')}</div><button type="button" class="so-catch-up" onclick="experienceCatchUp()" ${experienceCatchUpBusy?'disabled':''} aria-label="Catch up Monarch transactions">${experienceCatchUpBusy?'Catching up…':'↻ Catch up'}</button></div>`;
+ stage.innerHTML=`<div class="so-spending-toolbar"><div class="so-question-tabs" aria-label="Spending question">${views.map(([v,label])=>`<button aria-pressed="${spendingStoryView===v}" onclick="spendingStoryView='${v}';render()">${label}</button>`).join('')}</div><button type="button" class="so-catch-up" onclick="experienceCatchUp()" ${experienceCatchUpBusy?'disabled':''} aria-label="Catch up Monarch transactions">${experienceCatchUpBusy?'Catching up…':'↻ Catch up'}</button></div>`;
  w.querySelector('.ex-heading').after(stage);stage.append(section);section.hidden=spendingStoryView!=='categories';
  if(drift){stage.append(drift);drift.hidden=spendingStoryView!=='trend';drift.querySelector('h3').textContent='Is our spending rising?';}
  if(pace){stage.append(pace);pace.hidden=spendingStoryView!=='month';}
  const supporting=[...w.children].filter(n=>n!==stage&&!n.classList.contains('ex-heading'));
- if(supporting.length){const detail=experienceFold(w,supporting,'Transactions, comparisons & data sources','spending-details');detail.addEventListener('toggle',()=>{if(detail.open)charts.spendingMonths?.resize?.();});}
+ if(supporting.length){const detail=experienceFold(w,supporting,'Details','spending-details');detail.addEventListener('toggle',()=>{if(detail.open)charts.spendingMonths?.resize?.();});}
  if(spendingStoryView==='trend'&&charts.spendingLtm){const ch=charts.spendingLtm;for(const axis of Object.values(ch.options.scales||{})){if(axis.ticks)axis.ticks.color='#52666c';if(axis.grid)axis.grid.color='#d6dfdf';}if(ch.options.plugins?.legend?.labels)ch.options.plugins.legend.labels.color='#334b53';ch.resize?.();ch.update('none');}
  const coverage=document.createElement('p');coverage.className='so-source-note';
  const verified=_spend.coverage?.completeMonths?.length||0;
  coverage.textContent=`Monarch · ${closed.length} past months with records · ${verified} verified full months${_spend.state?.lastError?' · an import error needs review':''}.`;
- stage.after(coverage);
+ const details=w.querySelector('[data-fold="spending-details"] .ex-detail-body');
+ if(details)details.prepend(coverage);
+ if(_spend.state?.lastError){const status=document.createElement('p');status.className='so-source-note';status.textContent='Import needs attention';stage.after(status);}
 
 }
-const experienceVisualEnhance=experienceEnhance;
-experienceEnhance=function(){experienceVisualEnhance();const R=run(P).R;if(activeTab==='today'&&_todayView==='budget')experienceBudgetVisual(R);if(activeTab==='today'&&_todayView==='spending')experienceSpendingVisual();experienceChartFormatting();};
 
 // Every comparison carries its scale, source and exact values, including missing actuals.
 function experienceRankChart(row,actual,monthly){
@@ -636,12 +631,13 @@ function locationEdit(key,value){
 }
 function experienceLocation(){
  if(!_planLoaded)return;
- document.getElementById('locationBar')?.remove();
+ const previous=document.getElementById('locationBar'),signature=JSON.stringify(P);
+ if(previous&&locationComparisonCache.signature===signature)return;
+ const wasOpen=previous?.querySelector('details')?.open;
  const c=P.locationConfig||{},deal=c.mode==='deal',year=c.moveYear??P.homePurchaseYear??2031;
  const el=document.createElement('section');el.id='locationBar';el.className='ex-location-bar';
  const number=(label,key,value,suffix='',step=1)=>`<label>${label}<span><input type="number" aria-label="${label}" value="${Number(Number(value).toFixed(4))}" step="${step}" min="0" onchange="locationEdit('${key}',this.value)">${suffix}</span></label>`;
  const factor=(label,key)=>number(label,'factor:'+key,Math.round((c.factors?.[key]??DEAL_SPENDING_FACTORS[key])*100),'%');
- const signature=JSON.stringify(P);
  if(locationComparisonCache.signature!==signature){
    const bk=run({...P,locationConfig:{...c,mode:'brooklyn'}}),nj=run({...P,locationConfig:{...c,mode:'deal',moveYear:year}});
    const peak=bk.R.filter(r=>r.yr>=year).reduce((a,b)=>b.tuFull>a.tuFull?b:a,bk.R.at(-1));
@@ -650,11 +646,11 @@ function experienceLocation(){
  }
  const impact=locationComparisonCache.result;
  el.innerHTML=`<div class="ex-location-top"><div><span class="ex-kicker">LONG-TERM HOME</span><strong>${deal?'Deal area, NJ':'Brooklyn, NY'}</strong><small>Same income cases · ${deal?'NJ costs from '+year:'Brooklyn costs'}</small></div><div class="ex-segments" aria-label="Long-term location"><button type="button" aria-pressed="${!deal}" onclick="locationSet('brooklyn')">Brooklyn</button><button type="button" aria-pressed="${deal}" onclick="locationSet('deal')">Deal, NJ</button></div></div>
- <details class="ex-location-settings"><summary>Compare costs & adjust assumptions</summary><div class="ex-location-impact"><span>${impact.year} spending saved<strong>${experienceMoney(impact.spending)}/yr</strong></span><span>${impact.year} tax saved<strong>${experienceMoney(impact.taxes)}/yr</strong></span><span>${impact.end} wealth difference<strong>${experienceMoney(impact.wealth)}</strong></span></div><p>Savings show Brooklyn minus Deal; wealth difference shows Deal minus Brooklyn, in the selected income case. January 1 move; years before ${year} stay in Brooklyn. Home price, rent, mortgage, income and investment returns stay at the selected case’s inputs. These are modeled differences, not forecasts.</p>
+ <details class="ex-location-settings" ${wasOpen?'open':''}><summary>Compare costs & adjust assumptions</summary><div class="ex-location-impact"><span>${impact.year} spending saved<strong>${experienceMoney(impact.spending)}/yr</strong></span><span>${impact.year} tax saved<strong>${experienceMoney(impact.taxes)}/yr</strong></span><span>${impact.end} wealth difference<strong>${experienceMoney(impact.wealth)}</strong></span></div><p>Savings show Brooklyn minus Deal; wealth difference shows Deal minus Brooklyn, in the selected income case. January 1 move; years before ${year} stay in Brooklyn. Home price, rent, mortgage, income and investment returns stay at the selected case’s inputs. These are modeled differences, not forecasts.</p>
  <div class="ex-location-grid">${number('NJ move year','moveYear',year)}<label>Municipality<select aria-label="NJ municipality" onchange="locationEdit('municipality',this.value)">${[['deal','Deal borough'],['longBranch','Long Branch'],['ocean','Ocean Township']].map(([v,l])=>`<option value="${v}" ${(c.municipality||'deal')===v?'selected':''}>${l}</option>`).join('')}</select></label>${number('NJ property tax estimate','propertyTaxRate',(c.propertyTaxRate??NJ_PROPERTY_RATES[c.municipality||'deal'])*100,'%',.001)}${number('Tuition vs Brooklyn','tuitionFactor',(c.tuitionFactor??.5)*100,'%')}${number('Childcare vs Brooklyn','childcareFactor',(c.childcareFactor??.9)*100,'%')}${factor('Groceries vs Brooklyn','groceries')}${factor('Dining vs Brooklyn','dining')}${factor('Shopping vs Brooklyn','shopping')}${factor('Clothing vs Brooklyn','clothing')}${factor('Vacations vs Brooklyn','vacations')}${factor('Auto expenses vs Brooklyn','auto')}${factor('Insurance vs Brooklyn','insurance')}${factor('Misc / household vs Brooklyn','misc')}${factor('Entertainment vs Brooklyn','entertainment')}${factor('Giving vs Brooklyn','charity')}${factor('Healthcare vs Brooklyn','medical')}${factor('Transit vs Brooklyn','transit')}${factor('Utilities vs Brooklyn','utilities')}${number('Extra car costs / month','autoMonthly',c.autoMonthly??600)}${number('Extra auto insurance / month','insuranceMonthly',c.insuranceMonthly??100)}${number('Extra commuting / month','commuteMonthly',c.commuteMonthly??200)}${number('Norm NY-source pay','normNySource',(c.normNySource??1)*100,'%')}${number('Nancy W-2 NY-source pay','nancyNySource',(c.nancyNySource??1)*100,'%')}${number('Nancy practice NY-source income','practiceNySource',(c.practiceNySource??0)*100,'%')}</div>
- <p>50% tuition is your planning assumption, not a verified Hillel fee schedule. Discounts are modeling judgments, not measured local household averages. NJ category adjustments: groceries −5%, dining −10%, shopping −3%, clothing −3%, miscellaneous / household services −10%, entertainment −10%, healthcare −5%, utilities −5%. Vacations, auto baseline, insurance baseline, charity and transit are unchanged; personal services are included within the blended miscellaneous assumption rather than a separate spending line. Car / auto insurance / commuting allowances are additional, grow with inflation, and apply to modeled lines; an explicit budget rule replaces that line’s allowance. Housing, tuition, childcare and taxes are modeled separately. These are editable planning estimates, not measured local price indices. Amount edits in Deal are converted back to the shared Brooklyn baseline.</p><p>NJ tax uses the joint schedule, personal/dependent exemptions, 401(k) exclusion and property-tax deduction. NY-source compensation retains NY tax with a proportionally allocated, limited NJ credit (a planning approximation); no NYC resident tax after moving. NJ pretax benefits are treated as taxable. Capital-gain sales keep the planner’s simplified 20% federal + 3.8% NIIT convention plus NJ marginal tax. No mid-year residency, NJ payroll levies, school fees/busing, shore flood insurance or parcel-specific assessment is inferred.</p>
+ <p>The tuition percentage is your planning assumption, not a verified Hillel fee schedule. Discounts are modeling judgments, not measured local household averages. The editable percentages above are relative to Brooklyn. Car / auto insurance / commuting allowances are additional, grow with inflation, and apply to modeled lines; an explicit budget rule replaces that line’s allowance. Housing, tuition, childcare and taxes are modeled separately. These are editable planning estimates, not measured local price indices. Amount edits in Deal are converted back to the shared Brooklyn baseline.</p><p>NJ tax uses the joint schedule, personal/dependent exemptions, 401(k) exclusion and property-tax deduction. NY-source compensation retains NY tax with a proportionally allocated, limited NJ credit (a planning approximation); no NYC resident tax after moving. NJ pretax benefits are treated as taxable. Capital-gain sales keep the planner’s simplified 20% federal + 3.8% NIIT convention plus NJ marginal tax. No mid-year residency, NJ payroll levies, school fees/busing, shore flood insurance or parcel-specific assessment is inferred.</p>
  <p>Sources: <a href="https://www.nj.gov/treasury/taxation/pdf/current/njtaxratesch.pdf" target="_blank" rel="noopener">NJ income-tax schedule</a> · <a href="https://www.tax.ny.gov/pit/file/nonresident-faqs.htm" target="_blank" rel="noopener">NY sourcing rules</a> · <a href="https://www.nj.gov/treasury/taxation/njit14.shtml" target="_blank" rel="noopener">NJ credit</a> · <a href="https://www.nj.gov/treasury/taxation/pdf/lpt/gtr/2025taxrates.pdf" target="_blank" rel="noopener">2025 property-tax comparison</a>. Effective rates are planning proxies; enter a real property’s tax bill before making a purchase decision. NJ’s transfer fee is seller-paid under current law, so the buyer model excludes it and NYC mortgage recording tax.</p></details>`;
- document.querySelector('.hdr')?.after(el);
+ if(previous)previous.replaceWith(el);else document.querySelector('.hdr')?.after(el);
 }
 
-const experienceBeforeLocation=experienceEnhance;experienceEnhance=function(){experienceBeforeLocation();experienceLocation();};
+if(_planLoaded)render();

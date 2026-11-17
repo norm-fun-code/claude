@@ -2156,7 +2156,11 @@ function render(){
   // finished sync or a new watchlist result reaches it without its own refresh path.
   try{renderNavLive()}catch(e){}
   if(activeTab!=='income')document.getElementById('flowToggle')?.remove();
-  const{R,tT,tC,tTx,tS,dp,mm}=run(P);
+  const projection=run(P);
+  renderPlanView(projection);
+  if(typeof experienceEnhance==='function')experienceEnhance(projection.R);
+}
+function renderPlanView({R,tT,tC,tTx,tS,dp,mm}){
   const last=R[R.length-1];
   // Celebrate real net-worth milestones (Monarch's actual synced value — not the
   // projected/plan figure, which changes on every slider drag and would fire constantly).
@@ -3391,12 +3395,13 @@ function paceCard(p,pt){
   const e=advEscape,m=v=>UI.money(v),M=v=>UI.money(v,{exact:true});
   const isTotal=lead===pt;
   const word=isTotal?'Total spending':'Discretionary spending';
+  const period=spendPacePeriod(lead.month);
 
   // Nothing is judged without enough history to judge it against, and the card says what
   // it is waiting for rather than showing a hedged verdict.
   if(lead.status!=='ok'){
     return `<section class="pace" data-tone="unknown">
-      <span class="ui-eyebrow">This month</span>
+      <span class="ui-eyebrow">${period}</span>
       <h3>Not enough history to judge the pace yet.</h3>
       <ul class="pace-needs">${(lead.needs||[]).map(n=>`<li>${e(n.why)}</li>`).join('')}</ul>
       <p class="pace-foot">${e(lead.note||'')}</p>
@@ -3427,7 +3432,7 @@ function paceCard(p,pt){
 
   return `<section class="pace ui-rise" data-tone="${TONE}">
     <header>
-      <span class="ui-eyebrow">This month · through the ${lead.day}${ordinal(lead.day)}</span>
+      <span class="ui-eyebrow">${period} · through the ${lead.day}${ordinal(lead.day)}</span>
       <h3>${headline}</h3>
     </header>
 
@@ -3439,7 +3444,7 @@ function paceCard(p,pt){
       Normal for you by this day is <b>${m(lead.normalLow)}–${m(lead.normalHigh)}</b>${
         lead.over>0?`, so you are <b>${m(lead.over)}</b> above typical`
                 :lead.over<-1?`, and you are <b>${m(-lead.over)}</b> below typical`:''}.
-      ${lead.monthsAbove!=null&&lead.monthsCompared?`This month is running above <b>${lead.monthsAbove} of your last ${lead.monthsCompared}</b> at the same point.`:''}
+      ${lead.monthsAbove!=null&&lead.monthsCompared?`Above <b>${lead.monthsAbove} of the previous ${lead.monthsCompared} months</b> at the same point.`:''}
       ${lastPct!=null?`Last month by the same day: <b>${M(lead.lastMonth.atDay)}</b>.`:''}
     </p>
 
@@ -3481,6 +3486,10 @@ let _spendScope={kind:'ytd'};
 // inferred from the last complete month. In January the most recent complete month is
 // December of the year before, and reading YTD off that would quietly report last year.
 function spendCurrentYear(asOf){return String(asOf||'').slice(0,4)||String(PlannerTime.year())}
+function spendPacePeriod(month){
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month||''))return 'Monthly pace';
+  return month===PlannerTime.day().slice(0,7)?'This month':monthLabel(month,{short:true});
+}
 // `all` is the closed months; `every` is the full history including the month in progress.
 // Year-to-date and a NAMED month read from `every` — the full history including the month in
 // progress. "So far this year" that stops at the end of last month is not what the phrase
@@ -4388,10 +4397,7 @@ function renderSpendingTab(R,P){
   const months=d.months||[],cov=d.coverage||{},tot=d.totals||{},cnt=d.counts||{};
   const asOf=d.endDate||PlannerTime.day();
   const completeAll=months.filter(m=>m.month<asOf.slice(0,7));
-  // The donut answers "where does it go", and that question has a period attached to it —
-  // twelve months and last March are different questions with different answers. The month in
-  // progress stays out of every scope: a category two-thirds through its month reads as a
-  // fall that has not happened.
+  // YTD and a named current month include posted transactions; rolling averages use past months.
   const complete=spendScopeMonths(completeAll,asOf,months);
   // Year-to-date is the one scope that carries the month in progress. Everything measured
   // per-month or compared against a prior period works off the closed months inside the scope,
@@ -5181,21 +5187,13 @@ function renderHousingTab(R,P,host){
   const q=afParams();
   const a=affordability(q,_afShare);
   const py=q.homePurchaseYear;
-  const perDollar=housingCostPerDollar(q);
   const buyRow=R.find(r=>r.yr===py)||R[R.length-1];
 
   const money=v=>v>=1e6?'$'+(v/1e6).toFixed(2)+'M':fmt(v);
   const over=q.homePrice-a.max;
 
   // What the CURRENT price actually costs each month
-  const cost=price=>{
-    const loan=price*(1-q.downPctg/100);
-    const mr=q.mortgageRate/100/12;
-    const pi=loan>0&&mr>0?loan*(mr*(1+mr)**360)/((1+mr)**360-1):0;
-    const tax=(locationPropertyRate(q,q.homePurchaseYear))*price/12;
-    const maint=(q.maintBase||0)*(price/q.homePrice)/12;
-    return{pi,tax,maint,all:pi+tax+maint};
-  };
+  const cost=price=>housingMonthlyCost(q,price);
   const cur=cost(q.homePrice),atMax=cost(a.max);
 
   let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
@@ -5314,6 +5312,7 @@ function renderHousingTab(R,P,host){
       ${line('Principal &amp; interest',cur.pi)}
       ${line('Property tax',cur.tax)}
       ${line('Maintenance',cur.maint)}
+      ${line('Homeowners insurance',cur.insurance)}
       <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:9px 0 0"><strong style="color:var(--tx)">All-in</strong><strong style="font-family:'SF Mono',monospace;color:${over>0?'var(--r)':'var(--g)'}">${fmtF(Math.round(cur.all))}/mo</strong></div>
       <div style="font-size:9.5px;color:var(--t3);margin-top:5px">${(cur.all*12/buyRow.netTC*100).toFixed(0)}% of ${py} after-tax income · down payment ${fmt(q.homePrice*q.downPctg/100)}</div>
     </div>
@@ -5322,6 +5321,7 @@ function renderHousingTab(R,P,host){
       ${line('Principal &amp; interest',atMax.pi)}
       ${line('Property tax',atMax.tax)}
       ${line('Maintenance',atMax.maint)}
+      ${line('Homeowners insurance',atMax.insurance)}
       <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:9px 0 0"><strong style="color:var(--tx)">All-in</strong><strong style="font-family:'SF Mono',monospace;color:var(--g)">${fmtF(Math.round(atMax.all))}/mo</strong></div>
       <div style="font-size:9.5px;color:var(--t3);margin-top:5px">${(atMax.all*12/buyRow.netTC*100).toFixed(0)}% of ${py} after-tax income · down payment ${fmt(a.max*q.downPctg/100)}</div>
     </div>
@@ -5948,7 +5948,7 @@ function renderNavLive(){
     // A zero badge and an absent badge look the same to a reader, so only a real count
     // is ever drawn. An unloaded watchlist shows nothing at all.
     if(open){badge.hidden=false;badge.textContent=open;
-      badge.setAttribute('aria-label',`${open} item${open===1?'':'s'} need your attention`);}
+      badge.setAttribute('aria-label',`${open} ${open===1?'item needs':'items need'} your attention`);}
     else badge.hidden=true;
   }
 
@@ -6078,6 +6078,8 @@ document.getElementById('main').innerHTML=`
 // ═══ AI ADVISOR ═══
 let advisorChats={};
 let advisorActiveChatId=null;
+let advisorSwitchVersion=0,advisorCreatingForSend=false;
+const advisorSending=new Set();
 let advisorConversation=[];
 let advAgenticMode=false;
 let _advBriefedChats=new Set();
@@ -6431,6 +6433,7 @@ async function advLoadMessages(id){
       const data=await res.json();
       advisorChats[id].messages=data.messages||[];
       if(id===advisorActiveChatId)advisorConversation=advisorChats[id].messages;
+      return true;
     }
   }catch(e){}
 }
@@ -6691,6 +6694,8 @@ document.addEventListener('keydown',e=>{
 });
 function advRenderMessages(){
   const msgs=document.getElementById('advMsgs');
+  document.getElementById('advProposalsPanel')?.remove();advPendingProposals=null;
+  const send=document.getElementById('advSend');if(send)send.disabled=advisorSending.has(advisorActiveChatId);
   if(!msgs)return;
   const visible=advisorConversation.filter(m=>!m.hidden);
   if(visible.length===0){
@@ -6724,9 +6729,6 @@ function advRenderMessages(){
       ]},
     ];
     msgs.innerHTML=`<div class="adv-welcome">
-      <p class="adv-welcome-lead">Bring a question. It works from your saved plan and your connected
-      accounts, computes every figure with the same engine as the rest of the app, and tells you
-      what it could not check rather than filling the gap.</p>
       ${GROUPS.map(g=>`<section class="adv-group">
         <span class="ui-eyebrow">${UI.icon(g.icon)}${g.label}</span>
         ${g.items.map(([q,title,sub])=>`<button class="adv-starter"
@@ -6795,8 +6797,7 @@ async function advOptimize(){
   // Ensure agentic mode is on
   if(!advAgenticMode)advToggleAgentic();
   // Create a fresh chat for this run
-  await advNewChat();
-  if(!advisorActiveChatId)return;
+  if(!await advNewChat())return;
   const prompt=`Optimize my financial plan. Follow these exact steps using your tools:
 
 1. Call run_projection() to lock in the baseline (final NW, deficit years, worst net flow).
@@ -6811,63 +6812,20 @@ Don't ask me questions — just run the analysis and deliver the recommendation.
   if(input){input.value=prompt;advSend();}
 }
 
-async function advAutoBrief(){
-  if(!advisorActiveChatId||!advisorChats[advisorActiveChatId])return;
-  const msgs=document.getElementById('advMsgs');
-  if(!msgs)return;
-  const thinking=advAddMessage('ai','',true);
-  const _res=run(P);const R=_res.R;
-  const liveContext=buildLiveContext(R,P,_res);
-  const briefPrompt='Give me a concise quarterly check-in on my financial plan: 3-4 specific things to flag right now. Mix of what\'s on track, what needs attention, and any quick wins. Be direct and specific to my actual numbers — no generic advice.';
-  const chat=advisorChats[advisorActiveChatId];
-  try{
-    const res=await fetch('/api/advisor/stream',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({chatId:advisorActiveChatId,message:briefPrompt,systemPrompt:liveContext,messages:[]})
-    });
-    if(!res.ok)throw new Error('API error '+res.status);
-    thinking.innerHTML='';
-    let fullReply='';
-    const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
-    outer:while(true){
-      const{done,value}=await reader.read();
-      if(done)break;
-      buf+=dec.decode(value,{stream:true});
-      const lines=buf.split('\n');buf=lines.pop();
-      for(const line of lines){
-        if(!line.startsWith('data: '))continue;
-        let payload;try{payload=JSON.parse(line.slice(6))}catch{continue}
-        if(payload.error)throw new Error(payload.error);
-        if(payload.delta){fullReply+=payload.delta;thinking.innerHTML=advMarkdown(fullReply);const m=document.getElementById('advMsgs');if(m)m.scrollTop=m.scrollHeight;}
-        if(payload.done)break outer;
-      }
-    }
-    const answer=fullReply||'(no response)';
-    thinking.innerHTML=advMarkdown(answer);
-    advisorConversation=[{role:'user',content:briefPrompt,hidden:true},{role:'assistant',content:answer}];
-    chat.messages=advisorConversation;
-    chat.title='📋 Quarterly brief';
-    chat.updatedAt=Date.now();
-    advRenderRail();
-  }catch(e){
-    if(thinking)thinking.innerHTML=`<p style="color:var(--r);font-size:11px">Couldn't connect to AI advisor. ${e.message}</p>`;
-  }
-}
-
-// Dead since the rail became a sheet: these toggled a .mob-show class that no longer
-// exists in any stylesheet. Worse, `function` declarations hoist and the LAST one wins,
-// so this stale advToggleRailMobile silently shadowed the real one defined above — the
-// button did nothing because it was calling a function that toggled nothing.
-// Closing after a chat switch is still wanted, so that keeps its own name.
 function _advHideRailMobile(){advToggleRail(false)}
+async function chatRequest(url,options){
+  const res=await fetch(url,options);
+  if(!res.ok)throw new Error('Chat request failed ('+res.status+')');
+  return res;
+}
 async function advNewChat(){
   if(_demoMode){advisorConversation=[];advRenderMessages();return;}
+  ++advisorSwitchVersion;
   _advHideRailMobile();
   const id=advUuid();
   try{
-    await fetch('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,title:'New conversation'})});
-  }catch(e){}
+    await chatRequest('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,title:'New conversation'})});
+  }catch{showToast('Could not save the new chat. Try again.','red');return false;}
   const now=Date.now();
   advisorChats[id]={id,title:'New conversation',messages:[],messageCount:0,createdAt:now,updatedAt:now};
   advisorActiveChatId=id;
@@ -6875,6 +6833,7 @@ async function advNewChat(){
   advRenderRail();
   advRenderMessages();
   const input=document.getElementById('advInput');if(input)input.focus();
+  return true;
 }
 
 function advRenderRail(){
@@ -6919,10 +6878,12 @@ function advRelTime(ts){
 async function advSwitchChat(id){
   if(!advisorChats[id])return;
   _advHideRailMobile();
-  advisorActiveChatId=id;
-  if(!advisorChats[id].messages||advisorChats[id].messages.length===0){
-    await advLoadMessages(id);
+  const version=++advisorSwitchVersion;
+  if(!advisorChats[id].messages.length&&advisorChats[id].messageCount){
+    if(!await advLoadMessages(id)){showToast('Could not load this conversation.','red');return;}
   }
+  if(version!==advisorSwitchVersion||!advisorChats[id])return;
+  advisorActiveChatId=id;
   advisorConversation=advisorChats[id].messages||[];
   advRenderRail();
   advRenderMessages();
@@ -6932,8 +6893,10 @@ async function advRenameChat(id){
   const c=advisorChats[id];if(!c)return;
   const t=prompt('Rename conversation:',c.title);
   if(t&&t.trim()){
-    c.title=t.trim().slice(0,80);c.updatedAt=Date.now();
-    fetch('/api/chats/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:c.title})}).catch(()=>{});
+    const title=t.trim().slice(0,80);
+    try{await chatRequest('/api/chats/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})});}
+    catch{showToast('Rename failed. Try again.','red');return;}
+    c.title=title;c.updatedAt=Date.now();
     advRenderRail();
   }
 }
@@ -6941,7 +6904,8 @@ async function advRenameChat(id){
 async function advDeleteChat(id){
   const c=advisorChats[id];if(!c)return;
   if(!confirm(`Delete "${c.title}"? This cannot be undone.`))return;
-  fetch('/api/chats/'+id,{method:'DELETE'}).catch(()=>{});
+  try{await chatRequest('/api/chats/'+id,{method:'DELETE'});}
+  catch{showToast('Delete failed. Try again.','red');return;}
   delete advisorChats[id];
   if(advisorActiveChatId===id){
     advisorActiveChatId=null;
@@ -6957,25 +6921,22 @@ function advImportChats(){
   input.onchange=e=>{
     const file=e.target.files[0];if(!file)return;
     const reader=new FileReader();
-    reader.onload=ev=>{
+    reader.onload=async ev=>{
       try{
         const data=JSON.parse(ev.target.result);
         if(!data.chats||typeof data.chats!=='object')throw new Error('Invalid file format');
         const incoming=Object.values(data.chats);
-        if(!confirm(`Import ${incoming.length} conversation${incoming.length===1?'':'s'}? Merges with existing chats.`))return;
+        if(incoming.some(c=>!c||!Array.isArray(c.messages)))throw new Error('Missing conversation history');
+        if(!confirm('Import '+incoming.length+' conversations as new chats?'))return;
         let imported=0;
-        const promises=[];
-        Object.entries(data.chats).forEach(([id,chat])=>{
-          if(chat.id&&chat.messages&&Array.isArray(chat.messages)){
-            const newId=advisorChats[id]?advUuid():id;
-            advisorChats[newId]={...chat,id:newId,messages:chat.messages,messageCount:chat.messages.length,createdAt:chat.createdAt||Date.now(),updatedAt:chat.updatedAt||Date.now()};
-            promises.push(fetch('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:newId,title:chat.title||'Imported chat'})})
-              .then(()=>fetch('/api/chats/'+newId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:chat.messages})}))
-              .catch(()=>{}));
-            imported++;
-          }
-        });
-        Promise.all(promises).then(()=>{advRenderRail();alert(`Imported ${imported} conversation${imported===1?'':'s'}.`)});
+        for(const chat of incoming){
+          const id=advUuid(),title=String(chat.title||'Imported chat').slice(0,80),messages=chat.messages;
+          try{await chatRequest('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,title,messages})});}
+          catch{break;}
+          const now=Date.now();advisorChats[id]={id,title,messages,messageCount:messages.length,createdAt:now,updatedAt:now};imported++;
+        }
+        advRenderRail();
+        showToast('Imported '+imported+' of '+incoming.length+' conversations.',imported===incoming.length?'green':'red');
       }catch(err){alert('Failed to import: '+err.message)}
     };
     reader.readAsText(file);
@@ -6983,8 +6944,17 @@ function advImportChats(){
   input.click();
 }
 
-function advExportChats(){
-  const data={exportedAt:new Date().toISOString(),chats:advisorChats};
+async function advExportChats(){
+  const chats={};
+  try{
+    const list=await (await chatRequest('/api/chats')).json();
+    for(const {id} of list){
+      const c=await (await chatRequest('/api/chats/'+encodeURIComponent(id))).json();
+      if(!Array.isArray(c.messages))throw new Error('Missing conversation history');
+      chats[id]={id,title:c.title,messages:c.messages,messageCount:c.messages.length,createdAt:Date.parse(c.created_at),updatedAt:Date.parse(c.updated_at)};
+    }
+  }catch{showToast('Export failed. No file was created.','red');return;}
+  const data={exportedAt:new Date().toISOString(),chats};
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download=`advisor-chats-${PlannerTime.day()}.json`;a.click();
@@ -6992,18 +6962,20 @@ function advExportChats(){
 
 async function advSend(){
   if(_demoMode)return;
+  if(advisorCreatingForSend||advisorSending.has(advisorActiveChatId))return;
   const input=document.getElementById('advInput');
   const text=input.value.trim();
   if(!text)return;
   if(!advisorActiveChatId||!advisorChats[advisorActiveChatId]){
-    await advNewChat();
-    if(!advisorActiveChatId)return;
+    advisorCreatingForSend=true;
+    try{if(!await advNewChat())return;}finally{advisorCreatingForSend=false;}
   }
   input.value='';input.style.height='auto';
   document.getElementById('advSend').disabled=true;
   advAddMessage('user',text);
   advisorConversation.push({role:'user',content:text});
   const chat=advisorChats[advisorActiveChatId];
+  advisorSending.add(chat.id);
   chat.messages=advisorConversation;
   if(chat.messages.length===1){chat.title=text.slice(0,50)+(text.length>50?'…':'')}
   chat.updatedAt=Date.now();
@@ -7015,11 +6987,12 @@ async function advSend(){
 }
 
 async function advSendStream(text,chat,liveContext,thinking){
+  const sent=chat.messages.at(-1);
   try{
     const res=await fetch('/api/advisor/stream',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({chatId:advisorActiveChatId,message:text,systemPrompt:liveContext,messages:advisorConversation})
+      body:JSON.stringify({chatId:chat.id,message:text,systemPrompt:liveContext,messages:chat.messages})
     });
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`HTTP ${res.status}`)}
     let fullReply='';let toolNote='';const structuredResults=[];
@@ -7054,92 +7027,20 @@ async function advSendStream(text,chat,liveContext,thinking){
     }
     const answer=fullReply||'Sorry, no response. Try again?';
     thinking.innerHTML=(fullReply?'':toolNote)+advMarkdown(answer);
-    advisorConversation.push({role:'assistant',content:answer,structuredResults});
-    advRestoreStructured(structuredResults);
-    chat.messages=advisorConversation;chat.updatedAt=Date.now();
+    chat.messages.push({role:'assistant',content:answer,structuredResults});chat.updatedAt=Date.now();
+    if(advisorActiveChatId===chat.id&&activeTab==='advisor'){
+      if(thinking.isConnected)advRestoreStructured(structuredResults);
+      else advRenderMessages();
+    }
     advRenderRail();
   }catch(err){
     thinking.innerHTML=`<p style="color:var(--r)"><strong>Error:</strong> ${advEscape(err.message)}</p><p style="font-size:11px;color:var(--t3);margin-top:4px">Check your connection and try again.</p>`;
-    advisorConversation.pop();chat.messages=advisorConversation;
+    const i=chat.messages.indexOf(sent);if(i>=0)chat.messages.splice(i,1);
   }finally{
-    document.getElementById('advSend').disabled=false;
-    const inp=document.getElementById('advInput');if(inp)inp.focus();
+    advisorSending.delete(chat.id);
+    const send=document.getElementById('advSend');
+    if(send&&advisorActiveChatId===chat.id){send.disabled=false;document.getElementById('advInput')?.focus();}
   }
-}
-
-async function advSendAgentic(text,chat,liveContext,thinking){
-  const toolLog=[]; // collected tool_call events for the proposals panel
-  try{
-    const res=await fetch('/api/advisor/agentic',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({chatId:advisorActiveChatId,message:text,systemPrompt:liveContext,messages:advisorConversation,currentParams:{...P}})
-    });
-    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||`HTTP ${res.status}`)}
-    let fullReply='';
-    const reader=res.body.getReader();const dec=new TextDecoder();let buf='';
-    outer:while(true){
-      const{done,value}=await reader.read();
-      if(done)break;
-      buf+=dec.decode(value,{stream:true});
-      const lines=buf.split('\n');buf=lines.pop();
-      for(const line of lines){
-        if(!line.startsWith('data: '))continue;
-        let payload;try{payload=JSON.parse(line.slice(6))}catch{continue}
-        if(payload.error)throw new Error(payload.error);
-        if(payload.delta){
-          fullReply+=payload.delta;
-          thinking.innerHTML=advMarkdown(fullReply);
-          const msgs=document.getElementById('advMsgs');if(msgs)msgs.scrollTop=msgs.scrollHeight;
-        }
-        if(payload.tool_call){
-          toolLog.push(payload.tool_call);
-          if(!fullReply)thinking.innerHTML=advThinkingMarkup(advToolStatus(payload.tool_call.name));
-          advInsertToolCallBubble(payload.tool_call);
-        }
-        if(payload.done){
-          advPendingProposals=payload.proposedChanges&&payload.proposedChanges.length>0?{changes:payload.proposedChanges,aiParams:payload.aiParams,baseline:payload.baseline}:null;
-          break outer;
-        }
-      }
-    }
-    const answer=fullReply||'';
-    if(answer)thinking.innerHTML=advMarkdown(answer);
-    else if(thinking.innerHTML==='')thinking.remove();
-    if(advPendingProposals){
-      const suggestedName=[...toolLog].reverse().find(t=>t.name==='save_scenario')?.scenarioName;
-      advShowProposals(advPendingProposals,chat.title,suggestedName);
-    }
-    advisorConversation.push({role:'assistant',content:answer||'[Agentic analysis complete]'});
-    chat.messages=advisorConversation;chat.updatedAt=Date.now();
-    advRenderRail();
-  }catch(err){
-    thinking.innerHTML=`<p style="color:var(--r)"><strong>Error:</strong> ${advEscape(err.message)}</p><p style="font-size:11px;color:var(--t3);margin-top:4px">Check your connection and try again.</p>`;
-    advisorConversation.pop();chat.messages=advisorConversation;
-  }finally{
-    document.getElementById('advSend').disabled=false;
-    const inp=document.getElementById('advInput');if(inp)inp.focus();
-  }
-}
-
-function advInsertToolCallBubble(tc){
-  const msgs=document.getElementById('advMsgs');if(!msgs)return;
-  const div=document.createElement('div');div.className='adv-tool adv-tool-detail';
-  let body='';
-  if(tc.name==='set_expense_category'){
-    const label=(tc.expenseCategory||'category').replace(/^./,s=>s.toUpperCase());
-    body=`<strong>Expense category</strong>: ${advEscape(String(tc.expenseYear))} ${advEscape(label)} ${tc.oldValue!==undefined?`<span class="tc-old">${fmt(tc.oldValue)}</span> → `:''}<strong>${fmt(tc.value)}</strong>${tc.reason?` — <em>${advEscape(tc.reason)}</em>`:''}`;
-  } else if(tc.name==='set_param'){
-    const old=tc.oldValue!==undefined?`<span class="tc-old">${advEscape(String(tc.oldValue))}</span> → `:'';
-    body=`<strong>set_param</strong>: <code>${advEscape(tc.key)}</code> ${old}<strong>${advEscape(String(tc.value))}</strong>${tc.reason?` — <em>${advEscape(tc.reason)}</em>`:''}`;
-  } else if(tc.name==='run_projection'){
-    const r=tc.result||{};
-    body=`<strong>run_projection</strong>: NW@2058 ${fmt(r.finalNW||0)} · Liquid${fmt(r.finalLiquid||0)} · Deficit yrs ${r.deficitYears||0}`;
-  } else if(tc.name==='save_scenario'){
-    body=`<strong>save_scenario</strong>: proposing "<em>${advEscape(tc.scenarioName||'')}</em>"`;
-  }
-  div.innerHTML=body;
-  msgs.appendChild(div);msgs.scrollTop=msgs.scrollHeight;
 }
 
 function advRestoreStructured(records){
@@ -7264,8 +7165,7 @@ async function advAcceptProposals(name){
 }
 
 // Applies just the AI's specific proposed changes onto the TARGET scenario's own params —
-// not the AI's full sandbox. The sandbox is always seeded from the LIVE plan (see
-// advSendAgentic's currentParams:{...P}), so replacing a scenario's params with it wholesale
+// not the proposal's full baseline. Replacing a scenario's params wholesale
 // would silently revert every field that scenario legitimately differs on (e.g. a distinct
 // home price) back to the live plan's value, keeping only the one field the AI touched.
 async function advUpdateExistingScenario(i){

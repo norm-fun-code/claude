@@ -1599,12 +1599,14 @@ app.get('/api/chats/:id', requireAuth, async (req, res) => {
 
 app.post('/api/chats', requireAuth, async (req, res) => {
   try {
-    const { id, title } = req.body;
-    await db.query(
-      `INSERT INTO advisor_chats (id, title, messages) VALUES ($1, $2, '[]')
-       ON CONFLICT (id) DO NOTHING`,
-      [id, title || 'New conversation']
+    const { id, title, messages=[] } = req.body;
+    if(!Array.isArray(messages))return res.status(400).json({error:'Invalid messages'});
+    const inserted=await db.query(
+      `INSERT INTO advisor_chats (id, title, messages) VALUES ($1, $2, $3)
+       ON CONFLICT (id) DO NOTHING RETURNING id`,
+      [id, title || 'New conversation', JSON.stringify(messages)]
     );
+    if(!inserted.rowCount)return res.status(409).json({error:'Chat already exists'});
     res.json({ ok: true });
   } catch (err) {
     console.error('POST chat error:', err);

@@ -38,7 +38,7 @@ describe('the current advisor experience', () => {
   it('shows an accessible planning indicator immediately and during tool work', () => {
     expect(html).toContain('function advThinkingMarkup');
     expect(html).toContain('role="status" aria-live="polite"');
-    expect(html).toContain('advThinkingMarkup(advToolStatus(payload.tool_call.name))');
+    expect(html).toContain('_renderBubble(advToolStatus(payload.tool_call.name))');
     expect(css).toContain('.adv-orb');
     expect(css).toContain('@media(prefers-reduced-motion:reduce)');
   });

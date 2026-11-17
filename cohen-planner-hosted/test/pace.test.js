@@ -534,7 +534,7 @@ describe('The card says what the range actually is',()=>{
   });
 
   it('prints the count of months it is running above',()=>{
-    expect(html).toContain('running above <b>${lead.monthsAbove} of your last ${lead.monthsCompared}</b>');
+    expect(html).toContain('Above <b>${lead.monthsAbove} of the previous ${lead.monthsCompared} months</b>');
   });
 
   it('explains what the band is instead of asserting "normal"',()=>{

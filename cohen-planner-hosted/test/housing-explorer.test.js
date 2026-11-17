@@ -70,9 +70,17 @@ describe('what waiting actually buys', () => {
     expect(tab).toContain("v.binding==='comfort'?'Carrying cost':'Balance sheet'");
   });
 
-  it('is monotone while the balance sheet binds, because saving only accumulates', () => {
-    for (let y = 2026; y < 2029; y++)
-      expect(by(y + 1).max, String(y)).toBeGreaterThan(by(y).max);
+  it('distinguishes growing purchase funds from an income-limited payment', () => {
+    for (let y = 2026; y < 2029; y++) {
+      const before=by(y),after=by(y+1);
+      expect(after.plan).toBeGreaterThan(before.plan);
+      expect(after.max).toBe(Math.min(after.plan,after.comfort));
+    }
+    const late=by(2029);
+    expect(late.binding).toBe('comfort');
+    const q={...P,homePurchaseYear:2029};
+    const income=M.run(q).R.find(r=>r.yr===2029).netTC;
+    expect(M.housingMonthlyCost(q,late.max).annual).toBeCloseTo(income*share,4);
   });
 
   it('lets a year be explored by clicking its row', () => {

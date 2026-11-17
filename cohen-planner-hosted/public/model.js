@@ -1279,32 +1279,27 @@ function insuranceFor(price,p){
 // Neither dominates. A big balance sheet with thin cash flow is comfort-limited; strong cash
 // flow with little saved is plan-limited. Reporting only one hides the constraint that binds.
 
-// Annual all-in housing cost per $1 of purchase price, holding down %, rate and tax rate
-// fixed. Every component is proportional to price, which is what makes the ratio test a
-// division rather than a search.
-function housingCostPerDollar(p){
-  const loanFrac=1-(p.downPctg||0)/100;
-  const mr=(p.mortgageRate||0)/100/12;
-  const piPerDollar=mr>0
-    ? loanFrac*(mr*(1+mr)**360)/((1+mr)**360-1)*12
-    : loanFrac/30; // 0% mortgage: straight amortisation over the term
-  const maintPerDollar=p.homePrice>0?(p.maintBase||0)/p.homePrice:0;
-  // Insurance scales with the insured value, so it belongs in the per-dollar rate rather
-  // than being bolted on afterwards — leaving it out overstated affordability.
-  const insPerDollar=p.homeInsuranceAnnual!=null
-    ?(p.homePrice>0?Number(p.homeInsuranceAnnual)/p.homePrice:0)
-    :(p.homeInsuranceRate!=null?Number(p.homeInsuranceRate):0.0035);
-  return piPerDollar+locationPropertyRate(p,p.homePurchaseYear)+maintPerDollar+insPerDollar;
+// First-year carrying cost uses the same mortgage, tax and insurance rules as run().
+// Explicit annual premiums and maintenance stay fixed when testing another price.
+function housingMonthlyCost(p,price=p.homePrice){
+  const q={...p,homePrice:price};
+  const pi=mPmt(price*(1-(p.downPctg||0)/100),(p.mortgageRate||0)/100)/12;
+  const tax=locationPropertyRate(q,p.homePurchaseYear)*price/12;
+  const maint=(p.maintBase||0)/12,insurance=insuranceFor(price,p)/12;
+  const annual=12*(pi+tax+maint+insurance);
+  return {pi,tax,maint,insurance,annual,all:Math.round(annual)/12};
 }
-
+function housingCostPerDollar(p){
+  return p.homePrice>0?housingMonthlyCost(p).annual/p.homePrice:0;
+}
 function comfortAffordablePrice(p,targetShare,R){
-  const rows=R||run(p).R;
-  const row=rows.find(r=>r.yr===p.homePurchaseYear)||rows[rows.length-1];
-  const perDollar=housingCostPerDollar(p);
-  if(!(perDollar>0))return 0;
-  // netTC is total after-tax comp: vesting stock is sellable at vest for no extra tax, so it
-  // funds a mortgage payment like any other dollar.
-  return Math.max(0,row.netTC*targetShare/perDollar);
+  const rows=R||run(p).R,row=rows.find(r=>r.yr===p.homePurchaseYear)||rows[rows.length-1];
+  // The cost is linear at positive prices. Two quotes separate its fixed dollars
+  // from its price-dependent portion, including legacy fixed property-tax inputs.
+  const q1=housingMonthlyCost(p,100000).annual,q2=housingMonthlyCost(p,200000).annual;
+  const slope=(q2-q1)/100000,fixed=2*q1-q2,budget=row.netTC*targetShare;
+  if(slope<=1e-12)return budget>=fixed?8000000:0; // upper search bound of the funding test
+  return Math.max(0,(budget-fixed)/slope);
 }
 
 // Feasibility is monotone in price — a more expensive house is never easier to fund — so
@@ -1418,7 +1413,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 if(typeof module!=='undefined'&&module.exports){
   module.exports={NJ_MFJ_BR,DEAL_SPENDING_FACTORS,NJ_PROPERTY_RATES,locationActive,locationSpendingFactor,locationPropertyRate,locationAdditions,locationCapitalGainsRate,nycKidCost,commonHousehold,bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
     normComp,nancyW2Income,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
-    housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
+    housingMonthlyCost,housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,
     FED_BR_2026,NYS_BR_2026,NYC_BR_2026,SS_CAP_2026,SALT_BASE_2026,STD_DEDUCT_2026,

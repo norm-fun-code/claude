@@ -12,6 +12,20 @@ function presentation(){
 }
 const row=(year,parts,extra={})=>({yr:year,livFullParts:parts,hFull:0,ccFull:0,tuFull:0,...extra});
 describe('focused spending and budget presentation',()=>{
+ it('quotes the same purchase-year monthly cost as the projection, including insurance in both locations',()=>{
+  const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+  const D=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
+  for(const mode of ['brooklyn','deal']){
+   const plan={...D,housingMode:'buy',homePrice:1500000,homeInsuranceAnnual:8400,homePurchaseYear:2031,locationConfig:{mode,moveYear:2031}};
+   const r=Model.run(plan).R.find(x=>x.yr===2031),t=presentation(),el={};
+   Object.assign(t.ctx,{rbParams:()=>({...plan}),housingMonthlyCost:Model.housingMonthlyCost,document:{getElementById:()=>el}});
+   t.call('experienceHomePeek()');
+   const zeroRate={...plan,mortgageRate:0};
+   const q=Model.housingMonthlyCost(zeroRate);expect(q.pi).toBeCloseTo(750000/360);expect(q.insurance).toBe(700);
+   const max=Model.comfortAffordablePrice(plan,.28,[r]);expect(Model.housingMonthlyCost(plan,max).annual).toBeCloseTo(r.netTC*.28,5);
+   expect(el.innerHTML).toContain('Monthly carrying cost</span><strong>'+t.ctx.UI.money(r.hFull/12)+'</strong>');
+  }
+ });
  it('distinguishes overspending, underspending and missing actuals without inventing zero actuals',()=>{
   const t=presentation();t.ctx.row=row(2026,{groceries:12000,clothing:6000,medical:1200});
   t.ctx.actual={lines:{groceries:{perMonth:1500},clothing:{perMonth:400}}};
