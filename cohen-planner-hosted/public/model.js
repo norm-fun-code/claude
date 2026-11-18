@@ -1319,12 +1319,46 @@ function planAffordablePrice(p,opts){
   return Math.floor(lo/step)*step;
 }
 
-function affordability(p,targetShare,R){
-  const plan=planAffordablePrice(p);
-  const comfort=comfortAffordablePrice(p,targetShare??0.28,R);
-  const max=Math.min(plan,comfort);
-  return{plan,comfort,max,binding:plan<=comfort?'plan':'comfort',
-    current:p.homePrice,withinBudget:p.homePrice<=max};
+// Housing comfort is tested against the same home's actual projection in every
+// owned year through the last tuition bill. Without upcoming tuition, test the
+// modeled mortgage term. The reserve test always uses the entire projection.
+function housingYears(p,rows,share){
+  const owned=rows.filter(r=>r.yr>=p.homePurchaseYear);
+  const end=owned.filter(r=>r.tuFull>0).at(-1)?.yr??Math.min(p.homePurchaseYear+29,owned.at(-1)?.yr??p.homePurchaseYear);
+  return owned.filter(r=>r.yr<=end).map(r=>{
+    const pin=p['savingEmergencyY'+(r.yr-(p.planStartYear??2026))];
+    const emergency=pin!=null&&pin!==''?Number(pin):budgetValue(p,'emergency',r.yr,{net:r.netTC,gross:r.gross});
+    // Total additional after-tax saving, inclusive of any explicit emergency goal.
+    const saving=Math.max(0,emergency||0,r.netTC*(p.housingSavingShare||0));
+    const shareRoom=r.netTC*share,room=r.netTC-(r.totEFull-r.hFull)-saving;
+    return {year:r.yr,margin:Math.min(shareRoom,room)-r.hFull,
+      gap:Math.max(0,r.hFull-room),reason:shareRoom<=room?'Income-share ceiling':'Spending and savings',
+      income:r.netTC,tuition:r.tuFull};
+  });
+}
+function affordability(p,targetShare=.25){
+  const floor=p.liquidReserveFloor??500000,cap=8000000,step=1000,cache=new Map();
+  function check(price){
+    if(cache.has(price))return cache.get(price);
+    const rows=run({...p,housingMode:'buy',homePrice:price}).R,years=housingYears(p,rows,targetShare);
+    const tight=years.reduce((a,b)=>!a||b.margin<a.margin?b:a,null);
+    const reserve=rows.find(r=>r.liq<floor-1);
+    const result={tight,years,reserveYear:reserve?.yr,plan:!reserve,comfort:!!tight&&tight.margin>=0};
+    cache.set(price,result);return result;
+  }
+  function limit(key){
+    let lo=0,hi=cap/step;
+    if(check(cap)[key])return cap;
+    while(hi-lo>1){const m=Math.floor((lo+hi)/2);if(check(m*step)[key])lo=m;else hi=m;}
+    return lo*step;
+  }
+  const plan=limit('plan'),comfort=limit('comfort'),max=Math.min(plan,comfort);
+  const next=check(Math.min(cap,max+step)),current=check(p.homePrice);
+  const binding=plan<=comfort?'plan':'comfort',capped=max===cap;
+  return {plan,comfort,max,binding,current:p.homePrice,withinBudget:p.homePrice<=max,
+    reason:capped?'Search ceiling':binding==='plan'?'Liquidity reserve':next.tight?.reason,
+    year:capped?null:binding==='plan'?next.reserveYear:next.tight?.year,end:current.years.at(-1)?.year,
+    gaps:current.years.filter(r=>r.gap>0),reserveYear:current.reserveYear};
 }
 
 function randNorm(mean,sd){
@@ -1413,7 +1447,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 if(typeof module!=='undefined'&&module.exports){
   module.exports={NJ_MFJ_BR,DEAL_SPENDING_FACTORS,NJ_PROPERTY_RATES,locationActive,locationSpendingFactor,locationPropertyRate,locationAdditions,locationCapitalGainsRate,nycKidCost,commonHousehold,bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
     normComp,nancyW2Income,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
-    housingMonthlyCost,housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
+    housingYears,housingMonthlyCost,housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,
     FED_BR_2026,NYS_BR_2026,NYC_BR_2026,SS_CAP_2026,SALT_BASE_2026,STD_DEDUCT_2026,

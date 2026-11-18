@@ -316,7 +316,7 @@ function experienceHousing(R){
   if(root){
     const kids=[...root.children];
     // Preserve every affordability, cash-to-close, funding-stress and mortgage tool in contextual folds.
-    const timing=kids.filter(n=>/What you can afford, by purchase year/.test(n.textContent));
+    const timing=kids.filter(n=>n.tagName!=='DETAILS'&&/What you can afford, by purchase year/.test(n.textContent));
     const payment=kids.filter(n=>/Monthly cost at/.test(n.textContent));
     const answer=kids[0],limits=kids[1],comfort=kids[2];
     if(experienceHousingView==='payment'){

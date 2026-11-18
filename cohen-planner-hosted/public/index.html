@@ -500,7 +500,7 @@ const D={
   stripeRetY0:.15,stripeRetY1:.15,stripeRetY2:.12,stripeRetY3:.12,stripeRetY4:.10,
   stripeRetY5:.10,stripeRetY6:.09,stripeRetY7:.09,stripeRetY8:.08,stripeRetY9:.08,
   stripeLongTermReturn:.08,
-  stripePolicy:'deficit',liquidReserveFloor:500000,stripeSellPct:.30,
+  housingSavingShare:0,stripePolicy:'deficit',liquidReserveFloor:500000,stripeSellPct:.30,
   pretax401k:23500,pretaxBenefits:11700,
   company401kMatch:8750,
   // Nancy — 4 rolling specific W2 years (ignored once yr >= nancyRampYear)
@@ -5091,7 +5091,7 @@ function renderRentBuyTab(R,P,host){
 // rent-or-buy overrides (_rbOv), so the verdict, the affordable price, the rates grid and the monthly
 // cost all answer for the same assumptions, and one Apply puts them in the plan. Only the comfort
 // share — how much of income housing may take — is the affordability screen's own.
-let _afShare=0.28;
+let _afShare=0.25;
 let _afQuarter=null,_afTenderCap=null,_afPauseMonths=0;
 function afSet2(k,v){if(k==='q')_afQuarter=parseInt(v,10);else if(k==='cap')_afTenderCap=v===''||v==='none'?null:Number(v);else _afPauseMonths=Number(v);render()}
 function afSet(k,v){
@@ -5100,7 +5100,7 @@ function afSet(k,v){
   else if(k==='year')rbSet('homePurchaseYear',v);
   else{_afShare=parseFloat(v);render()}
 }
-function afReset(){_afShare=0.28;rbReset()}
+function afReset(){_afShare=0.25;rbReset()}
 function afParams(){return rbParams()}
 
 // ── Down payment readiness and the mortgage's whole life (these lived on the Goals tab) ──────────
@@ -5187,26 +5187,24 @@ function renderHousingTab(R,P,host){
   const q=afParams();
   const a=affordability(q,_afShare);
   const py=q.homePurchaseYear;
-  const buyRow=R.find(r=>r.yr===py)||R[R.length-1];
+  const buyRow=run(q).R.find(r=>r.yr===py)||R[R.length-1];
 
   const money=v=>v>=1e6?'$'+(v/1e6).toFixed(2)+'M':fmt(v);
   const over=q.homePrice-a.max;
 
   // What the CURRENT price actually costs each month
   const cost=price=>housingMonthlyCost(q,price);
-  const cur=cost(q.homePrice),atMax=cost(a.max);
+  const cur=cost(q.homePrice),atMax=a.max?cost(a.max):{pi:0,tax:0,maint:0,insurance:0,all:0};
 
   let h=`<div style="display:flex;flex-direction:column;gap:14px;padding:2px">`;
 
   // ── The answer ──
   h+=`<div class="glass-card" style="padding:22px 24px;background:linear-gradient(135deg,rgba(54,92,67,.10),rgba(130,149,117,.04))">
-    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3)">How much house can you afford?</div>
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3)">Comfortable purchase price</div>
     <div style="font-size:40px;font-weight:800;letter-spacing:-1.5px;color:var(--tx);font-family:'SF Mono',ui-monospace,monospace;margin:4px 0 2px">${money(a.max)}</div>
     <div style="font-size:12px;color:var(--t2);line-height:1.6">
-      at <strong>${q.mortgageRate}%</strong> with <strong>${q.downPctg}%</strong> down — about <strong>${fmtF(Math.round(atMax.all))}/mo</strong> all-in.<br>
-      ${a.binding==='comfort'
-        ? `Limited by <strong>carrying cost</strong>: above this, housing eats more than ${(_afShare*100).toFixed(0)}% of your after-tax income in ${py}. Your balance sheet could actually fund up to ${money(a.plan)}.`
-        : `Limited by your <strong>balance sheet</strong>: above this, funding the purchase would break your ${fmt(q.liquidReserveFloor??D.liquidReserveFloor)} reserve floor. Cash flow alone could carry up to ${money(a.comfort)}.`}
+      ${a.max?fmtF(Math.round(atMax.all))+'/mo at purchase':'No positive price clears both limits'} · ${a.reason}${a.year?' in '+a.year:''}
+      ${a.max&&buyRow.netTC>0?'<br>'+((atMax.all*12)/buyRow.netTC*100).toFixed(1)+'% of purchase-year take-home':''}
     </div>
   </div>`;
 
@@ -5217,7 +5215,7 @@ function renderHousingTab(R,P,host){
     <div style="font-size:9.5px;color:var(--t2);margin-top:3px;line-height:1.45">${sub}</div>
   </div>`;
   h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
-    ${limitCard('Carrying-cost limit',a.comfort,`All-in housing stays under ${(_afShare*100).toFixed(0)}% of ${py} after-tax income (${fmt(buyRow.netTC)})`,a.binding==='comfort',false)}
+    ${limitCard('Carrying-cost limit',a.comfort,`Income ceiling and remaining budget · ${py}–${a.end}`,a.binding==='comfort',false)}
     ${limitCard('Balance-sheet limit',a.plan,`The most you can fund with the ${fmt(q.liquidReserveFloor??D.liquidReserveFloor)} reserve floor still intact, selling Stripe as needed`,a.binding==='plan',false)}
     ${limitCard('Your current plan',q.homePrice,over>0?`${money(over)} above what you can afford — ${fmtF(Math.round(cur.all))}/mo, ${(cur.all*12/buyRow.netTC*100).toFixed(0)}% of income`:`Within budget — ${fmtF(Math.round(cur.all))}/mo, ${(cur.all*12/buyRow.netTC*100).toFixed(0)}% of income`,false,over>0)}
   </div>`;
@@ -5226,25 +5224,29 @@ function renderHousingTab(R,P,host){
   // A percentage is not a budget until it is a number of dollars. The share lever now
   // answers "28% of what?" in the place where it is being moved, rather than leaving the
   // reader to find the figure in the card above and do the arithmetic.
-  const shareBudget=_afShare*buyRow.netTC;
   const lever=(id,label,val,min,max,step,fmtv,key,sub)=>`<div>
     <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:10px;color:var(--t2)">${label}</span><span style="font-size:11px;font-weight:700;font-family:'SF Mono',monospace;color:var(--tx)">${fmtv}</span></div>
-    <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}" oninput="afSet('${key}',this.value)" style="width:100%">
+    <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}" aria-label="${label}" oninput="this.previousElementSibling.lastElementChild.textContent=Math.round(this.value*100)+'%'" onchange="afSet('${key}',this.value)" style="width:100%">
     ${sub?`<div style="font-size:9.5px;color:var(--t3);margin-top:3px;line-height:1.45">${sub}</div>`:''}
   </div>`;
   const lastYr=R[R.length-1].yr;
   h+=`<div class="glass-card" style="padding:16px 18px">
-    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:12px">How much of income housing may take — the number above updates (rate, down payment and year are set under Rent or buy)</div>
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:12px">Housing comfort</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px">
-      ${lever('afShare','Max share of income',_afShare,.15,.45,.01,(_afShare*100).toFixed(0)+'%','share',
-        `<strong style="color:var(--t2)">${fmtF(Math.round(shareBudget/12))}/mo</strong> · ${fmt(Math.round(shareBudget))}/yr — ${(_afShare*100).toFixed(0)}% of ${fmt(buyRow.netTC)} after-tax income in ${py}`)}
+      ${lever('afShare','Max housing share of take-home',_afShare,.15,.45,.01,(_afShare*100).toFixed(0)+'%','share',
+        `Every year, ${py}–${a.end} · includes after-tax vested stock`)}
     </div>
+    <details><summary>Assumptions & savings</summary>
+    <label>Additional after-tax savings target (% of take-home) <input type="number" min="0" max="100" step="1" value="${Math.round((q.housingSavingShare||0)*100)}" onchange="U('housingSavingShare',Math.min(100,Math.max(0,Number(this.value)||0))/100)"></label>
+    <p>Includes scheduled emergency savings. Payroll retirement contributions are already deducted. With no future tuition, we check the modeled mortgage term.</p></details>
+    ${over>0?`<details><summary>Use savings at the selected ${money(q.homePrice)} price?</summary>${a.gaps.length?`Set aside ${fmtF(Math.ceil(a.gaps.reduce((n,x)=>n+x.gap,0)))} for ${a.gaps.length} shortfall year(s) · ${a.gaps.map(x=>x.year).join(', ')}. Total future dollars, before returns or sale taxes.`:'No earnings gap in the tested years.'} ${a.reserveYear?'The reserve floor also fails in '+a.reserveYear+'.':''} Savings do not waive the income-share ceiling.</details>`:''}
   </div>`;
 
   // ── What waiting buys you ──────────────────────────────────────────────
   // "How much house can I afford" and "what if I buy later" are the same question asked
   // twice, so they belong on the same screen. Each year is the full model re-run, not the
   // headline figure grown at a rate.
+  const comparisonYears=()=>{
   const YEARS=[];
   for(let y=R[0].yr;y<=Math.min(lastYr,R[0].yr+12);y++)YEARS.push(y);
   const byYear=YEARS.map(y=>{
@@ -5255,19 +5257,19 @@ function renderHousingTab(R,P,host){
   });
   const yMax=Math.max(...byYear.map(v=>v.max));
   const nowMax=byYear.find(v=>v.y===py);
-  h+=`<div class="glass-card" style="padding:16px 18px">
+  return `<div class="glass-card" style="padding:16px 18px">
     <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">What you can afford, by purchase year</div>
     <div style="font-size:10px;color:var(--t2);margin-bottom:11px">Each row re-runs the whole plan buying in that year, at ${q.mortgageRate}% with ${q.downPctg}% down. Click a year to explore it.</div>
     <div class="tw" style="max-height:none"><table style="font-size:11px">
       <thead><tr><th style="text-align:left">Buy in</th><th>Max price</th><th>vs. ${py}</th><th>What binds</th></tr></thead>
       <tbody>${byYear.map(v=>{
         const here=v.y===py;
-        const delta=nowMax?v.max-nowMax.max:0;
+        const delta=v.max-a.max;
         return `<tr onclick="afSet('year',${v.y})" style="cursor:pointer${here?';outline:1.5px solid var(--accent);outline-offset:-2px':''}">
           <td style="font-weight:${here?800:600};color:${here?'var(--accent)':'var(--tx)'}">${v.y}${here?' ←':''}</td>
           <td style="background:rgba(99,91,255,${(0.05+(yMax>0?v.max/yMax:0)*0.2).toFixed(3)});font-family:'SF Mono',monospace;font-weight:${here?800:500};color:${here?'var(--accent)':'var(--tx)'}">${money(v.max)}</td>
           <td style="font-family:'SF Mono',monospace;color:${delta>0?'var(--g)':delta<0?'var(--r)':'var(--t3)'}">${here?'—':(delta>0?'+':'')+money(Math.abs(delta)).replace('$',delta<0?'−$':'$')}</td>
-          <td style="font-size:10px;color:var(--t2)">${v.binding==='comfort'?'Carrying cost':'Balance sheet'}</td>
+          <td style="font-size:10px;color:var(--t2)">${v.reason+(v.year?' · '+v.year:'')}</td>
         </tr>`;}).join('')}</tbody>
     </table></div>
     <div style="font-size:9.5px;color:var(--t3);margin-top:9px;line-height:1.5">
@@ -5275,19 +5277,21 @@ function renderHousingTab(R,P,host){
     </div>
   </div>`;
 
+  };
+  const comparisonRates=()=>{
   // ── The matrix: the artefact that actually answers "what if rates move" ──
   const RATES=[q.mortgageRate-1,q.mortgageRate-0.5,q.mortgageRate,q.mortgageRate+0.5,q.mortgageRate+1,q.mortgageRate+2]
     .filter(r=>r>=1).map(r=>Math.round(r*1000)/1000);
   const DOWNS=[20,30,40,50,60].filter(d=>d<=80);
   const cellMax=(r,d)=>{
     const pp={...q,mortgageRate:r,downPctg:d};
-    return Math.min(planAffordablePrice(pp),comfortAffordablePrice(pp,_afShare));
+    return affordability(pp,_afShare).max;
   };
   const grid=RATES.map(r=>({r,cells:DOWNS.map(d=>cellMax(r,d))}));
   const allVals=grid.flatMap(g=>g.cells);
   const gMin=Math.min(...allVals),gMax=Math.max(...allVals);
   const shade=v=>{const t=gMax>gMin?(v-gMin)/(gMax-gMin):0.5;return `rgba(99,91,255,${(0.05+t*0.22).toFixed(3)})`};
-  h+=`<details class="polish-fold refine-fold"><summary>Compare mortgage rates & down payments</summary><div>
+  return `<div>
     <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">What you can afford, by rate and down payment</div>
     <div style="font-size:10px;color:var(--t2);margin-bottom:11px">Each cell is the lower of the two limits, run through the full model.</div>
     <div class="tw" style="max-height:none"><table style="font-size:11px">
@@ -5302,8 +5306,10 @@ function renderHousingTab(R,P,host){
       ${(()=>{const base=cellMax(q.mortgageRate,q.downPctg),up=cellMax(Math.round((q.mortgageRate+1)*1000)/1000,q.downPctg);
         return `A 1-point rise in rates costs you about <strong style="color:var(--tx)">${money(Math.max(0,base-up))}</strong> of purchasing power at ${q.downPctg}% down.`})()}
     </div>
-  </div></details>`;
+  </div>`;
 
+  };
+  h+=`<details class="ex-detail" data-af="years"><summary>What you can afford, by purchase year</summary></details><details class="ex-detail" data-af="rates"><summary>Compare mortgage rates & down payments</summary></details>`;
   // ── What the current price costs, month by month ──
   const line=(lbl,v,col)=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:5px 0;border-bottom:1px solid var(--bd)"><span style="color:var(--t2)">${lbl}</span><span style="font-family:'SF Mono',monospace;font-weight:600;color:${col||'var(--tx)'}">${fmtF(Math.round(v))}/mo</span></div>`;
   h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">
@@ -5442,11 +5448,14 @@ function renderHousingTab(R,P,host){
   </details>`;
 
   h+=`<div style="font-size:9.5px;color:var(--t3);line-height:1.6;padding:0 2px">
-    Both limits run your full projection, so they already include tuition, childcare, Nancy's practice and the Stripe waterfall. Neither includes closing costs, and the balance-sheet limit spends Stripe equity down to your reserve floor — affordable is not the same as advisable.
+    Both limits run your full projection, so they already include tuition, childcare, Nancy's practice and the Stripe waterfall. The reserve check includes modeled closing costs.
   </div>`;
 
   h+=`</div>`;
   ca.innerHTML=(host?'':housingModeControl())+h;
+  ca.querySelectorAll('details[data-af]').forEach(el=>el.addEventListener('toggle',()=>{
+    if(el.open&&!el.dataset.ready){el.insertAdjacentHTML('beforeend',el.dataset.af==='years'?comparisonYears():comparisonRates());el.dataset.ready='1';}
+  }));
   updateRefiCalc();
   document.getElementById('summaries').innerHTML='';
 }

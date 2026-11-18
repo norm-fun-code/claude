@@ -14,7 +14,7 @@ describe('purchase year is a Home lever, shared with rent-or-buy', () => {
   it('carries the explored year through the same params as rate and down payment', () => {
     // One set of levers: the affordability screen reads the rent-or-buy overrides, so the verdict,
     // the affordable price and the rates grid cannot answer for different assumptions.
-    expect(html).toContain('let _afShare=0.28;');
+    expect(html).toContain('let _afShare=0.25;');
     expect(html).toContain('function afParams(){return rbParams()}');
     expect(html).toContain("if(k==='year')rbSet('homePurchaseYear',v)");
     expect(html).toContain("if(k==='rate')rbSet('mortgageRate',v)");
@@ -31,22 +31,14 @@ describe('purchase year is a Home lever, shared with rent-or-buy', () => {
     const apply = html.slice(html.indexOf('function rbApply('), html.indexOf('function renderHomeTab('));
     expect(apply).toContain('showConfirm(');
     expect(apply).toContain('purchase year');
-    expect(html).toContain('function afReset(){_afShare=0.28;rbReset()}');
+    expect(html).toContain('function afReset(){_afShare=0.25;rbReset()}');
   });
 });
 
 describe('the share lever says what the share is worth', () => {
-  it('shows the budget in dollars, not only a percentage', () => {
-    // A percentage is not a budget until it is a number of dollars.
-    expect(tab).toContain('const shareBudget=_afShare*buyRow.netTC;');
-    expect(tab).toContain('fmtF(Math.round(shareBudget/12))');
-    expect(tab).toMatch(/\$\{fmt\(Math\.round\(shareBudget\)\)\}\/yr/);
+  it('shows the payment, purchase-year share, limiting year and reserve option',()=>{
+    for(const text of ['Comfortable purchase price','% of purchase-year take-home','a.reason','a.year','Use savings at the selected'])expect(tab).toContain(text);
   });
-
-  it('names the year and the income the share is a share OF', () => {
-    expect(tab).toMatch(/after-tax income in \$\{py\}/);
-  });
-
   it('recomputes on every move, because afSet re-renders the tab', () => {
     expect(html).toMatch(/function afSet\(k,v\)\{[\s\S]*?render\(\);\n\}/);
   });
@@ -62,27 +54,24 @@ describe('what waiting actually buys', () => {
     expect(tab).toContain('homePurchaseYear:y');
   });
 
-  it('reports which limit binds, and the binding one really does change with time', () => {
-    // Early on the balance sheet binds — there is not enough saved yet. Later, income is
-    // the constraint. Showing the max without saying which is a number with no lever.
-    expect(by(2026).binding).toBe('plan');
-    expect(by(2035).binding).toBe('comfort');
-    expect(tab).toContain("v.binding==='comfort'?'Carrying cost':'Balance sheet'");
-  });
-
-  it('distinguishes growing purchase funds from an income-limited payment', () => {
-    for (let y = 2026; y < 2029; y++) {
-      const before=by(y),after=by(y+1);
-      expect(after.plan).toBeGreaterThan(before.plan);
-      expect(after.max).toBe(Math.min(after.plan,after.comfort));
+  it.each(['brooklyn','deal'])('reconciles the limit against independent annual projections for %s',mode=>{
+    const q={...P,homePurchaseYear:2030,locationConfig:{mode,moveYear:2030}};
+    const a=M.affordability(q,.25);
+    for(const price of [a.max,a.max+1000]){
+      const rows=M.run({...q,housingMode:'buy',homePrice:price}).R;
+      const end=rows.filter(r=>r.tuFull>0).at(-1).yr;
+      const fails=rows.filter(r=>r.liq<q.liquidReserveFloor-1||r.yr>=2030&&r.yr<=end&&(r.hFull>r.netTC*.25||r.totEFull>r.netTC));
+      if(price===a.max&&price>0)expect(fails).toHaveLength(0);
+      else if(price>a.max)expect(fails.map(r=>r.yr)).toContain(a.year);
     }
-    const late=by(2029);
-    expect(late.binding).toBe('comfort');
-    const q={...P,homePurchaseYear:2029};
-    const income=M.run(q).R.find(r=>r.yr===2029).netTC;
-    expect(M.housingMonthlyCost(q,late.max).annual).toBeCloseTo(income*share,4);
   });
-
+  it('counts vested income once, respects savings pins and excludes post-tuition years',()=>{
+    const q={planStartYear:2030,homePurchaseYear:2030,housingSavingShare:.10,savingEmergencyY1:15000};
+    const base={netTC:100000,incFull:50000,hFull:20000,totEFull:75000,tuFull:0};
+    const rows=[{...base,yr:2030},{...base,yr:2031,tuFull:20000,totEFull:90000},{...base,yr:2032,netTC:0}];
+    const result=M.housingYears(q,rows,.25);
+    expect(result.map(r=>r.margin)).toEqual([5000,-5000]);expect(result[1].gap).toBe(5000);
+  });
   it('lets a year be explored by clicking its row', () => {
     expect(tab).toContain('onclick="afSet(\'year\',${v.y})"');
   });

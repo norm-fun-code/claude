@@ -720,7 +720,9 @@ describe('affordability', () => {
   it('flags a plan priced above what it can afford', () => {
     const a = affordability({ ...BUY, homePrice: 6000000 }, 0.28);
     expect(a.withinBudget).toBe(false);
-    expect(affordability({ ...BUY, homePrice: 500000 }, 0.28).withinBudget).toBe(true);
+    const limit=affordability(BUY,0.28).max;
+    if(limit>0)expect(affordability({...BUY,homePrice:limit},0.28).withinBudget).toBe(true);
+    expect(affordability({...BUY,homePrice:limit+1000},0.28).withinBudget).toBe(false);
   });
 });
 
