@@ -128,6 +128,19 @@
     };
   }
 
+  // Closing can slip ahead of a tender. Delay the first remaining tender by two
+  // quarters and apply the same share-price shock to held stock and projected vests.
+  function stressClosing(ctx,p){
+    const quarters=[...cfg(p).tenderQuarters].sort((a,b)=>a-b);
+    if(quarters.length)quarters[0]+=2;
+    const delayed=[...new Set(quarters.filter(q=>q>=1&&q<=4))];
+    return fundingCheck({...ctx,
+      heldValue:(ctx.heldValue||0)*.7,
+      vestPerQuarter:(ctx.vestPerQuarter||0)*.7,
+      vestByQuarter:ctx.vestByQuarter?.map(v=>v*.7)
+    },{...p,stripeTenderQuarters:delayed});
+  }
+
   // Which quarter a purchase closes in. Nothing in the annual model records this, so it is
   // asked for rather than inferred; the default is stated openly.
   function purchaseQuarter(p){
@@ -135,7 +148,7 @@
     return q&&q>=1&&q<=4?q:2; // a spring close is the stated default, not a derived fact
   }
 
-  const api={DEFAULTS,cfg,freelyLiquid,saleWindows,raisableBy,raisableInYear,fundingCheck,purchaseQuarter};
+  const api={DEFAULTS,cfg,freelyLiquid,saleWindows,raisableBy,raisableInYear,fundingCheck,stressClosing,purchaseQuarter};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerLiquidity=api;
 })(typeof window!=='undefined'?window:this);

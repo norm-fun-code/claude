@@ -7,8 +7,13 @@ const PROMOTIONS={base:[2027,2033],optimistic:[2027,2032]};
 function schedule(key){
   const promotions=PROMOTIONS[key];
   if(!promotions)throw new Error('Unsupported compensation case');
-  const level=y=>y>=promotions[1]?5:y>=promotions[0]?4:3;
-  const multiplier=y=>promotions.some(p=>y===p+1||y===p+2)?1:1.5;
+  return awardSchedule(promotions);
+}
+const conservativeSchedule=()=>awardSchedule([2027],true);
+function awardSchedule(promotions,conservative=false){
+  const level=y=>y>=(promotions[1]??Infinity)?5:y>=promotions[0]?4:3;
+  // The promotion year is Exceeds. The conservative case budgets Meets thereafter.
+  const multiplier=y=>(conservative?y>=2028:promotions.some(p=>y===p+1||y===p+2))?1:1.5;
   const salary=y=>{let value=210000;for(let t=2027;t<=y;t++)value*=promotions.includes(t)?1.08:1.03;return value;};
   // Retain the preview's bonus convention: prior December salary, prior level
   // and rating. Annual payroll alone is prorated for the March effective date.
@@ -24,12 +29,14 @@ function schedule(key){
     return {year,cash:Math.round(earnedSalary+bonus),stock:Math.round(stock)};
   });
 }
-function patchComp(params,key){
+const patchComp=(params,key)=>writeSchedule(params,schedule(key));
+const patchConservativeComp=params=>writeSchedule(params,conservativeSchedule());
+function writeSchedule(params,rows){
   const out={...params};
   const start=Number(out.planStartYear||2026);
   if(!Number.isInteger(start)||start<2024||start>2037)throw new Error('Unsupported plan start year');
   const later={...(out.stripeManualLater||{})};
-  for(const {year,cash,stock} of schedule(key)){
+  for(const {year,cash,stock} of rows){
     if(year<start)continue;
     if(year-start<11){out['normCashY'+(year-start)]=cash;out['normStockY'+(year-start)]=stock;}
     else later[year]={...(later[year]||{}),cash,stock};
@@ -113,4 +120,4 @@ async function repairLegacyCompSnapshots(pool){
   }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}
   finally{client.release();}
 }
-module.exports={UPDATE_ID,PROMOTIONS,schedule,patchComp,applyPromotionCompScenarios,legacyCase,repairState,repairLegacyCompSnapshots};
+module.exports={UPDATE_ID,PROMOTIONS,schedule,patchComp,conservativeSchedule,patchConservativeComp,applyPromotionCompScenarios,legacyCase,repairState,repairLegacyCompSnapshots};

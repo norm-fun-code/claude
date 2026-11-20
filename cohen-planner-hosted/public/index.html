@@ -5436,10 +5436,12 @@ function renderHousingTab(R,P,host){
       ['Stress: both together',{stripeTenderCapPerEvent:250000},6],
     ].map(([label,cp,pause])=>{
       const pc=pause>0&&buyRow?buyRow.totE/12*pause:0;
-      const oc=Math.max(0,(prev?prev.liq:0)-floor-pc);
-      const r=L.fundingCheck({year:py,quarter,need:cash.total,heldValue:held,vestPerQuarter:vestQ,otherCash:oc},cp);
+      const oc=Math.max(0,(prev?prev.liq:q.startingLiquid||0)-floor-pc);
+      const r=L.fundingCheck({year:py,quarter,need:cash.total,heldValue:held,vestPerQuarter:vestQ,otherCash:oc},{...q,...cp});
       return{label,r};
     });
+    scenarios.push({label:'Stripe −30% + first tender delayed 2 quarters',
+      r:L.stressClosing({year:py,quarter,need:cash.total,heldValue:held,vestPerQuarter:vestQ,otherCash:Math.max(0,(prev?prev.liq:q.startingLiquid||0)-floor)},q)});
     h+=`<div class="glass-card" style="padding:16px 18px">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Downside, and what would change the answer</div>
       <div style="font-size:10px;color:var(--t2);margin-bottom:9px">Each row is the same purchase under a different assumption. Ranges, not probabilities — none of these is claimed to be likely.</div>
@@ -5449,7 +5451,7 @@ function renderHousingTab(R,P,host){
         <span style="font-weight:700;color:${sc.r.fundable?'var(--g)':'var(--r)'};min-width:96px;text-align:right">${sc.r.fundable?'fundable':'short '+fmtF(Math.round(sc.r.shortfall))}</span>
       </div>`).join('')}
       <div style="font-size:9.5px;color:var(--t3);margin-top:9px;line-height:1.55">
-        <strong style="color:var(--tx)">Confirmed:</strong> tenders are uncapped, so participation is limited only by vested stock — which is why this purchase funds comfortably. The capped rows above are a stress test, not a live risk. The assumption still worth watching is <strong style="color:var(--tx)">timing</strong>: a close between the Q1 and Q4 windows leans on cash raised earlier, so the closing quarter matters more than the annual total suggests.
+        <strong style="color:var(--tx)">Watch the closing date:</strong> available cash depends on when the tender clears. The stress rows test both the amount and timing of proceeds.
       </div>
     </div>`;
   }

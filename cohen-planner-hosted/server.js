@@ -2314,6 +2314,7 @@ async function initSchemaWithRetry(retries = 5, delayMs = 3000) {
       console.log('Promotion compensation update:',JSON.stringify(promotionUpdate));
       console.log('Compensation snapshot repair:',JSON.stringify(await require('./promotion-comp-scenarios').repairLegacyCompSnapshots(db.pool)));
       console.log('Family budget calibration:',JSON.stringify(await require('./calibrated-budget-update').apply(db.pool)));
+      console.log('Conservative assumptions update:',JSON.stringify(await require('./conservative-case-update').apply(db.pool)));
       monarchJobs.start();
       return;
     } catch (err) {
