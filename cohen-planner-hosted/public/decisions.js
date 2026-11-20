@@ -7,7 +7,7 @@
     homePurchaseYear:{label:'Purchase year',min:2026,max:2099,step:1,format:'year'},
     mortgageRate:{label:'Mortgage rate',min:0,max:15,step:0.125,format:'rate'},
     downPctg:{label:'Down payment',min:0,max:100,step:5,format:'pct'},
-    childcareMonthly:{label:'Childcare / child / month',min:0,max:12000,step:100,format:'money'},
+    childcareMonthly:{label:'Kid 1 city childcare / month',min:0,max:12000,step:100,format:'money'},
     // When it starts, in months of the child's age. Leave is the lever people actually pull
     // here — "back a month earlier" and "a month later" are real choices, and they move the
     // year a child arrives more than the monthly rate does.

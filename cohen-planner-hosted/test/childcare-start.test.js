@@ -65,8 +65,19 @@ describe('when childcare starts', () => {
     const two = M.run(plan({ numKids: 2, kid2Birth: 2030, yeshivaStartAge: 3,
       childcareStartMonths: 7 })).R;
     const by = Object.fromEntries(two.map(r => [r.yr, r.cc]));
-    expect(by[2030]).toBe(5 * mo);          // kid 2's own first five months of care
-    expect(by[2031]).toBe(12 * mo);
+    expect(by[2030]).toBe(5 * mo / 2);      // kid 2's own first five months, at half the city rate
+    expect(by[2031]).toBe(12 * mo / 2);
+  });
+
+  it('charges later kids half the city rate even when care overlaps or the family moves to Deal', () => {
+    for(const mode of ['brooklyn','deal']){
+      const over={kid1Birth:2027,kid2Birth:2028,kid3Birth:2028,kid4Birth:2028,
+        childcareStartMonths:6,childcareInflation:.03,locationConfig:{mode,moveYear:2028,childcareFactor:.8}};
+      const all=M.run(plan({...over,numKids:4})).R.find(r=>r.yr===2028).ccFull;
+      const onlyFirst=M.run(plan(over)).R.find(r=>r.yr===2028).ccFull;
+      expect(onlyFirst).toBe(Math.round(12*mo*1.03**2*(mode==='deal'?.8:1)));
+      expect(all-onlyFirst).toBeCloseTo(3*6*mo*1.03**2/2,0);
+    }
   });
 });
 

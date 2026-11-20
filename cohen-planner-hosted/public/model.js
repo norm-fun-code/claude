@@ -869,12 +869,11 @@ function run(p,rets,compiledGrants){
       return out};
     const sumParts=o=>LIV_KEYS.reduce((t,k)=>t+o[k],0);
     let liv=sumParts(roundParts(livRaw,1));
-    // Childcare — a single flat monthly rate from birth through the year before yeshiva
-    // starts (previously modeled 3 separate phases: nanny hourly rate at birth, nanny
-    // hourly through a configurable end-age, then daycare-or-continued-nanny depending on
-    // birth order — collapsed since the phase distinctions added complexity without
-    // changing what actually mattered: a monthly childcare cost until school starts).
+    // Later kids use half the first child's city rate. That already accounts for
+    // moving out of the city, so apply the separate Deal adjustment only to Kid 1.
     let cc=0;
+    const firstCareFactor=locationActive(p,yr)?Number(p.locationConfig.childcareFactor??.9):1;
+    const monthlyCare=(p.childcareMonthly??2800)*(1+(p.childcareInflation??p.expenseInflation))**(yr-sy);
     for(let ki=0;ki<kids.length;ki++){
       const kb=kids[ki],a=yr-kb;
       const startAge=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;
@@ -889,7 +888,7 @@ function run(p,rets,compiledGrants){
       // none in the birth year and 6 in the next.
       if(a>=0&&a<startAge){
         const months=Math.max(0,Math.min(12,(a+1)*12-(Number(p.childcareStartMonths)||0)));
-        cc+=(p.childcareMonthly??2800)*months*(1+(p.childcareInflation??p.expenseInflation))**(yr-sy);
+        cc+=monthlyCare*months*(ki===0?firstCareFactor:.5);
       }
     }
     // Spending already incurred this year is behind the observation date and is already
@@ -900,7 +899,6 @@ function run(p,rets,compiledGrants){
     // rather than recovered by dividing totE by stubFrac downstream: that division is off by
     // the rounding on four components, and a total that disagrees with the year beside it by
     // a few hundred dollars is exactly the kind of thing this table exists to rule out.
-    if(locationActive(p,yr))cc*=Number(p.locationConfig.childcareFactor??.9);
     cc*=stressCost;
     const frozen=fiOn?p._fiExpenses?.[yr]:null;
     if(frozen){h=frozen.h;cc=frozen.cc;for(const k of Object.keys(livRaw))livRaw[k]=frozen.liv[k]??0;liv=sumParts(livRaw);}

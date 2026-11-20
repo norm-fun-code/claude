@@ -50,7 +50,7 @@
   ];
   const PARAM_LABEL = {
     baseInsurance: 'Insurance', baseUtilsPhoneNet: 'Utilities & phone', baseTransit: 'Transit', baseAuto: 'Auto',
-    baseGroceries: 'Groceries', baseMedical: 'Medical', childcareMonthly: 'Childcare rate', childcareStartMonths: 'Childcare start',
+    baseGroceries: 'Groceries', baseMedical: 'Medical', childcareMonthly: 'Kid 1 city childcare rate', childcareStartMonths: 'Childcare start',
     yeshivaStartAge: 'School start age', yeshivaEndAge: 'School end age', kid1YeshivaStartAge: 'Kid 1 school start',
     tuitionInflation: 'Tuition inflation', housingMode: 'Rent or buy', nycRent: 'Rent', homePrice: 'Home price',
     mortgageRate: 'Mortgage rate', homePurchaseYear: 'Purchase year', downPctg: 'Down payment', maintBase: 'Home upkeep',

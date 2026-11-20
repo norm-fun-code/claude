@@ -654,11 +654,10 @@ describe('call-outs for a whole group, and the bottom line',()=>{
  const withSpend=(over)=>{const P=plan(over);return {P,R:M.run(P).R}};
  it('flags fixed costs above the usual range, and below it, and says nothing in between',()=>{
   const {P,R}=withSpend();
-  expect(B.groupChecks(P,R,2031).fixed).toMatchObject({status:'high'});
-  expect(B.groupChecks(P,R,2031).fixed.text).toContain('above the usual 50–60%');
   // Crafted rows: fixed costs set to an exact share of net income, nothing else in the group.
   const at=share=>R.map(r=>r.yr===2031?{...r,hFull:share*r.netTC,ccFull:0,tuFull:0,livFullParts:{}}:r);
   expect(B.groupChecks(P,at(.75),2031).fixed).toMatchObject({status:'high'});
+  expect(B.groupChecks(P,at(.75),2031).fixed.text).toContain('above the usual 50–60%');
   expect(B.groupChecks(P,at(.55),2031).fixed).toBeUndefined();
   expect(B.groupChecks(P,at(.40),2031).fixed).toBeUndefined();
   expect(B.groupChecks(P,at(.20),2031).fixed).toMatchObject({status:'low'});
