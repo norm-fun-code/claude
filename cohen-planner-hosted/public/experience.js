@@ -97,7 +97,7 @@ function experienceNavigation(){
   if(activeTab==='projection'){
     st.innerHTML=[['life','Life timeline'],['nw','Wealth'],['income','Income & tax'],['cashflow','Cash flow'],['table','Table']].map(([v,l])=>`<button aria-pressed="${_projView===v}" class="${_projView===v?'active':''}" onclick="setSubView('${v}')">${l}</button>`).join('');
   }
-  if(activeTab==='home')st.innerHTML=[['explore','What-if'],['housing','Housing'],['compare','Compare']].map(([v,l])=>`<button aria-pressed="${_homeView===v}" class="${_homeView===v?'active':''}" onclick="setSubView('${v}')">${l}</button>`).join('');
+  if(activeTab==='home')st.innerHTML=[['explore','What-if'],['housing','Housing'],['family','Family size'],['compare','Compare']].map(([v,l])=>`<button aria-pressed="${_homeView===v}" class="${_homeView===v?'active':''}" onclick="setSubView('${v}')">${l}</button>`).join('');
   try{renderNavLive();}catch(_){}
   document.querySelector('.nav-spark')?.remove();
   if(!document.getElementById('exMobileDetails')){const b=document.createElement('button');b.id='exMobileDetails';b.className='ui-btn';b.textContent='Details & tools';b.onclick=experienceMobileTools;document.querySelector('.hdr-right')?.append(b);}
@@ -354,6 +354,52 @@ function experienceCompare(){
   const children=[...ca.children],diff=children[1];
   if(diff){const label=[...diff.querySelectorAll('div')].find(n=>n.children.length===0&&n.textContent.includes('Diff view'));if(label)label.textContent='Current plan compared with';}
   const rest=children.slice(2);if(rest.length)experienceFold(ca,rest,'All cases & parameter differences','compare-full');
+}
+let familySizeTry=null;
+function chooseFamilySize(count){
+  familySizeTry=count;
+  renderFamilySize(run(P).R,P);
+  document.getElementById('familySize'+count)?.focus();
+}
+function familySizeSummary(rows){
+  const sum=key=>rows.reduce((n,r)=>n+r[key],0);
+  const school=r=>r.ccFull+r.tuFull;
+  const peak=rows.reduce((high,r)=>school(r)>school(high)?r:high);
+  return {childcare:sum('ccFull'),tuition:sum('tuFull'),spending:sum('totEFull'),
+    peak:school(peak),peakYear:peak.yr,netWorth:rows.at(-1).netWorth};
+}
+function renderFamilySize(rows,p){
+  destroyCharts();
+  const baseline=Math.min(4,Math.max(1,Number(p.numKids)||1));
+  const alternative=familySizeTry??(baseline<4?baseline+1:3);
+  const trial=alternative===baseline?rows:run({...p,numKids:alternative}).R;
+  const a=familySizeSummary(rows),b=familySizeSummary(trial);
+  const first=rows[0].yr,last=rows.at(-1).yr;
+  const label=n=>n===1?'1 child':n+' kids';
+  const signed=value=>value===0?'—':(value>0?'+':'−')+experienceMoney(Math.abs(value));
+  const metrics=[
+    ['Total household spending','spending'],['Childcare','childcare'],['Tuition','tuition'],
+    ['Peak childcare + tuition','peak'],['Net worth in '+last,'netWorth']
+  ];
+  const body=metrics.map(([name,key])=>`<tr><th scope="row">${name}</th>
+    <td>${experienceMoney(a[key])}${key==='peak'&&a.peak?` <small>(${a.peakYear})</small>`:''}</td>
+    <td>${experienceMoney(b[key])}${key==='peak'&&b.peak?` <small>(${b.peakYear})</small>`:''}</td>
+    <td>${signed(b[key]-a[key])}</td></tr>`).join('');
+  const birthYears=n=>[p.kid1Birth,p.kid2Birth,p.kid3Birth,p.kid4Birth].slice(0,n).map(y=>Number(y)||'—').join(', ');
+  document.getElementById('chartArea').innerHTML=experienceHeader('DECISIONS','Family size','See how changing the number of kids affects your plan.')+`
+    <section class="ex-panel">
+      <div class="ex-panel-head"><div><h3>Compare with your plan</h3><p>${first}–${last} · nominal dollars · preview only</p></div>
+      <div class="ex-segments" role="group" aria-label="Number of kids to compare">${[1,2,3,4].map(n=>`<button type="button" id="familySize${n}" aria-pressed="${n===alternative}" onclick="chooseFamilySize(${n})">${label(n)}</button>`).join('')}</div></div>
+      <div class="tw" style="max-height:none"><table aria-label="Family size comparison"><thead><tr><th scope="col">Impact</th><th scope="col">${label(baseline)} · plan</th><th scope="col">${label(alternative)} · preview</th><th scope="col">Change</th></tr></thead><tbody>${body}</tbody></table></div>
+      <p class="ex-chart-caption">Preview birth years: ${birthYears(alternative)}. Uses your current location, housing and earnings assumptions. Net worth includes retirement and home equity.</p>
+    </section>
+    <details class="ex-detail"><summary>Annual costs and cash flow</summary><div class="ex-detail-body tw" style="max-height:none">
+      <table aria-label="Family size impact by year"><thead><tr><th scope="col">Year</th><th scope="col">Preview childcare</th><th scope="col">Preview tuition</th><th scope="col">Other spending change</th><th scope="col">Total spending change</th><th scope="col">Take-home less spending change</th></tr></thead>
+      <tbody>${rows.map((r,i)=>{const t=trial[i],change=t.totEFull-r.totEFull;return `<tr><th scope="row">${r.yr}</th><td>${experienceMoney(t.ccFull)}</td><td>${experienceMoney(t.tuFull)}</td><td>${signed(change-(t.ccFull-r.ccFull)-(t.tuFull-r.tuFull))}</td><td>${signed(change)}</td><td>${signed(t.flowFull-r.flowFull)}</td></tr>`;}).join('')}</tbody></table>
+    </div></details>
+    <details class="ex-detail"><summary>What adjusts automatically?</summary><div class="ex-detail-body">
+      <p>Childcare and tuition recalculate by birth year and school start age. Model-driven living costs use each child’s age. Manual budget pins and rules still take precedence; scheduled expenses and housing assumptions stay as entered.</p>
+    </div></details>`;
 }
 function experienceWhatIf(){
   const ca=document.getElementById('chartArea');
