@@ -24,7 +24,7 @@ describe('Housing and Rent or buy are one Home screen',()=>{
  });
  it('keeps what was asked to stay: rates grid, monthly cost cards, refinance, readiness, payoff',()=>{
   const housing=html.slice(html.indexOf('function renderHousingTab('),html.indexOf('function updateRefiCalc'));
-  for(const kept of ['Compare mortgage rates & down payments','Monthly cost at','Refinance break-even calculator','housingReadinessHtml(R,P)','mortgagePayoffHtml(R,P)','Can the cash be there?'])
+  for(const kept of ['Compare mortgage rates & down payments','Monthly cost at','Refinance break-even calculator','housingReadinessHtml(previewRows,q)','mortgagePayoffHtml(previewRows,q)','Can the cash be there?'])
    expect(housing).toContain(kept);
  });
  it('says what moving the purchase year does before applying it',()=>{

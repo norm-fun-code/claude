@@ -301,7 +301,7 @@ function experienceHousing(R){
   ca.querySelector('.home-sec')?.remove();
   ca.insertAdjacentHTML('afterbegin',experienceHeader('DECISIONS / HOUSING','Housing',''));
   const views=document.createElement('div');views.className='ex-housing-tabs ex-segments';views.setAttribute('aria-label','Housing question');
-  views.innerHTML=[['afford','How much can we afford?'],['payment','What would it cost?'],['rentbuy','Should we rent or buy?']].map(([v,l])=>`<button aria-pressed="${experienceHousingView===v}" onclick="experienceHousingSelect('${v}')">${l}</button>`).join('');
+  views.innerHTML=[['afford','Can we buy this home?'],['payment','What would it cost?'],['rentbuy','Should we rent or buy?']].map(([v,l])=>`<button aria-pressed="${experienceHousingView===v}" onclick="experienceHousingSelect('${v}')">${l}</button>`).join('');
   ca.querySelector('.ex-heading').after(views);
   rb.hidden=experienceHousingView!=='rentbuy';hs.hidden=experienceHousingView==='rentbuy';
   // These preview controls share the existing rent/buy override state; no saved input is changed.
@@ -328,6 +328,10 @@ function experienceHousing(R){
     const support=[...root.children].filter(n=>!primary.has(n)&&n.tagName!=='DETAILS');
     if(support.length)experienceFold(root,support,'Closing funds, liquidity & income-interruption stress','home-funding');
     if(experienceHousingView==='afford'&&payment.length)experienceFold(root,payment,'Monthly payment breakdown','home-payment');
+  }
+  if(experienceHousingView==='afford'&&hs.purchaseCase&&root){
+    experienceFold(root,[root.children[0],root.children[1],root.children[2]].filter(Boolean),'Housing target, price limits & savings','home-target-details');
+    mountPurchaseDecision(hs.purchaseCase,views,controls,hs);
   }
   const rbroot=rb.firstElementChild;
   if(rbroot){

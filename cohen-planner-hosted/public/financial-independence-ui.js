@@ -133,6 +133,9 @@ host.innerHTML=`<section class="fi-panel fi-simple ${fiAdvanced?'fi-show-advance
   <div><span>${fiFunded?'First safety concern':'First unfunded year'}</span><strong>${fiFunded?([a.rateYear,a.reserveYear].filter(Boolean).sort((x,y)=>x-y)[0]||'None'):a.failYear}</strong><small>${fiEscape(fiFunded?fiFlag:'Spending is not fully funded through the horizon')}</small></div>
   <div><span>Earliest exit clearing every rule</span><strong>${a.earliest||'Not found'}</strong><small>Stricter than simply funding your lifetime</small></div>
  </div>
+ ${on&&a.transition?(()=>{const exit=a.transition,first=rows.find(r=>r.yr>=c.transitionYear&&(r.sHold+r.sSold)>0),opening=a.opening?.liq??P.startingLiquid??0;
+ const proceeds=(exit.sSold||0)+(exit.sHold||0)-(exit.sTotalGainTax||0);
+ return '<details class="pd-exit" data-fi-detail="exit-funding"><summary>How much does this exit depend on Stripe?</summary><p>Starting cash &amp; taxable investments: <b>'+fiMoney(atYear(opening,exit.yr))+'</b>. New cash elections after exit: <b>$0</b>. Modeled Stripe sale proceeds in '+exit.yr+': <b>'+fiMoney(atYear(proceeds,exit.yr))+'</b> after sale taxes.</p><p>'+(first?'First modeled sale: '+first.yr+'.':'No Stripe sales modeled after exit.')+' '+(exit.stripeSalesBlocked?'Sales are blocked in the exit year under this stress.':PlannerLiquidity.freelyLiquid(exit.yr,P)?'Stock is assumed freely sellable at exit.':'Sales depend on tender windows; the exit projection uses annual totals.')+'</p></details>';})():''}
  <div class="fi-guardrails" aria-label="Three financial safety guardrails">${guardrailHelp}</div>
  ${on&&a.status!=='Sustainable under assumptions'?'<p class="fi-cushion-note">'+(fiCapital!=null?'To satisfy all safety rules at '+c.transitionYear+', the model estimates '+fiMoney(atYear(fiCapital,c.transitionYear))+' in additional liquid investments.':'Additional capital needed to meet every rule could not be solved under the current assumptions.')+'</p>':''}
 </div>

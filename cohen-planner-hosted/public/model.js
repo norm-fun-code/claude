@@ -931,6 +931,7 @@ function run(p,rets,compiledGrants){
     let liv=sumParts(roundParts(livRaw,1));
     // Later kids use half the first child's city rate. That already accounts for
     // moving out of the city, so apply the separate Deal adjustment only to Kid 1.
+    const childEducation=kids.map((birth,i)=>({child:i+1,age:yr-birth,care:0,tuition:0}));
     let cc=0;
     const firstCareFactor=locationActive(p,yr)?Number(p.locationConfig.childcareFactor??.9):1;
     const monthlyCare=(p.childcareMonthly??2800)*(1+(p.childcareInflation??p.expenseInflation))**(yr-sy);
@@ -946,6 +947,7 @@ function run(p,rets,compiledGrants){
       // overlap with everything from `start` onward. It falls out right at both ends: a start
       // of 7 charges 5 months in the birth year and 12 thereafter, and a start of 18 charges
       // none in the birth year and 6 in the next.
+      const beforeCare=cc;
       if(a>=0&&a<startAge){
         if(ki===0&&Array.isArray(p.kid1CareSchedule)&&p.kid1CareSchedule.length){
           for(let month=a*12;month<(a+1)*12;month++){
@@ -957,6 +959,7 @@ function run(p,rets,compiledGrants){
           cc+=monthlyCare*months*(ki===0?firstCareFactor:.5);
         }
       }
+      childEducation[ki].care=(cc-beforeCare)*stressCost;
     }
     // Spending already incurred this year is behind the observation date and is already
     // reflected in the opening balances, so only the remainder is charged. Every reported
@@ -979,12 +982,17 @@ function run(p,rets,compiledGrants){
     for(let ki=0;ki<kids.length;ki++){
       const kb=kids[ki],a=yr-kb;
       const startAge=ki===0?p.kid1YeshivaStartAge:p.yeshivaStartAge;
-      if(a>=startAge&&a<=p.yeshivaEndAge)tu+=baseTuit(a)*(1+p.tuitionInflation)**(yr-sy); // C4 fix: yr-sy not yr-2026
+      if(a>=startAge&&a<=p.yeshivaEndAge){const bill=baseTuit(a)*(1+p.tuitionInflation)**(yr-sy);tu+=bill;childEducation[ki].tuition=bill;} // C4 fix: yr-sy not yr-2026
     }
     if(locationActive(p,yr))tu*=Number(p.locationConfig.tuitionFactor??.5);
     tu*=stressCost;
     if(frozen)tu=frozen.tu;
     const tuFull=tu;
+    // Attribute the exact displayed annual totals; cumulative rounding avoids dollar drift.
+    for(const [key,total] of [['care',ccFull],['tuition',tuFull]]){
+      const sum=childEducation.reduce((n,c)=>n+c[key],0);let cum=0;
+      for(const c of childEducation){const prev=cum;cum+=c[key];c[key]=sum?Math.round(cum/sum*total)-Math.round(prev/sum*total):0;}
+    }
     if(stub<1)tu*=stub;
     tT+=tu;
     // Rounded components, summed — not the raw sum, rounded. h, liv, cc and tu are each
@@ -1193,7 +1201,7 @@ function run(p,rets,compiledGrants){
       // year-end balances are unchanged by any of this.
       // …and the components of it, so a breakdown opened from a full-year total does not
       // answer with the remainder and contradict the figure that was clicked.
-      hFull:Math.round(hFull),ccFull:Math.round(ccFull),tuFull:Math.round(tuFull),
+      childEducation,hFull:Math.round(hFull),ccFull:Math.round(ccFull),tuFull:Math.round(tuFull),
       totEFull,incFull:Math.round(incFull),
       flowFull:Math.round(flowFull),gapFull:Math.round(Math.max(0,-surpFull)),
       surp:Math.round(surp),
@@ -1229,7 +1237,7 @@ function run(p,rets,compiledGrants){
       // grant on the offer letter and the shares in the portal disagree.
       sBeg:Math.round(stripeBegin),sNew:Math.round(marketNet),
       sIncomeNet:Math.round(normStockNet),sAvailable:Math.round(vestAvail),sTotalGainTax:Math.round(holdTax+newSaleTax),sNewSaleTax:Math.round(newSaleTax),sVestByQuarter:vestByQuarter,
-      qcaCash:Math.round(qcaCash),sVestingShares:eqYear?.shares??null,sEndShares:grantLedger?stripeEnd/grantLedger.prices[yr].tender:null,
+      qcaCash:Math.round(qcaCash),qcaNetQuarters:futureEvents?Array.from({length:4},(_,i)=>futureEvents.filter(e=>e.quarter===i+1).reduce((sum,e)=>sum+e.cash*(1-qcaRate),0)):null,sVestingShares:eqYear?.shares??null,sEndShares:grantLedger?stripeEnd/grantLedger.prices[yr].tender:null,
       sGrantDetails:eqYear||null,sGrantWarnings:grantLedger?.warnings||[],
       sGross:Math.round(normStock),sVestTax:Math.round(normStock-normStockNet),
       sVestRate:vestRate,sSold:Math.round(stripeSold),

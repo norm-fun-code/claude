@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import M from '../public/model.js';
 import F from '../public/financial-independence.js';
+import L from '../public/liquidity.js';
 const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
 const D=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')');
 const p={...D,observedOn:null,normManualThroughYear:2037};
@@ -102,7 +103,7 @@ describe('Financial Independence overlay uses the shared engine',()=>{
 
 describe('Financial Independence presentation and save isolation',()=>{
  function ui(){
-  const host={innerHTML:'',querySelectorAll:()=>[]};const ctx={P:structuredClone(p),scenarios:[{name:'Base Case'}],activeScenarioIdx:0,PlannerFI:F,run:M.run,runMonteCarlo:M.runMonteCarlo,Chart:class{constructor(_,o){this.options=o;}destroy(){}},document:{getElementById:id=>id==='fiRoot'?host:id==='fiSaveName'?{value:'Financial Independence — 2034'}:id==='fiSaveButton'?{disabled:false}:{}},saved:[],keepAssumptions:x=>structuredClone(x),advUuid:()=> 'test-fi-case',fetch:async(_,o)=>{ctx.saved.push(JSON.parse(o.body));return {ok:true}},showToast(){},renderCaseControl(){},savePlannerState(){},setTimeout,clearTimeout};vm.createContext(ctx);vm.runInContext(fs.readFileSync(new URL('../public/financial-independence-ui.js',import.meta.url),'utf8'),ctx);return {ctx,host,call:s=>vm.runInContext(s,ctx)};
+  const host={innerHTML:'',querySelectorAll:()=>[]};const ctx={P:structuredClone(p),scenarios:[{name:'Base Case'}],activeScenarioIdx:0,PlannerFI:F,PlannerLiquidity:L,run:M.run,runMonteCarlo:M.runMonteCarlo,Chart:class{constructor(_,o){this.options=o;}destroy(){}},document:{getElementById:id=>id==='fiRoot'?host:id==='fiSaveName'?{value:'Financial Independence — 2034'}:id==='fiSaveButton'?{disabled:false}:{}},saved:[],keepAssumptions:x=>structuredClone(x),advUuid:()=> 'test-fi-case',fetch:async(_,o)=>{ctx.saved.push(JSON.parse(o.body));return {ok:true}},showToast(){},renderCaseControl(){},savePlannerState(){},setTimeout,clearTimeout};vm.createContext(ctx);vm.runInContext(fs.readFileSync(new URL('../public/financial-independence-ui.js',import.meta.url),'utf8'),ctx);return {ctx,host,call:s=>vm.runInContext(s,ctx)};
  }
  it('renders the primary answer, chart, cash flow and actionable controls without editing P',()=>{
   const t=ui(),before=JSON.stringify(t.ctx.P);t.call('renderFinancialIndependence()');expect(t.host.innerHTML).toContain('Make work a choice.');expect(t.host.innerHTML).toContain('fiTrajectory');expect(t.host.innerHTML).toContain('2034');t.call("fiEdit('normIncome',175000)");expect(JSON.stringify(t.ctx.P)).toBe(before);expect(t.host.innerHTML).toContain('175000');

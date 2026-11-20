@@ -24,6 +24,8 @@
 <script src="/year-end.js"></script>
 <script src="/snapshots.js"></script>
 <script src="/liquidity.js"></script>
+<script src="/purchase-decision.js"></script>
+<link rel="stylesheet" href="/purchase-decision.css">
 <script src="/tax-rules.js"></script>
 <script src="/monitors.js"></script>
 <script src="/tax-plan.js"></script>
@@ -5207,7 +5209,8 @@ function renderHousingTab(R,P,host){
   const q=afParams();
   const a=affordability(q,_afShare);
   const py=q.homePurchaseYear;
-  const buyRow=run(q).R.find(r=>r.yr===py)||R[R.length-1];
+  const previewRows=run(q).R;
+  const buyRow=previewRows.find(r=>r.yr===py)||previewRows.at(-1);
   const affordabilityRow=a.max?run({...q,housingMode:'buy',homePrice:a.max}).R.find(r=>r.yr===py):null;
   const gapTotal=a.gaps.reduce((n,r)=>n+r.gap,0);
   const shareText=v=>Number.isFinite(v)?(v*100).toFixed(1)+'%':'No take-home income';
@@ -5372,16 +5375,11 @@ function renderHousingTab(R,P,host){
     const L=window.PlannerLiquidity;
     const cash=cashToClose(q.homePrice,q);
     const cc=cash.breakdown;
-    const prev=R.find(r=>r.yr===py-1),buyRow=R.find(r=>r.yr===py);
     const quarter=_afQuarter||L.purchaseQuarter(q);
     const floor=q.liquidReserveFloor??D.liquidReserveFloor;
-    const held=prev?prev.sEnd:(q.startingStripeEquity||0);
-    const vestQ=(buyRow?buyRow.sNew:0)/4;
-    const pauseCost=_afPauseMonths>0&&buyRow?buyRow.totE/12*_afPauseMonths:0;
-    const otherCash=Math.max(0,(prev?prev.liq:q.startingLiquid||0)-floor-pauseCost);
-    const capP={...q,...(_afTenderCap!=null?{stripeTenderCapPerEvent:_afTenderCap}:{})};
-    const check=L.fundingCheck({year:py,quarter,need:cash.total,heldValue:held,vestPerQuarter:vestQ,otherCash},capP);
-
+    const check=purchaseFunding(q,previewRows,quarter,_afPauseMonths,_afTenderCap);
+    if(!check){ca.innerHTML='<p>Choose a purchase year within the projection.</p>';return;}
+    const otherCash=check.portfolio;
     const row=(l,v,note)=>`<div style="display:flex;justify-content:space-between;font-size:10.5px;padding:4px 0;border-bottom:1px solid var(--bd)">
       <span style="color:var(--t2)">${l}${note?` <span style="font-size:8.5px;color:var(--t3)">· ${note}</span>`:''}</span>
       <span style="font-family:'SF Mono',monospace;color:var(--tx)">${fmtF(Math.round(v))}</span></div>`;
@@ -5402,7 +5400,7 @@ function renderHousingTab(R,P,host){
     // ── Can the money be there, in that quarter? ──
     h+=`<div class="glass-card" style="padding:16px 18px;border-color:${check.fundable?'var(--bd)':'rgba(205,61,100,.4)'}">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Can the cash be there?</div>
-      <div style="font-size:10px;color:var(--t2);margin-bottom:10px">Stripe sells in <strong>Q1 and Q4 tenders</strong>, plus a standing <strong>$20K/quarter</strong> cash election (about $80K a year). An annual total can look ample while the money is unreachable in the month you close.</div>
+      <div style="font-size:10px;color:var(--t2);margin-bottom:10px">Uses the selected closing quarter, available portfolio above the reserve, and eligible Stripe proceeds. Ordinary cash salary is excluded.</div>
       <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:11px">
         <label style="font-size:10px;color:var(--t2)">Closing quarter
           <select onchange="afSet2('q',this.value)" style="margin-left:5px;font-size:10px;padding:3px 6px;border:1px solid var(--bd);border-radius:5px;background:var(--s1);color:var(--tx);font-family:inherit">
@@ -5415,7 +5413,7 @@ function renderHousingTab(R,P,host){
             ${[0,3,6,12].map(m=>`<option value="${m}"${_afPauseMonths===m?' selected':''}>${m?m+' months':'none'}</option>`).join('')}</select></label>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px">
-        ${[['Needed',cash.total,'var(--tx)'],['Reachable from Stripe',check.fromStripe,'#6772e5'],
+        ${[['Needed',cash.total,'var(--tx)'],['Reachable from Stripe',check.fromStripe,'var(--accent)'],
            ['Portfolio above floor',otherCash,'var(--b)'],
            [check.fundable?'Surplus':'Short by',Math.abs(check.available-cash.total),check.fundable?'var(--g)':'var(--r)']]
           .map(([l,v,c])=>`<div style="background:var(--s2);border-radius:7px;padding:9px 11px">
@@ -5434,14 +5432,8 @@ function renderHousingTab(R,P,host){
       ['Stress: tender capped at $250K',{stripeTenderCapPerEvent:250000},0],
       ['6 months without income',{},6],
       ['Stress: both together',{stripeTenderCapPerEvent:250000},6],
-    ].map(([label,cp,pause])=>{
-      const pc=pause>0&&buyRow?buyRow.totE/12*pause:0;
-      const oc=Math.max(0,(prev?prev.liq:q.startingLiquid||0)-floor-pc);
-      const r=L.fundingCheck({year:py,quarter,need:cash.total,heldValue:held,vestPerQuarter:vestQ,otherCash:oc},{...q,...cp});
-      return{label,r};
-    });
-    scenarios.push({label:'Stripe −30% + first tender delayed 2 quarters',
-      r:L.stressClosing({year:py,quarter,need:cash.total,heldValue:held,vestPerQuarter:vestQ,otherCash:Math.max(0,(prev?prev.liq:q.startingLiquid||0)-floor)},q)});
+    ].map(([label,cp,pause])=>({label,r:purchaseFunding(q,previewRows,quarter,pause,cp.stripeTenderCapPerEvent??null)}));
+    scenarios.push({label:'Stripe −30% + first tender delayed 2 quarters',r:purchaseFunding(q,previewRows,quarter,0,null,true)});
     h+=`<div class="glass-card" style="padding:16px 18px">
       <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--t3);margin-bottom:3px">Downside, and what would change the answer</div>
       <div style="font-size:10px;color:var(--t2);margin-bottom:9px">Each row is the same purchase under a different assumption. Ranges, not probabilities — none of these is claimed to be likely.</div>
@@ -5456,8 +5448,8 @@ function renderHousingTab(R,P,host){
     </div>`;
   }
 
-  h+=housingReadinessHtml(R,P);
-  h+=mortgagePayoffHtml(R,P);
+  h+=housingReadinessHtml(previewRows,q);
+  h+=mortgagePayoffHtml(previewRows,q);
 
   // ── Refi calculator: a different question, kept but folded away ──
   h+=`<details class="glass-card" style="padding:14px 18px">
@@ -5486,6 +5478,7 @@ function renderHousingTab(R,P,host){
 
   h+=`</div>`;
   ca.innerHTML=(host?'':housingModeControl())+h;
+  ca.purchaseCase={q,rows:previewRows,a};
   ca.querySelectorAll('details[data-af]').forEach(el=>el.addEventListener('toggle',()=>{
     if(el.open&&!el.dataset.ready){el.insertAdjacentHTML('beforeend',el.dataset.af==='years'?comparisonYears():comparisonRates());el.dataset.ready='1';}
   }));
@@ -7292,6 +7285,7 @@ window.onerror=function(msg,src,line,col,err){
 };
 </script>
 <script src="/financial-independence-ui.js"></script>
+<script src="/purchase-decision-ui.js"></script>
 <script src="/experience.js"></script>
 </body>
 </html>

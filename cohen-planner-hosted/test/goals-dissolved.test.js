@@ -15,8 +15,8 @@ describe('the Goals tab is gone and each part has a home',()=>{
   const housing=between('function renderHousingTab(','\nfunction renderRentBuyTab').length?between('function renderHousingTab(','\nfunction '):'';
   expect(html).toContain('function housingReadinessHtml(R,P)');
   expect(html).toContain('function mortgagePayoffHtml(R,P)');
-  expect(html).toContain('h+=housingReadinessHtml(R,P);');
-  expect(html).toContain('h+=mortgagePayoffHtml(R,P);');
+  expect(html).toContain('h+=housingReadinessHtml(previewRows,q);');
+  expect(html).toContain('h+=mortgagePayoffHtml(previewRows,q);');
   // The old card closed a <details> inside a loop, thirty times over.
   expect(between('function mortgagePayoffHtml(','function renderHousingTab(')).not.toMatch(/<\/div><\/details>`;\s*\}\)\.join/);
  });
