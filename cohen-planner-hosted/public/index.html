@@ -1441,6 +1441,7 @@ function buildControls(){
   const childcareBody=s('Kid 1 city childcare $/mo','childcareMonthly',1000,6000,100,v=>'$'+v.toLocaleString())
     +s('Starts at age','childcareStartMonths',0,24,1,v=>v?v+' mo old':'birth')
     +'<p style="color:var(--t2)">Kids 2–4 use 50% of Kid 1’s city rate.</p>'
+    +(P.kid1CareSchedule?.length?'<p>Kid 1 uses the scheduled York tuition, then estimated suburban care until school. The start-age slider applies to kids 2–4.</p>':'')
     +`<div style="font-size:7.5px;color:var(--t3);line-height:1.5;margin:-2px 0 5px">${ccStart?`Leave covers the first ${ccStart} month${ccStart===1?'':'s'}, so a child's first year is charged ${Math.max(0,12-ccStart)} month${Math.max(0,12-ccStart)===1?'':'s'} of care${ccStart>12?` and their second ${Math.max(0,24-ccStart)}`:''}.`:'Charged from birth. Set this if leave covers the first months.'}</div>`
     ;
   bodies.childcare=childcareBody;
@@ -4334,9 +4335,9 @@ function renderBudgetTab(R,P){
     <div class="bd-tools bd-tools-m">${toolsInner}</div>
     ${groups}${oneOff}
     ${(P.planItems||[]).length?`<div class="cl-group" style="--tier:${PS_COLOR.oneoff}"><div class="cl-ghead"><span><i></i>Plan items you've added</span></div>
-      ${(P.planItems||[]).map((it,i)=>`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
+      ${(P.planItems||[]).map((raw,i)=>{const it=resolvePlanItem(P,raw);return it?`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
         <label class="bd-sug-amt"><span class="ui-sr">Amount</span><input type="text" inputmode="decimal" value="${fmtF(it.amount)}" aria-label="${advEscape(it.label)} amount" onfocus="this.select()" onchange="budgetItemAmount(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${it.from===it.to?'once':'/yr'}</small></label>
-        <button type="button" class="bd-btn" onclick="budgetRemoveItem(${i})" aria-label="Remove ${advEscape(it.label)}">Remove</button></div>`).join('')}</div>`:''}
+        <button type="button" class="bd-btn" onclick="budgetRemoveItem(${i})" aria-label="Remove ${advEscape(it.label)}">Remove</button></div>`:'';}).join('')}</div>`:''}
     <p class="spend-caption">Take-home includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${gridFold}${overTimeHtml}${ledgerFold}${mapFold}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';

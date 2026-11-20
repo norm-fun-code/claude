@@ -31,7 +31,7 @@
       lines: ['groceries', 'medical'], params: ['baseGroceries', 'baseMedical'] },
     { key: 'childcare', label: 'Childcare', recommended: true,
       note: 'The monthly rate and when it starts',
-      lines: [], params: ['childcareMonthly', 'childcareStartMonths','childcareInflation'] },
+      lines: [], params: ['childcareMonthly', 'childcareStartMonths','childcareInflation','kid1CareSchedule'] },
     { key: 'tuition', label: 'Tuition', recommended: true,
       note: 'School ages and tuition inflation',
       lines: [], params: ['yeshivaStartAge', 'yeshivaEndAge', 'kid1YeshivaStartAge', 'tuitionInflation'] },

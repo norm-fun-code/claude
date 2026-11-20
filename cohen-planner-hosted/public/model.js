@@ -478,10 +478,22 @@ function budgetValue(p,category,yr,income){
 // chosen line (or to the one-off column) for the years it covers, growing with inflation unless
 // told otherwise. They sit on top of whatever else the line is doing, a rule or a pin included,
 // so adding one never silently overwrites a choice, and removing it puts things back.
+function resolvePlanItem(p,it){
+  if(!it)return null;
+  if(it.anchor==='purchase'){
+    const year=Number(p.homePurchaseYear);
+    return p.housingMode==='rent'||!Number.isInteger(year)?null:{...it,from:year,to:year};
+  }
+  if(it.child==null)return it;
+  const child=Number(it.child),birth=Number(p['kid'+child+'Birth']);
+  if(!Number.isInteger(child)||child<1||child>(p.numKids??1)||!Number.isInteger(birth)||birth<1900)return null;
+  return {...it,from:birth+it.fromAge,to:birth+it.toAge};
+}
 function planItemsFor(p,yr){
   const lines={};let oneOff=0;
   const infl=Number(p&&p.expenseInflation)||0;
-  for(const it of (Array.isArray(p&&p.planItems)?p.planItems:[])){
+  for(const raw of (Array.isArray(p&&p.planItems)?p.planItems:[])){
+    const it=resolvePlanItem(p,raw);
     if(!it)continue;
     const from=Number(it.from),to=Number(it.to),amt=Number(it.amount);
     if(!Number.isFinite(from)||!Number.isFinite(to)||!Number.isFinite(amt)||yr<from||yr>to)continue;
@@ -887,8 +899,15 @@ function run(p,rets,compiledGrants){
       // of 7 charges 5 months in the birth year and 12 thereafter, and a start of 18 charges
       // none in the birth year and 6 in the next.
       if(a>=0&&a<startAge){
-        const months=Math.max(0,Math.min(12,(a+1)*12-(Number(p.childcareStartMonths)||0)));
-        cc+=monthlyCare*months*(ki===0?firstCareFactor:.5);
+        if(ki===0&&Array.isArray(p.kid1CareSchedule)&&p.kid1CareSchedule.length){
+          for(let month=a*12;month<(a+1)*12;month++){
+            const phase=p.kid1CareSchedule.find(x=>x&&month>=x.fromMonth&&(x.untilMonth==null||month<x.untilMonth));
+            if(phase)cc+=phase.monthly??monthlyCare*(phase.rateShare||0);
+          }
+        }else{
+          const months=Math.max(0,Math.min(12,(a+1)*12-(Number(p.childcareStartMonths)||0)));
+          cc+=monthlyCare*months*(ki===0?firstCareFactor:.5);
+        }
       }
     }
     // Spending already incurred this year is behind the observation date and is already
@@ -1444,7 +1463,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={NJ_MFJ_BR,DEAL_SPENDING_FACTORS,NJ_PROPERTY_RATES,locationActive,locationSpendingFactor,locationPropertyRate,locationAdditions,locationCapitalGainsRate,nycKidCost,commonHousehold,bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,nancyW2Income,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,nancyW2Income,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,resolvePlanItem,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingYears,housingMonthlyCost,housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

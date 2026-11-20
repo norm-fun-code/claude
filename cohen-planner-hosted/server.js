@@ -405,7 +405,7 @@ app.get('/api/planner-state', requireAuth, async (req, res) => {
   try {
     const result = await db.query('SELECT state FROM planner_state WHERE id = 1');
     const saved=result.rows[0]||{state:{}};
-    res.json({...saved,state:require('./promotion-comp-scenarios').repairState(saved.state).state});
+    res.json({...saved,state:require('./calibrated-budget-update').repairState(require('./promotion-comp-scenarios').repairState(saved.state).state)});
   } catch (err) {
     console.error('GET planner-state error:', err);
     res.status(500).json({ error: 'Database error' });
@@ -414,7 +414,7 @@ app.get('/api/planner-state', requireAuth, async (req, res) => {
 
 app.put('/api/planner-state', requireAuth, async (req, res) => {
   try {
-    const state=require('./promotion-comp-scenarios').repairState(req.body.state||{}).state;
+    const state=require('./calibrated-budget-update').repairState(require('./promotion-comp-scenarios').repairState(req.body.state||{}).state);
     await db.query(
       `INSERT INTO planner_state (id, state) VALUES (1, $1)
        ON CONFLICT (id) DO UPDATE SET state = $1, updated_at = NOW()`,
@@ -2307,6 +2307,7 @@ async function initSchemaWithRetry(retries = 5, delayMs = 3000) {
       const promotionUpdate=await require('./promotion-comp-scenarios').applyPromotionCompScenarios(db.pool);
       console.log('Promotion compensation update:',JSON.stringify(promotionUpdate));
       console.log('Compensation snapshot repair:',JSON.stringify(await require('./promotion-comp-scenarios').repairLegacyCompSnapshots(db.pool)));
+      console.log('Family budget calibration:',JSON.stringify(await require('./calibrated-budget-update').apply(db.pool)));
       monarchJobs.start();
       return;
     } catch (err) {

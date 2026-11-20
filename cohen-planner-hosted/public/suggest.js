@@ -100,7 +100,11 @@
   // What is left to decide: not yet added, not dismissed.
   function pending(P, year, span) {
     const done = new Set([...(P.budgetDismissed || []), ...(P.planItems || []).map(i => i.sid).filter(Boolean)]);
-    return events(P, year, span).filter(e => !done.has(e.id));
+    const anchored=(P.planItems||[]).filter(i=>i&&i.child!=null);
+    return events(P,year,span).filter(e=>{
+      const m=/^(baby-gear|camp|mitzvah)-(\d+)-/.exec(e.id);
+      return !done.has(e.id)&&!anchored.some(i=>m&&i.child===Number(m[2])&&i.sid?.startsWith(m[1]+'-'));
+    });
   }
 
   const api = { BANDS, UPKEEP, DEFAULTS, CAMP_AGES, MITZVAH_AGE, kidsOf, people, household, owns, checks, events, pending };

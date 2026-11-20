@@ -384,7 +384,8 @@
           out.push({ type: 'pin', category: cat, from: sy + i, to: sy + i, value: Number(v), ref: key });
       }
     }
-    (Array.isArray(P.planItems) ? P.planItems : []).forEach((it, i) => {
+    (Array.isArray(P.planItems) ? P.planItems : []).forEach((raw, i) => {
+      const it=M.resolvePlanItem(P,raw);
       if (it) out.push({ type: 'item', category: it.category, label: it.label, from: Number(it.from), to: Number(it.to), amount: Number(it.amount), grow: it.grow !== false, ref: i });
     });
     const rank = c => { const i = ORDER.indexOf(c); return i < 0 ? 999 : i; };
