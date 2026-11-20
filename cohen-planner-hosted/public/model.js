@@ -10,6 +10,9 @@ const FED_BR_2026=[[24800,.10],[100800,.12],[211400,.22],[403550,.24],[512450,.3
 // NY Tax Law § 601 thresholds with the rates enacted by Chapter 59 of the Laws of 2025
 // (Part A), which cut each of the five lowest rates by 0.1 point for 2026 (a further 0.1
 // point lands in 2027). Confirmed against NYS-50-T-NYS (1/26).
+const FED_BR_2027=[[25600,.10],[104050,.12],[218250,.22],[416650,.24],[529100,.32],[793650,.35],[1e15,.37]];
+const FED_SINGLE_2026=[[12400,.10],[50400,.12],[105700,.22],[201775,.24],[256225,.32],[640600,.35],[1e15,.37]];
+const FED_SINGLE_2027=[[12800,.10],[52025,.12],[109125,.22],[208325,.24],[264550,.32],[661375,.35],[1e15,.37]];
 const NYS_BR_2026=[[17150,.0390],[23600,.0440],[27900,.0515],[161550,.0540],[323200,.0590],[2155350,.0685],[5e6,.0965],[25e6,.103],[1e15,.109]];
 const NYS_BR_2027=[[17150,.0380],[23600,.0430],[27900,.0505],[161550,.0530],[323200,.0580],[2155350,.0685],[5e6,.0965],[25e6,.103],[1e15,.109]];
 const NYS_BR_2033=[...NYS_BR_2027.slice(0,6),[1e15,.0882]];
@@ -85,7 +88,9 @@ function calcTax(grossIncome,p,yr,numKids){
 
   const single=!!p._fiSingle;
   const ssEngine=typeof module!=='undefined'&&module.exports?require('./social-security.js'):window.PlannerSS;
-  const FED_BR=_scaleBr(single?[[12400,.10],[50400,.12],[105700,.22],[201775,.24],[256225,.32],[640600,.35],[1e15,.37]]:FED_BR_2026,f);
+  const official2027=yr>=2027;
+  const federalScale=official2027?(1+taxInf)**(yr-2027):f;
+  const FED_BR=_scaleBr(single?(official2027?FED_SINGLE_2027:FED_SINGLE_2026):(official2027?FED_BR_2027:FED_BR_2026),federalScale);
   // The federal schedule is indexed by statute. New York's is NOT: § 601 and the NYC
   // Administrative Code set fixed dollar thresholds that only move when the legislature
   // moves them. Escalating them alongside nominal income cancels out real bracket creep
@@ -96,12 +101,12 @@ function calcTax(grossIncome,p,yr,numKids){
   const nyJoint=yr>=2033?NYS_BR_2033:yr>=2027?NYS_BR_2027:NYS_BR_2026;
   const NYS_BR=_scaleBr(single?nyJoint.map(([top,rate],i)=>[top>=1e14?1e15:([8500,11700,13900,80650,215400,1077550,5e6,25e6][i]??1e15),rate]):nyJoint,sf);
   const NYC_BR=_scaleBr(single?[[12000,.03078],[25000,.03762],[50000,.03819],[1e15,.03876]]:NYC_BR_2026,sf);
-  const ssCap=p._fiWageGrowth!=null?Math.round(ssEngine.cap(yr,p._fiWageGrowth)):Math.round(SS_CAP_2026*f);
+  const ssCap=p._fiWageGrowth!=null?Math.round(ssEngine.cap(yr,p._fiWageGrowth)):Math.round(official2027?192300*federalScale:SS_CAP_2026*f);
   // F4. The OBBBA cap is NOT indexed to general inflation: it grows 1%/yr through 2029 and
   // reverts to $10,000 from 2030 (IRC § 164(b)(6)(B)-(C), P.L. 119-21 § 70120). Escalating
   // it at the tax-inflation rate forever overstated the deduction in every year from 2030.
   const saltBase=yr>=2030?10000:Math.round(SALT_BASE_2026*1.01**Math.max(0,yr-2026));
-  const stdDeduct=Math.round(((single?16100:STD_DEDUCT_2026)+(p._fiOver65||0)*(single?2050:1650))*f);
+  const stdDeduct=Math.round(((official2027?(single?16600:33200):(single?16100:STD_DEDUCT_2026))+(p._fiOver65||0)*(single?2050:1650))*federalScale);
 
   const pretax=p.pretax401k+p.pretaxBenefits;
   const normSE=p._normSE||0,retirementIncome=p._retirementIncome||0;
@@ -190,12 +195,18 @@ function calcTax(grossIncome,p,yr,numKids){
       for(let m=0;m<12;m++){mortInt+=bal*mr;bal-=(pmt-bal*mr)}
     }
     const mortCap=750000;
-    deductibleMortInt=mortAmt>0?mortInt*Math.min(1,mortCap/mortAmt):0;
+    // Interest divided by the fixed rate gives the average monthly outstanding
+    // balance for the year (IRS Publication 936, interest-paid method).
+    const avgBalance=mr>0?mortInt/(mr*12):0;
+    deductibleMortInt=avgBalance>0?mortInt*Math.min(1,mortCap/avgBalance):0;
   }
-  const charityPaid=(p.baseCharity||0)*(1+(p.expenseInflation||0))**(yr-sy);
+  const charityPaid=Math.max(0,p._qualifiedCharity??(p.baseCharity||0)*(1+(p.expenseInflation||0))**(yr-sy));
   const deductibleCharity=Math.max(0,charityPaid-0.005*agi);
   const itemized=saltDeduction+deductibleMortInt+deductibleCharity;
-  const deduction=Math.max(stdDeduct,itemized);
+  // Budget charity is a planning estimate of qualifying cash gifts. A household
+  // can exclude any noneligible giving using the qualified-share assumption.
+  const standardPlusCash=stdDeduct+(yr>=2026?Math.min(charityPaid,single?1000:2000):0);
+  const deduction=Math.max(standardPlusCash,itemized);
 
   // ── QBI ──
   let qbi=0;
@@ -206,20 +217,20 @@ function calcTax(grossIncome,p,yr,numKids){
     // practice is an SSTB with no employee wages or qualified depreciable assets:
     // first limit the eligible SSTB share, then phase in the wage/property limit.
     const beforeQBI=Math.max(0,agi-deduction);
-    const threshold=(single?201750:403500)*f, band=single?75000:150000;
+    const threshold=(official2027?(single?208300:416600):(single?201750:403500))*federalScale, band=single?75000:150000;
     const eligible=Math.max(0,Math.min(1,1-(beforeQBI-threshold)/band));
     qbi=Math.min(qbiBase*eligible*eligible,.20*beforeQBI);
     // Active qualified business minimum introduced for 2026. Above the SSTB
     // cutoff there is no qualifying business income and thus no minimum either.
-    if(p.nancyQBIRate>0&&businessQBI*eligible>=1000*f)
-      qbi=Math.max(qbi,400*f);
+    if(p.nancyQBIRate>0&&businessQBI*eligible>=(official2027?1030:1000)*federalScale)
+      qbi=Math.max(qbi,(official2027?415:400)*federalScale);
 
   }
 
   const fedTaxable=Math.max(0,agi-deduction-qbi);
   let federal=bracketTax(fedTaxable,FED_BR);
   if(numKids>0){
-    const ctcPerKid=2200*f; // also index CTC
+    const ctcPerKid=(official2027?2300:2200)*federalScale;
     let ctc=numKids*ctcPerKid;
     const ctcPhaseBase=single?200000:400000; // statutory phaseout is not inflation-indexed
     if(agi>ctcPhaseBase)ctc=Math.max(0,ctc-Math.ceil((agi-ctcPhaseBase)/1000)*50);
@@ -243,7 +254,7 @@ function calcTax(grossIncome,p,yr,numKids){
     // impossible to see that the cap was being deducted regardless of taxes paid.
     saltPaid:Math.round(saltPaid),saltDeduction:Math.round(saltDeduction),
     propertyTax:Math.round(propertyTaxPaid),
-    mortInt:Math.round(mortInt),itemizing:itemized>stdDeduct
+    mortInt:Math.round(mortInt),itemizing:itemized>standardPlusCash
   };
 }
 
@@ -295,7 +306,29 @@ const STRIPE_RET_YEARS=10; // explicit per-year Stripe return assumptions: Y0 th
 // ordinary W2 income at vest — so calcTax() still sees one combined normW2 figure.
 // Past the explicit window each stream compounds at its own growth rate.
 const grantEngine=typeof module!=='undefined'&&module.exports?require('./stripe-grants.js'):window.StripeGrants;
+// Price half of annual face-value stock as eight equal PEG vest tranches:
+ // Q1 from the previous two May grants, Q2–Q4 from the current and previous May.
+function optimisticVestingFactor(p,yr){
+  if(!p.optimisticVestShare||yr<=Number(p.optimisticStockActualThrough??2026))return 1;
+  const path=p._optimisticPricePath||grantEngine.pricePath({...p,stripeGrants:p.stripeGrants||{}},yr-2,yr+1);
+  const priceAt=(year,fraction)=>path[year].tender*(path[year+1].tender/path[year].tender)**fraction;
+  const grant=y=>Number(p.stripeGrants?.prices?.[y]?.grant)>0?path[y].grant:priceAt(y,4/12);
+  let peg=0;
+  for(let q=1;q<=4;q++){
+    const vest=Number(p.stripeGrants?.prices?.[yr]?.vestFMV?.[q-1])>0?path[yr].vestFMV[q-1]:priceAt(yr,q/4);
+    const cohort=q===1?yr-1:yr;
+    peg+=vest/grant(cohort)+vest/grant(cohort-1);
+  }
+  const share=Math.min(1,Math.max(0,Number(p.optimisticVestShare)||0));
+  return 1-share+share*peg/8;
+}
 function normComp(p,yIdx,ledger){
+  const result=nominalNormComp(p,yIdx,ledger);
+  if(!p.optimisticVestShare||grantEngine.active(p))return result;
+  const yr=(p.planStartYear||2026)+yIdx;
+  return {...result,stock:result.stock*optimisticVestingFactor(p,yr)};
+}
+function nominalNormComp(p,yIdx,ledger){
   const last=NORM_COMP_YEARS-1;
   const cashAt=i=>p['normCashY'+i]??275000;
   const stockAt=i=>p['normStockY'+i]??150000;
@@ -442,9 +475,8 @@ function livingCategoryOverride(p,category,yr,sy){
 //   pct    : a share of that year's income, every year — it MOVES with income
 //   model  : go back to the model's figure from this year on
 // Precedence, most specific first: a pin for one named year (livingXxxY<i>), then the rule in
-// force that year, then the model. Income is known before spending is worked out, so a
-// percentage never has to guess at it — except charity, which also feeds the tax deduction;
-// that deduction stays on the baseline so the loop does not chase its own tail.
+// force that year, then the model. Charity is also resolved before calculating its deduction;
+// income-linked giving is solved against the resulting take-home.
 const BUDGET_KINDS=['amount','pct','model'];
 function budgetSegment(p,category,yr){
   const segs=p&&p.budgetRules&&p.budgetRules[category];
@@ -659,6 +691,8 @@ function run(p,rets,compiledGrants){
   const fi=p.fiConfig?.enabled?p.fiConfig:null;
   const sy=p.planStartYear||2026;
   const ey=p.planEndYear||2058;
+  if(p.optimisticVestShare&&!grantEngine.active(p))
+    p={...p,_optimisticPricePath:grantEngine.pricePath({...p,stripeGrants:p.stripeGrants||{}},sy-2,ey+1)};
   const kids=[p.kid1Birth];
   if(p.numKids>=2)kids.push(p.kid2Birth);
   if(p.numKids>=3)kids.push(p.kid3Birth);
@@ -744,7 +778,7 @@ function run(p,rets,compiledGrants){
     }
     let fiNormSE=0,fiNormOH=0;
     if(fiOn){
-      const years=yr-fi.transitionYear,earnings=fi.stress==='earnings25'?.75:fi.stress==='earnings50'?.5:1;
+      const years=yr-fi.transitionYear,earnings=fi.stress==='earnings25'?.75:fi.stress==='earnings50'?.5:fi.stress==='combined'&&years===0?0:1;
       const early=fi.stress==='early'?10:0;
       const normAge=yr-fi.normBirthYear,nancyAge=yr-fi.nancyBirthYear;
       const normWorking=normAge<fi.normStopAge-early&&normAge<fi.normDeathAge,nancyWorking=nancyAge<fi.nancyStopAge-early&&nancyAge<fi.nancyDeathAge;
@@ -778,11 +812,27 @@ function run(p,rets,compiledGrants){
     // the first, and 1 in the first year too unless the plan says when it was observed.
     const stub=yIdx===0?yearRemaining(p):1;
     const ctcKids=kids.filter(k=>yr>=k&&(yr-k)<17).length;
-    const fiContrib=fiOn?Math.min(fi.contribution,24500*(1+(p.taxInflation??.025))**(yr-2026),fi.normType==='consulting'?fiNormSE*.20:Math.max(0,normCash)):p.pretax401k*normScale;
+    const fiContrib=fiOn?Math.min(fi.contribution,yr<2027?24500:25500*(1+(p.taxInflation??.025))**(yr-2027),fi.normType==='consulting'?fiNormSE*.20:Math.max(0,normCash)):p.pretax401k*normScale;
     const ss=ssState?ssState.step(yr,(fiOn&&fi.normType==='consulting'?normStock:normW2)+fiNormSE*.9235,(nancyIsSolo?nancySENet*.9235:nancyGross),normCash+normStock-fiNormOH,nancyIsSolo?nancySENet:nancyGross):null;
     const socialSecurity=ss?ss.total:0;
     const taxP={...p,_socialSecurity:socialSecurity,_fiSingle:fiOn&&ss.single,_fiWageGrowth:fiOn?fi.ssWageGrowth:null,_fiOver65:fiOn?[ss.people.norm,ss.people.nancy].filter(d=>d.alive&&d.age>=65).length:0,locationConfig:fiOn?{...p.locationConfig,normNySource:fi.normNySource,practiceNySource:fi.practiceNySource}:p.locationConfig,pretax401k:fiContrib,pretaxBenefits:fiOn?0:p.pretaxBenefits*normScale,_normW2:fiOn&&fi.normType==='consulting'?normStock:normW2,_normSE:fiNormSE,_normOverhead:fiNormOH,_nancyW2:nancyIsSolo?0:nancyGross,_nancySE:nancyIsSolo?nancySENet:0,_nancyOverhead:nancyIsSolo?nancyOH:0,_taxDependents:kids.filter(k=>yr>=k&&yr-k<19).length};
-    const tax=calcTax(grossIncome,taxP,yr,ctcKids);
+    const itemAdds=planItemsFor(p,yr);
+    const stressCost=Math.max(0,Number(shock.expenseMultiplier??1));
+    const rawCharity=p._fiExpenses?.[yr]?.liv?.charity;
+    const charityBase=(p.baseCharity||0)*(1+(p.expenseInflation||0))**(yr-sy);
+    const charityPin=livingCategoryOverride(p,'charity',yr,sy);
+    const charityAt=income=>rawCharity??Math.round(
+      ((charityPin??budgetValue(p,'charity',yr,{net:income,gross:grossIncome})??charityBase)
+      +(itemAdds.lines.charity||0))*locationSpendingFactor(p,'charity',yr)*stressCost);
+    const qualifiedShare=Math.max(0,Math.min(1,p.qualifiedCharityShare??1));
+    taxP._qualifiedCharity=(rawCharity??charityBase)*qualifiedShare;
+    let tax=calcTax(grossIncome,taxP,yr,ctcKids);
+    for(let i=0;i<16;i++){
+      const next=charityAt(tax.net)*qualifiedShare;
+      if(Math.abs(next-taxP._qualifiedCharity)<.01)break;
+      taxP._qualifiedCharity=next;
+      tax=calcTax(grossIncome,taxP,yr,ctcKids);
+    }
     // tax.net nets ALL household tax out of ALL comp (cash + stock). Backing the stock
     // straight out leaves exactly the spendable figure:
     //   normCash + nancyGross − taxes − pretax − practice overhead
@@ -867,11 +917,9 @@ function run(p,rets,compiledGrants){
       const ruled=budgetValue(p,category,yr,{net:tax.net,gross:tax.gross});
       if(ruled!==null){livRaw[category]=ruled;livSrc[category]='rule'}else livSrc[category]='model';
     }
-    const itemAdds=planItemsFor(p,yr);
     for(const k of Object.keys(itemAdds.lines))livRaw[k]+=itemAdds.lines[k];
     const locationAdds=locationAdditions(p,yr);
     for(const k of LIV_KEYS){livRaw[k]*=locationSpendingFactor(p,k,yr);if(livSrc[k]==='model')livRaw[k]+=locationAdds[k]||0;}
-    const stressCost=Math.max(0,Number(shock.expenseMultiplier??1));
     for(const k of LIV_KEYS)livRaw[k]*=stressCost;
     const roundParts=(o,f)=>{
       const out={};for(const k of LIV_KEYS)out[k]=Math.round(o[k]*f);
@@ -985,7 +1033,8 @@ function run(p,rets,compiledGrants){
     const marketNet=eqYear?eqYear.market*(1-vestRate):normStockNet;
     const vestByQuarter=eqYear?Array.from({length:4},(_,q)=>futureEvents.filter(e=>e.quarter===q+1).reduce((s,e)=>s+e.market*(1-vestRate),0)):null;
     const markRate=yIdx>0?(grantLedger?grantLedger.prices[yr].tender/grantLedger.prices[yr-1].tender-1:simplePrices?simplePrices[yr].tender/simplePrices[yr-1].tender-1:0):0;
-    const saleBudget=shock.stripeSalesBlocked?0:liquidityModule.raisableInYear(yr,{heldValue:lotsValue(lots)*(1+markRate),vestPerQuarter:normStockNet/4,vestByQuarter},p);
+    const stripeSalesBlocked=!!shock.stripeSalesBlocked||(fiOn&&fi.stress==='combined'&&yr<fi.transitionYear+2);
+    const saleBudget=stripeSalesBlocked?0:liquidityModule.raisableInYear(yr,{heldValue:lotsValue(lots)*(1+markRate),vestPerQuarter:normStockNet/4,vestByQuarter},p);
     // Only the vests still AHEAD of the observation date are in play. The ones that already
     // landed were sold or kept months ago, and either way their effect is inside the opening
     // balances — offering them to the waterfall again would fund the rest of the year twice.
@@ -1012,6 +1061,7 @@ function run(p,rets,compiledGrants){
     const marked=grantLedger?markRate:(yIdx>0?(simplePrices?simplePrices[yr].tender/simplePrices[yr-1].tender-1:stripeReturn(p,yIdx-1)):0);
     const stripePreGrowth=lotsValue(lots);
     if(marked)for(const L of lots)L.v*=(1+marked);
+    if(fiOn&&fi.stress==='combined'&&yr===fi.transitionYear)for(const L of lots)L.v*=.7;
     const stripeAppr=lotsValue(lots)-stripePreGrowth;
     // Everything reaching here is already remainder-only, so all of it is new equity. What
     // the opening balance was already carrying is reported separately, never re-added.
@@ -1130,7 +1180,9 @@ function run(p,rets,compiledGrants){
     // beside it. That dollar is not cosmetic — it silently disabled the bridge's
     // year-by-year breakdown, which only renders when its parts reconcile exactly.
     const nw=Math.round(liq)+Math.round(stripeEnd)+Math.round(eq)+Math.round(otherAssets)-Math.round(otherDebt);
-    R.push({yr,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
+    const taxInvestment=Math.round(txS)+Math.round(holdTax+newSaleTax)+Math.round(privateGainTax)+Math.round(fiSSGainTax);
+    const taxRetirement=Math.round(fiRetTax);
+    R.push({yr,stripeSalesBlocked,taxInvestment,taxRetirement,taxTotal:tax.allInTax+taxInvestment+taxRetirement,normG:Math.round(normCash)+Math.round(normStock),normCash:Math.round(normCash),normStock:Math.round(normStock),
       nancyG:Math.round(nancyGross),gross:tax.gross,tax:tax.allInTax,effRate:tax.effRate,
       inc:Math.round(inc),netTC:tax.net,preTax:tax.pretax,bizOverhead:tax.overhead,otherInc:tax.otherIncome,h:Math.round(h),ptax:Math.round(ptax),hv:Math.round(hv),
       fiActive:fiOn,fiHealth:Math.round(fiHealth),fiNormSE:Math.round(fiNormSE),fiNancyOverhead:Math.round(nancyOH),fiRetDraw:Math.round(fiRetDraw),fiRetTax:Math.round(fiRetTax),fiSSGainTax:Math.round(fiSSGainTax),fiPrivateSold:Math.round(privateSold),fiPrivateGainTax:Math.round(privateGainTax),fiPrivateRealizedGains:Math.round(privateRealizedGains),fiPrivateTradable:Math.round(privateTradable),fiPrivateBasis:Math.round(privateTradableBasis),fiPrivateUnlocked:privateUnlocked,fiSSNorm:Math.round(ss?ss.norm:0),fiSSNancy:Math.round(ss?ss.nancy:0),fiSS:Math.round(socialSecurity),fiSSWithheld:Math.round(ss?ss.withheld:0),fiSSTaxable:fiFinalTax.taxableSS,fiMagi:fiFinalTax.agi+(fiOn?fiRealizedGains:sold*gp+(gainsRate>0?(holdTax+newSaleTax)/gainsRate:0)),fiMedicare:Math.round(medicare.incremental),fiIRMAA:Math.round(medicare.irmaa),fiSSProvisional:fiOn?!(fi.normSSMonthly>0&&fi.nancySSMonthly>0):false,fiNetEarned:fiOn?calcTax(grossIncome,{...taxP,_socialSecurity:0},yr,ctcKids).net:tax.net,fiFundingNeed:fiOn?Math.max(0,-surpFull)+dpThis:0,fiContribution:fiOn?fiContrib:0,fiEmployerMatch:fiOn?0:p.company401kMatch,
@@ -1349,6 +1401,8 @@ function housingYears(p,rows,share){
     const saving=Math.max(0,emergency||0,r.netTC*(p.housingSavingShare||0));
     const shareRoom=r.netTC*share,room=r.netTC-(r.totEFull-r.hFull)-saving;
     return {year:r.yr,margin:Math.min(shareRoom,room)-r.hFull,
+      shareMargin:shareRoom-r.hFull,spendingMargin:room-r.hFull,
+      share:r.netTC>0?r.hFull/r.netTC:(r.hFull>0?Infinity:0),
       gap:Math.max(0,r.hFull-room),reason:shareRoom<=room?'Income-share ceiling':'Spending and savings',
       income:r.netTC,tuition:r.tuFull};
   });
@@ -1360,7 +1414,10 @@ function affordability(p,targetShare=.25){
     const rows=run({...p,housingMode:'buy',homePrice:price}).R,years=housingYears(p,rows,targetShare);
     const tight=years.reduce((a,b)=>!a||b.margin<a.margin?b:a,null);
     const reserve=rows.find(r=>r.liq<floor-1);
-    const result={tight,years,reserveYear:reserve?.yr,plan:!reserve,comfort:!!tight&&tight.margin>=0};
+    const shareTight=years.reduce((a,b)=>!a||b.shareMargin<a.shareMargin?b:a,null);
+    const peakShare=years.reduce((a,b)=>!a||b.share>a.share?b:a,null);
+    const result={tight,shareTight,peakShare,years,reserveYear:reserve?.yr,plan:!reserve,
+      shareOK:!!shareTight&&shareTight.shareMargin>=0,comfort:!!tight&&tight.margin>=0};
     cache.set(price,result);return result;
   }
   function limit(key){
@@ -1369,12 +1426,15 @@ function affordability(p,targetShare=.25){
     while(hi-lo>1){const m=Math.floor((lo+hi)/2);if(check(m*step)[key])lo=m;else hi=m;}
     return lo*step;
   }
-  const plan=limit('plan'),comfort=limit('comfort'),max=Math.min(plan,comfort);
-  const next=check(Math.min(cap,max+step)),current=check(p.homePrice);
-  const binding=plan<=comfort?'plan':'comfort',capped=max===cap;
-  return {plan,comfort,max,binding,current:p.homePrice,withinBudget:p.homePrice<=max,
-    reason:capped?'Search ceiling':binding==='plan'?'Liquidity reserve':next.tight?.reason,
-    year:capped?null:binding==='plan'?next.reserveYear:next.tight?.year,end:current.years.at(-1)?.year,
+  const plan=limit('plan'),comfort=limit('comfort'),shareLimit=limit('shareOK');
+  const max=Math.min(plan,shareLimit);
+  const next=check(Math.min(cap,max+step)),nextIncome=check(Math.min(cap,comfort+step)),current=check(p.homePrice);
+  const binding=plan<shareLimit?'plan':'share',capped=max===cap;
+  return {plan,comfort,shareLimit,max,binding,current:p.homePrice,withinBudget:current.plan&&current.shareOK,
+    reason:capped?'Search ceiling':binding==='plan'?'Liquidity reserve':'Income-share ceiling',
+    year:capped?null:binding==='plan'?next.reserveYear:next.shareTight?.year,end:current.years.at(-1)?.year,
+    shareYear:shareLimit===cap?null:check(shareLimit+step).shareTight?.year,
+    incomeYear:comfort===cap?null:nextIncome.tight?.year,peakShare:current.peakShare,
     gaps:current.years.filter(r=>r.gap>0),reserveYear:current.reserveYear};
 }
 
@@ -1463,7 +1523,7 @@ function runMonteCarlo(p,trials=600,mode='lognormal'){
 // Export for Node (tests) — noop in browser
 if(typeof module!=='undefined'&&module.exports){
   module.exports={NJ_MFJ_BR,DEAL_SPENDING_FACTORS,NJ_PROPERTY_RATES,locationActive,locationSpendingFactor,locationPropertyRate,locationAdditions,locationCapitalGainsRate,nycKidCost,commonHousehold,bracketTax,calcTax,run,runMonteCarlo,baseTuit,kidCost,mPmt,mBal,
-    normComp,nancyW2Income,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,resolvePlanItem,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
+    normComp,nominalNormComp,optimisticVestingFactor,nancyW2Income,stripeReturn,stripeVestRemaining,yearRemaining,expenseAdjFor,EXPENSE_ADJ_MAX,LIV_OVERRIDE_MAX,CLOTHING_SHARE,BUDGET_KINDS,budgetSegment,budgetValue,planItemsFor,resolvePlanItem,LIV_KEYS,livingCategoryKey,livingCategoryOverride,observedMonth,vestDates,STRIPE_VEST_MONTHS,STRIPE_VEST_DATES,stripeSellAmount,sellLots,lotsValue,lotsBasis,drawYears,
     housingYears,housingMonthlyCost,housingCostPerDollar,comfortAffordablePrice,planAffordablePrice,affordability,
     mansionTax,closingCosts,cashToClose,insuranceFor,NYC_MANSION_BANDS,
     NORM_COMP_YEARS,STRIPE_RET_YEARS,

@@ -176,7 +176,7 @@ async function initSchema() {
     const P=require('./public/plan-migrate').migrateP(saved.P);
     let refs=P.sharedBudgetIncome;
     if(!refs||!Object.keys(refs).length)refs=Object.fromEntries(require('./public/model').run(P).R.map(r=>[r.yr,{net:r.netTC,gross:r.gross}]));
-    await pool.query(`UPDATE planner_state SET state=jsonb_set(state,'{P}',$1::jsonb)
+    await pool.query(`UPDATE planner_state SET state=jsonb_set(state,'{P}',$1::jsonb), updated_at=clock_timestamp()
       WHERE id=1 AND state->'P'=$2::jsonb`,[JSON.stringify({...saved.P,masterBudget:true,sharedBudgetIncome:refs}),JSON.stringify(saved.P)]);
   }
 

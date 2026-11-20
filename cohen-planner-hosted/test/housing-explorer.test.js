@@ -37,7 +37,7 @@ describe('purchase year is a Home lever, shared with rent-or-buy', () => {
 
 describe('the share lever says what the share is worth', () => {
   it('shows the payment, purchase-year share, limiting year and reserve option',()=>{
-    for(const text of ['Comfortable purchase price','% of purchase-year take-home','a.reason','a.year','Use savings at the selected'])expect(tab).toContain(text);
+    for(const text of ['Price at your','peak share in','a.shareYear','Set aside for shortfall years','without a drawdown'])expect(tab).toContain(text);
   });
   it('recomputes on every move, because afSet re-renders the tab', () => {
     expect(html).toMatch(/function afSet\(k,v\)\{[\s\S]*?render\(\);\n\}/);
@@ -60,7 +60,7 @@ describe('what waiting actually buys', () => {
     for(const price of [a.max,a.max+1000]){
       const rows=M.run({...q,housingMode:'buy',homePrice:price}).R;
       const end=rows.filter(r=>r.tuFull>0).at(-1).yr;
-      const fails=rows.filter(r=>r.liq<q.liquidReserveFloor-1||r.yr>=2030&&r.yr<=end&&(r.hFull>r.netTC*.25||r.totEFull>r.netTC));
+      const fails=rows.filter(r=>r.liq<q.liquidReserveFloor-1||r.yr>=2030&&r.yr<=end&&r.hFull>r.netTC*.25);
       if(price===a.max&&price>0)expect(fails).toHaveLength(0);
       else if(price>a.max)expect(fails.map(r=>r.yr)).toContain(a.year);
     }

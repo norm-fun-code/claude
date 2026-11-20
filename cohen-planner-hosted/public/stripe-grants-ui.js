@@ -6,7 +6,7 @@ function stripeWorkspaceSet(view){if(view==='income'){experienceOpenCompensation
 function stripeWorkspaceNav(){return `<nav class="sg-nav" aria-label="Stripe workspace">${[['overview','Position'],['prices','Valuation path'],['assumptions','Assumptions']].map(([v,l])=>`<button class="${stripeWorkspace===v?'active':''}" aria-current="${stripeWorkspace===v?'page':'false'}" onclick="stripeWorkspaceSet('${v}')">${l}</button>`).join('')}<button class="sg-comp-shortcut" onclick="experienceOpenCompensation()">Edit compensation ↗</button></nav>`;}
 function normCompensationHtml(){
   const sy=P.planStartYear||2026,ey=Math.min(P.planEndYear||2058,2037);
-  return `<section class="sc"><p>Cash includes salary, bonus and cash awards. Stock is gross compensation at vesting, including the upside you expect. These inputs feed every projection.</p><div class="sg-table-wrap"><table><thead><tr><th>Year</th><th title="Salary, bonus and cash awards">Cash compensation</th><th title="Gross stock compensation at vesting">Stock at vesting</th><th>Total</th></tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>{const n=normComp(P,i);return `<tr><th scope="row">${sy+i}</th>${['cash','stock'].map(k=>`<td><input id="sg-comp-${k}-${sy+i}" type="number" min="0" step="any" aria-label="${sy+i} ${k} compensation" value="${Math.round(n[k])}" onchange="stripeManualSet(${sy+i},'${k}',this.value)"></td>`).join('')}<td id="sg-total-${sy+i}">${fmt(n.cash+n.stock)}</td></tr>`;}).join('')}</tbody></table></div><p class="sg-note">From 2038 onward, cash and stock follow the growth controls below. Earlier saved annual overrides remain stored; entries after 2037 do not drive this forecast.</p></section>`;
+  return `<section class="sc"><p>${P.optimisticVestShare?'Cash follows Base. Edit the stock face value; the total includes repricing half of stock over eight vest quarters.':'Cash includes salary, bonus and cash awards. Stock is gross compensation at vesting.'}</p><div class="sg-table-wrap"><table><thead><tr><th>Year</th><th title="Salary, bonus and cash awards">Cash compensation</th><th title="Gross stock compensation at vesting">Stock at vesting</th><th>Total</th></tr></thead><tbody>${Array.from({length:ey-sy+1},(_,i)=>{const n=normComp(P,i),face=P.optimisticVestShare?nominalNormComp(P,i):n;return `<tr><th scope="row">${sy+i}</th>${['cash','stock'].map(k=>`<td><input id="sg-comp-${k}-${sy+i}" type="number" min="0" step="any" aria-label="${sy+i} ${k} compensation" value="${Math.round(face[k])}" ${P.optimisticVestShare&&k==='cash'?'readonly':''} onchange="stripeManualSet(${sy+i},'${k}',this.value)"></td>`).join('')}<td id="sg-total-${sy+i}">${fmt(n.cash+n.stock)}</td></tr>`;}).join('')}</tbody></table></div><p class="sg-note">From 2038 onward, cash and stock follow the growth controls below. Earlier saved annual overrides remain stored; entries after 2037 do not drive this forecast.</p></section>`;
 }
 function experienceOpenCompensation(){
   _collapsedSections.delete('norm');
@@ -18,6 +18,7 @@ function stripeGrantIntro(){return '';}
 // figure typed into those rows, so they follow the last explicit year at the cash and stock growth rates again.
 let _laterBackup=null;
 function stripeManualClear(){
+  if(P.optimisticVestShare){showToast('Optimistic cash follows Base. Edit its stock face values in the table.','green');return;}
   const had=P.stripeManualLater||{},n=Object.keys(had).length;
   if(!n)return;
   const from=(P.planStartYear||2026)+11;
@@ -33,10 +34,11 @@ function stripeManualRestore(){
   markDirty();buildControls();savePlannerState();render();
 }
 function stripeManualSet(year,key,value){
+  if(P.optimisticVestShare&&key==='cash')return;
   if(value.trim()===''||!Number.isFinite(Number(value))||Number(value)<0){showToast('Enter a non-negative annual amount.','red');return;}
   const i=year-(P.planStartYear||2026), n=Number(value);
   if(i<11)P['norm'+(key==='cash'?'Cash':'Stock')+'Y'+i]=n;
-  else P.stripeManualLater={...P.stripeManualLater,[year]:{...normComp(P,i),[key]:n}};
+  else P.stripeManualLater={...P.stripeManualLater,[year]:{...(P.optimisticVestShare?nominalNormComp(P,i):normComp(P,i)),[key]:n}};
   markDirty();if(activeTab!=='inputs')buildControls();savePlannerState();
   // Deliberately NOT render(). This fires on blur, once per cell, while you are working
   // down a column of thirty-three years — and a full re-render replaces the table, which
@@ -50,12 +52,12 @@ function stripeManualSet(year,key,value){
 function stripeRefreshComp(){
   const sy=P.planStartYear||2026, ey=P.planEndYear||2058;
   for(let y=sy;y<=ey;y++){
-    const n=normComp(P,y-sy);
+    const n=normComp(P,y-sy),face=P.optimisticVestShare?nominalNormComp(P,y-sy):n;
     const tot=document.getElementById('sg-total-'+y);
     if(tot)tot.textContent=fmt(n.cash+n.stock);
     for(const k of ['cash','stock']){
       const el=document.getElementById(`sg-comp-${k}-${y}`);
-      if(el&&el!==document.activeElement)el.value=Math.round(n[k]);
+      if(el&&el!==document.activeElement)el.value=Math.round(face[k]);
     }
   }
 }

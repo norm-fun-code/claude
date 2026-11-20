@@ -661,10 +661,12 @@ function setSyncStatus(status){
 let _saveTimer=null;
 let _saveQueue=Promise.resolve();
 let _saveRevision=0;
+let _stateVersion=null;
+let _stateConflict=false;
 let _planLoaded=false;
 function savePlannerState(){
   if(typeof _demoMode!=='undefined'&&_demoMode)return;
-  if(!_planLoaded){setSyncStatus('error');return;}
+  if(!_planLoaded||_stateConflict){setSyncStatus('error');return;}
   if(typeof activeScenarioIdx==='number'&&activeScenarioIdx<0&&typeof _livePlanParams!=='undefined')_livePlanParams={...P};
   setSyncStatus('saving');
   const revision=++_saveRevision;
@@ -675,9 +677,17 @@ function savePlannerState(){
     // Serialize writes so a slower earlier request cannot overwrite newer state.
     _saveQueue=_saveQueue.catch(()=>{}).then(async()=>{
       try{
+        if(_stateConflict)return;
         const response=await fetch('/api/planner-state',{
-          method:'PUT',headers:{'Content-Type':'application/json'},body:payload
+          method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...JSON.parse(payload),version:_stateVersion})
         });
+        if(response.status===409){
+          _stateConflict=true;
+          setSyncStatus('error');
+          if(typeof showToast==='function')showToast('A newer version was saved in another tab. Export your edits if needed, then reload.','red');
+          return;
+        }
+        if(response.ok)_stateVersion=response.headers?.get('X-Planner-Version')??_stateVersion;
         if(!response.ok)throw new Error('HTTP '+response.status);
         if(revision===_saveRevision)setSyncStatus('synced');
       }catch(e){
@@ -700,6 +710,7 @@ async function loadFromServer(){
     ]);
     if(stRes.ok){
       const d=await stRes.json();
+      _stateVersion=d.version??null;
       const s=d.state||{};
       if(s.P)P={...D,...migrateP(s.P)};
       if(s.fiWhatIf&&typeof fiWhatIf!=='undefined')fiWhatIf=s.fiWhatIf;
@@ -1050,11 +1061,12 @@ function deflK(v,yr){return Math.round(deflate(v,yr)/1000)}
 // A whole projection row in today's purchasing power: every dollar figure scaled by the same factor,
 // rates and counts left alone. The table and its expense breakdown read this when Real $ is on, so the
 // parts still add to the total — they were all scaled by one factor and rounded the same way.
-const _REAL_KEYS=['preTax','bizOverhead','otherInc','normCash','normStock','normG','nancyG','gross','tax','netTC','inc','incFull','totE','totEFull','h','hFull','liv','cc','ccFull','tu','tuFull','eAdj','ptax','flow','flowFull','surp','gap','gapFull','incGap','need','sNew','sSold','sRet','sHold','sGainTax','sAppr','sEnd','sold','txS','liq','eq','nw','netWorth','k401'];
+const _REAL_KEYS=['preTax','bizOverhead','otherInc','normCash','normStock','normG','nancyG','gross','tax','taxInvestment','taxRetirement','taxTotal','netTC','inc','incFull','totE','totEFull','h','hFull','liv','cc','ccFull','tu','tuFull','eAdj','ptax','flow','flowFull','surp','gap','gapFull','incGap','need','sNew','sSold','sRet','sHold','sGainTax','sAppr','sEnd','sold','txS','liq','eq','nw','netWorth','k401'];
 function deflateRow(r){
   if(!inflationView)return r;
-  const o={...r},f=1/Math.pow(1+(P.expenseInflation||.03),r.yr-(P.planStartYear||2026));
+  const o={...r},f=1/Math.pow(1+(P.expenseInflation??.03),r.yr-(P.planStartYear||2026));
   for(const k of _REAL_KEYS)if(typeof o[k]==='number')o[k]=Math.round(o[k]*f);
+  if(typeof o.taxTotal==='number')o.taxTotal=o.tax+o.taxInvestment+o.taxRetirement;
   for(const k of ['livFullParts','livParts']){if(o[k]){o[k]={...o[k]};for(const c of Object.keys(o[k]))o[k][c]=Math.round(o[k][c]*f)}}
   return o;
 }
@@ -1078,8 +1090,8 @@ function toggleInflation(){inflationView=!inflationView;render();savePlannerStat
 // ═══ CSV EXPORT ═══
 function exportCSV(){
   const{R}=run(P);
-  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','All-in Tax','Eff Rate %','Modeled Fraction Of Year','Cash Available (modeled)','Cash Available (full year)','Housing','Living','Childcare','Tuition','One-Off Adjustment','Total Expenses (modeled)','Total Expenses (full year)','Net Flow (modeled)','Net Flow (full year)','Cash-Pay-Only Surplus','Cash Gap','Cash Gap (full year)','Income Gap','Total Cash Need','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k'];
-  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.stubFrac,r.inc,r.incFull,r.h,r.liv,r.cc,r.tu,r.eAdj,r.totE,r.totEFull,r.flow,r.flowFull,r.surp,r.gap,r.gapFull,r.incGap,r.need,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401]);
+  const cols=['Year','Norm Cash','Norm Stripe Stock','Norm Total W2','Nancy Gross','Total Gross','Income & Payroll Tax (full year)','Eff Rate %','Modeled Fraction Of Year','Cash Available (modeled)','Cash Available (full year)','Housing','Living','Childcare','Tuition','One-Off Adjustment','Total Expenses (modeled)','Total Expenses (full year)','Net Flow (modeled)','Net Flow (full year)','Cash-Pay-Only Surplus','Cash Gap','Cash Gap (full year)','Income Gap','Total Cash Need','Stripe Vested','Stripe Sold For Cash','Stripe Retained','Stripe Held Shares Sold','Stripe Gains Tax','Stripe Appreciation','Stripe Equity','Portfolio Sold','Tax on Portfolio Sales','Liquid (ex-Stripe)','Home Equity','Net Worth','Stripe % of NW','401k','Investment Sales Tax','Tax on Retirement Distributions','Total Projected Tax'];
+  const rows=R.map(r=>[r.yr,r.normCash,r.normStock,r.normG,r.nancyG,r.gross,r.tax,(r.effRate*100).toFixed(2),r.stubFrac,r.inc,r.incFull,r.h,r.liv,r.cc,r.tu,r.eAdj,r.totE,r.totEFull,r.flow,r.flowFull,r.surp,r.gap,r.gapFull,r.incGap,r.need,r.sNew,r.sSold,r.sRet,r.sHold,r.sGainTax,r.sAppr,r.sEnd,r.sold,r.txS,r.liq,r.eq,r.nw,(r.sPct*100).toFixed(1),r.k401,r.taxInvestment,r.taxRetirement,r.taxTotal]);
   const csv=[cols.join(','),...rows.map(r=>r.join(','))].join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -1110,7 +1122,7 @@ function printPDF(){
     {l:'Eff Tax Rate',v:`${(r0.effRate*100).toFixed(1)}%`,s:`${fmtF(r0.tax)} on ${fmtF(r0.gross)}`,c:'#bf6900'},
     {l:`Post-Down Liquid (${P.homePurchaseYear})`,v:fmtK(pliq),s:`${P.downPctg}% down on ${fmtK(P.homePrice||0)}`,c:pliq>800000?'#1a8754':'#bf6900'},
     {l:'Total Tuition',v:fmtK(tT),s:`${P.numKids} kid${P.numKids!==1?'s':''}`,c:'#cd3d64'},
-    {l:'Tax on Stock Sales',v:fmtK(tTx),s:`${fmtK(tS)} sold`,c:'#cd3d64'},
+    {l:'Tax on Investment Sales',v:fmtK(R.reduce((n,r)=>n+r.taxInvestment,0)),s:'Estimated',c:'#cd3d64'},
     {l:`Liquid Floor (${minL.yr})`,v:fmtK(minL.liq),s:`${defYrs} deficit yr${defYrs!==1?'s':''}`,c:minL.liq>(P.liquidReserveFloor??D.liquidReserveFloor)?'#1a8754':'#cd3d64'},
     {l:`Final NW (${last.yr})`,v:fmtK(last.nw),s:`+${fmtK(last.k401)} in 401k`,c:'#1a8754'},
     {l:'Total w/ 401k',v:fmtK(last.nw+last.k401),s:`over ${planYears} yrs`,c:'#0891b2'},
@@ -1462,11 +1474,11 @@ function buildControls(){
     </div>`;
   }
   if(StripeGrants.active(P))normBody+=`<p class="sg-note">${Number.isFinite(StripeGrants.throughYear(P))?'Calculated through '+StripeGrants.throughYear(P)+' · Manual from '+(StripeGrants.throughYear(P)+1):'All years calculated from Stripe awards'}. Grant-year cash inputs are the pre-QCA baseline. Manual-year inputs include all cash and stock compensation.</p>`;
-  normBody+=`<p class="sg-note" style="margin:0 0 8px">Set annual cash and stock compensation below. Growth rates apply to later years without a manual override.</p>`;
+  normBody+=`<p class="sg-note" style="margin:0 0 8px">${P.optimisticVestShare?'Cash follows the saved Base case. Stock inputs are face values; half is repriced over eight quarterly vests in projections.':'Set annual cash and stock compensation below. Growth rates apply to later years without a manual override.'}</p>`;
   normBody+=`<div style="height:1px;background:var(--bd);margin:7px 0 5px"></div>`;
   normBody+=s('Cash growth (2038+)','normGrowth',0,.10,.005,v=>(v*100).toFixed(1)+'%');
   if(!StripeGrants.active(P)||Number.isFinite(StripeGrants.throughYear(P)))normBody+=s('Stock growth (2038+)','normStockGrowth',0,.20,.005,v=>(v*100).toFixed(1)+'%');
-  normBody+=s('401k employee','pretax401k',0,30500,500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
+  normBody+=s('401(k) employee contributions · household total','pretax401k',0,Math.max(51000,Number(P.pretax401k)||0),500,fmtF)+s('Benefits pre-tax','pretaxBenefits',0,15000,200,fmtF);
   normBody+=`<div id="norm_preview" style="font-size:7.5px;color:var(--t3);margin:1px 0 4px;font-style:italic"></div>`;
   bodies.norm=normBody;
 
@@ -2242,7 +2254,7 @@ function renderPlanView({R,tT,tC,tTx,tS,dp,mm}){
     // CASH FLOW, and a negative figure is what selling Stripe covers. The steps in between live in each
     // cell's hover text rather than in columns of their own.
     const hasOther=R.some(r=>(r.otherInc||0)>0);
-    const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross',...(hasOther?['Retirement & SS']:[]),'Tax','Eff%',
+    const cols=['Year','Norm cash','Norm stock','Norm total','Nancy','Gross',...(hasOther?['Retirement & SS']:[]),'Income & payroll tax','Investment sales tax',...(hasOther?['Retirement draw tax']:[]),'Total projected tax','Eff%',
       'Take-home','Expenses','Net income flow','Cash take-home','Net cash flow',
       'Stripe sold','Stripe kept','Liquid','Stripe eq','Home eq','NW ex-retirement'];
     const FLOW_START=new Set(['Take-home','Cash take-home','Stripe sold']);
@@ -2271,7 +2283,10 @@ function renderPlanView({R,tT,tC,tTx,tS,dp,mm}){
         `<td>${fmt(r.gross)}</td>`+
         (hasOther?`<td title="Retirement draws and Social Security: income that is not pay, so not in gross">${dash(r.otherInc||0)}</td>`:'')+
         `<td style="color:var(--r)">${fmt(r.tax)}</td>`+
-        `<td style="color:var(--a)">${(r.effRate*100).toFixed(1)}%</td>`+
+        `<td style="color:var(--r)" title="Estimated tax on modeled sales from the opening date">${dash(r.taxInvestment)}</td>`+
+        (hasOther?`<td style="color:var(--r)">${dash(r.taxRetirement)}</td>`:'')+
+        `<td style="color:var(--r)" title="Full-year earnings tax plus taxes on modeled investment sales and retirement draws">${fmt(r.taxTotal)}</td>`+
+        `<td style="color:var(--a)" title="Income and payroll tax as a share of gross earnings">${(r.effRate*100).toFixed(1)}%</td>`+
         `<td class="flow-start" style="font-weight:600" title="After tax, and after ${fmt(r.preTax||0)} of pre-tax 401(k) and benefits${r.bizOverhead?` and ${fmt(r.bizOverhead)} of practice overhead`:''}${r.otherInc?`, plus ${fmt(r.otherInc)} of retirement and Social Security income`:''}. Cash and vested stock together.">${fmt(r.netTC)}</td>`+
         // Expenses opens rather than spreading into four more columns. A breakdown is wanted
         // for one year at a time, and paying for it with permanent width on all thirty-three
@@ -4338,7 +4353,7 @@ function renderBudgetTab(R,P){
       ${(P.planItems||[]).map((raw,i)=>{const it=resolvePlanItem(P,raw);return it?`<div class="bd-item"><div><strong>${advEscape(it.label)}</strong><small>${it.category==='oneoff'?'One-off':advEscape(LIV_LABEL[it.category]||it.category)} · ${it.from===it.to?it.from:it.from+'–'+it.to}${it.grow===false?'':' · grows with inflation'}</small></div>
         <label class="bd-sug-amt"><span class="ui-sr">Amount</span><input type="text" inputmode="decimal" value="${fmtF(it.amount)}" aria-label="${advEscape(it.label)} amount" onfocus="this.select()" onchange="budgetItemAmount(${i},this.value)" onkeydown="if(event.key==='Enter')this.blur()"><small>${it.from===it.to?'once':'/yr'}</small></label>
         <button type="button" class="bd-btn" onclick="budgetRemoveItem(${i})" aria-label="Remove ${advEscape(it.label)}">Remove</button></div>`:'';}).join('')}</div>`:''}
-    <p class="spend-caption">Take-home includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Charity still feeds the tax deduction at its baseline.</p></section>${gridFold}${overTimeHtml}${ledgerFold}${mapFold}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
+    <p class="spend-caption">Take-home includes Stripe stock at its vest value; it is after tax, 401(k) and benefits. A rule replaces a line's whole figure, including each child's share, and "model says" shows what the plan would have used. Budgeted charity feeds the tax estimate as qualifying cash gifts.</p>    <label>Budgeted charity eligible as cash donations (%) <input type="number" min="0" max="100" step="1" value="${Math.round((P.qualifiedCharityShare??1)*100)}" onchange="U('qualifiedCharityShare',Math.max(0,Math.min(100,Number(this.value)))/100)"></label></section>${gridFold}${overTimeHtml}${ledgerFold}${mapFold}${scenarioFold}${assumeHtml}${budgetNYCNotes()}${baselines}</div>`;
   ca.innerHTML=h;
   document.getElementById('summaries').innerHTML='';
 }
@@ -5193,6 +5208,10 @@ function renderHousingTab(R,P,host){
   const a=affordability(q,_afShare);
   const py=q.homePurchaseYear;
   const buyRow=run(q).R.find(r=>r.yr===py)||R[R.length-1];
+  const affordabilityRow=a.max?run({...q,housingMode:'buy',homePrice:a.max}).R.find(r=>r.yr===py):null;
+  const gapTotal=a.gaps.reduce((n,r)=>n+r.gap,0);
+  const shareText=v=>Number.isFinite(v)?(v*100).toFixed(1)+'%':'No take-home income';
+  const shareLabel=Math.round(_afShare*100)+'%';
 
   const money=v=>v>=1e6?'$'+(v/1e6).toFixed(2)+'M':fmt(v);
   const over=q.homePrice-a.max;
@@ -5205,11 +5224,12 @@ function renderHousingTab(R,P,host){
 
   // ── The answer ──
   h+=`<div class="glass-card" style="padding:22px 24px;background:linear-gradient(135deg,rgba(54,92,67,.10),rgba(130,149,117,.04))">
-    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3)">Comfortable purchase price</div>
-    <div style="font-size:40px;font-weight:800;letter-spacing:-1.5px;color:var(--tx);font-family:'SF Mono',ui-monospace,monospace;margin:4px 0 2px">${money(a.max)}</div>
+    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--t3)">Price at your ${shareLabel} housing target</div>
+    <div style="font-size:40px;font-weight:800;letter-spacing:-1.5px;color:var(--tx);font-family:'SF Mono',ui-monospace,monospace;margin:4px 0 2px">${money(a.shareLimit)}</div>
     <div style="font-size:12px;color:var(--t2);line-height:1.6">
-      ${a.max?fmtF(Math.round(atMax.all))+'/mo at purchase':'No positive price clears both limits'} · ${a.reason}${a.year?' in '+a.year:''}
-      ${a.max&&buyRow.netTC>0?'<br>'+((atMax.all*12)/buyRow.netTC*100).toFixed(1)+'% of purchase-year take-home':''}
+      ${a.shareLimit?fmtF(Math.round(cost(a.shareLimit).all))+'/mo at purchase':'No positive price meets the target'}
+      · tested ${py}–${a.end??py}${a.shareYear?' · tightest in '+a.shareYear:''}
+      ${a.plan<a.shareLimit?'<br>Liquidity lowers the modeled limit to '+money(a.plan):''}
     </div>
   </div>`;
 
@@ -5220,9 +5240,11 @@ function renderHousingTab(R,P,host){
     <div style="font-size:9.5px;color:var(--t2);margin-top:3px;line-height:1.45">${sub}</div>
   </div>`;
   h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
-    ${limitCard('Carrying-cost limit',a.comfort,`Income ceiling and remaining budget · ${py}–${a.end}`,a.binding==='comfort',false)}
-    ${limitCard('Balance-sheet limit',a.plan,`The most you can fund with the ${fmt(q.liquidReserveFloor??D.liquidReserveFloor)} reserve floor still intact, selling Stripe as needed`,a.binding==='plan',false)}
-    ${limitCard('Your current plan',q.homePrice,over>0?`${money(over)} above what you can afford — ${fmtF(Math.round(cur.all))}/mo, ${(cur.all*12/buyRow.netTC*100).toFixed(0)}% of income`:`Within budget — ${fmtF(Math.round(cur.all))}/mo, ${(cur.all*12/buyRow.netTC*100).toFixed(0)}% of income`,false,over>0)}
+    ${limitCard('Your selected price',q.homePrice,
+      `${fmtF(Math.round(cur.all))}/mo at purchase · ${a.peakShare?shareText(a.peakShare.share)+' peak share in '+a.peakShare.year:'outside the projection'}${a.reserveYear?' · reserve breached in '+a.reserveYear:''}`,
+      false,over>0)}
+    ${limitCard('Set aside for shortfall years',Math.ceil(gapTotal),
+      a.gaps.length?`${a.gaps.length} years · ${a.gaps[0].year}–${a.gaps.at(-1).year} · future dollars before returns or sale taxes`:'No spending or savings gap in the tested years.',false,false)}
   </div>`;
 
   // ── Levers ──
@@ -5244,7 +5266,11 @@ function renderHousingTab(R,P,host){
     <details><summary>Assumptions & savings</summary>
     <label>Additional after-tax savings target (% of take-home) <input type="number" min="0" max="100" step="1" value="${Math.round((q.housingSavingShare||0)*100)}" onchange="U('housingSavingShare',Math.min(100,Math.max(0,Number(this.value)||0))/100)"></label>
     <p>Includes scheduled emergency savings. Payroll retirement contributions are already deducted. With no future tuition, we check the modeled mortgage term.</p></details>
-    ${over>0?`<details><summary>Use savings at the selected ${money(q.homePrice)} price?</summary>${a.gaps.length?`Set aside ${fmtF(Math.ceil(a.gaps.reduce((n,x)=>n+x.gap,0)))} for ${a.gaps.length} shortfall year(s) · ${a.gaps.map(x=>x.year).join(', ')}. Total future dollars, before returns or sale taxes.`:'No earnings gap in the tested years.'} ${a.reserveYear?'The reserve floor also fails in '+a.reserveYear+'.':''} Savings do not waive the income-share ceiling.</details>`:''}
+    <details><summary>Cash flow &amp; liquidity limits</summary>
+      <p><strong>${money(a.comfort)}</strong> if annual earnings must cover spending and savings without a drawdown${a.incomeYear?' · constrained in '+a.incomeYear:''}.</p>
+      <p><strong>${money(a.plan)}</strong> modeled liquidity ceiling · holds the ${fmt(q.liquidReserveFloor??D.liquidReserveFloor)} reserve using available Stripe sales.</p>
+      ${a.gaps.length?`<p>Shortfalls at ${money(q.homePrice)}: ${a.gaps.map(x=>x.year+' '+fmtF(Math.ceil(x.gap))).join(' · ')}. Setting money aside covers the gap; it does not change the housing share.</p>`:''}
+    </details>
   </div>`;
 
   // ── What waiting buys you ──────────────────────────────────────────────
@@ -5272,13 +5298,13 @@ function renderHousingTab(R,P,host){
         const delta=v.max-a.max;
         return `<tr onclick="afSet('year',${v.y})" style="cursor:pointer${here?';outline:1.5px solid var(--accent);outline-offset:-2px':''}">
           <td style="font-weight:${here?800:600};color:${here?'var(--accent)':'var(--tx)'}">${v.y}${here?' ←':''}</td>
-          <td style="background:rgba(99,91,255,${(0.05+(yMax>0?v.max/yMax:0)*0.2).toFixed(3)});font-family:'SF Mono',monospace;font-weight:${here?800:500};color:${here?'var(--accent)':'var(--tx)'}">${money(v.max)}</td>
+          <td style="background:rgba(54,92,67,${(0.05+(yMax>0?v.max/yMax:0)*0.2).toFixed(3)});font-family:'SF Mono',monospace;font-weight:${here?800:500};color:${here?'var(--accent)':'var(--tx)'}">${money(v.max)}</td>
           <td style="font-family:'SF Mono',monospace;color:${delta>0?'var(--g)':delta<0?'var(--r)':'var(--t3)'}">${here?'—':(delta>0?'+':'')+money(Math.abs(delta)).replace('$',delta<0?'−$':'$')}</td>
           <td style="font-size:10px;color:var(--t2)">${v.reason+(v.year?' · '+v.year:'')}</td>
         </tr>`;}).join('')}</tbody>
     </table></div>
     <div style="font-size:9.5px;color:var(--t3);margin-top:9px;line-height:1.5">
-      Waiting raises the balance-sheet limit as savings and vests accumulate, and moves the carrying-cost limit with your income. Where the two cross, the binding constraint changes — and buying later stops helping.
+      The max price is the lower of the income-share target and liquidity limit. Spending shortfalls are shown separately.
     </div>
   </div>`;
 
@@ -5334,7 +5360,7 @@ function renderHousingTab(R,P,host){
       ${line('Maintenance',atMax.maint)}
       ${line('Homeowners insurance',atMax.insurance)}
       <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:9px 0 0"><strong style="color:var(--tx)">All-in</strong><strong style="font-family:'SF Mono',monospace;color:var(--g)">${fmtF(Math.round(atMax.all))}/mo</strong></div>
-      <div style="font-size:9.5px;color:var(--t3);margin-top:5px">${(atMax.all*12/buyRow.netTC*100).toFixed(0)}% of ${py} after-tax income · down payment ${fmt(a.max*q.downPctg/100)}</div>
+      <div style="font-size:9.5px;color:var(--t3);margin-top:5px">${(atMax.all*12/(affordabilityRow?.netTC||buyRow.netTC)*100).toFixed(0)}% of ${py} after-tax income · down payment ${fmt(a.max*q.downPctg/100)}</div>
     </div>
   </div>`;
 
@@ -5796,11 +5822,11 @@ function renderCompareTab(R,P){
     {sep:true,label:'Milestones'},
     {label:'Liquid After Home Purchase',get:(r,p)=>{if(p.housingMode==='rent')return null;const row=r.R.find(x=>x.yr===p.homePurchaseYear);return row?row.liq:null},fmt:v=>v===null?'N/A':fmt(v),b:1},
     {label:'Total Tuition',get:(r,p)=>r.tT,fmt:fmt,b:-1},
-    {label:'Tax on Stock Sales',get:(r,p)=>r.tTx,fmt:fmt,b:-1},
+    {label:'Tax on Investment Sales',get:r=>r.R.reduce((n,y)=>n+y.taxInvestment,0),fmt:fmt,b:-1},
     {sep:true,label:'Year 1'},
     {label:'Gross Income',get:(r,p)=>r.R[0].gross,fmt:fmt,b:0},
     {label:'Effective Tax Rate',get:(r,p)=>r.R[0].effRate,fmt:v=>(v*100).toFixed(1)+'%',b:-1},
-    {label:'Net Take-Home',get:(r,p)=>r.R[0].inc,fmt:fmt,b:1},
+    {label:'Full-year Take-Home (cash + vested stock)',get:r=>r.R[0].netTC,fmt:fmt,b:1},
   ];
   // ── Diff view: focused two-column deltas vs current plan for one selected scenario ──
   let diffHtml='';

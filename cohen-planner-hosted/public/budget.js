@@ -14,7 +14,7 @@
   // In the browser model.js is a plain script: its functions are globals, but its `const`s live in
   // the shared global scope rather than on `window`, so they are named here rather than read off it.
   const M = typeof module !== 'undefined' && module.exports ? require('./model.js')
-    : { LIV_KEYS, LIV_OVERRIDE_MAX, livingCategoryKey, budgetSegment, budgetValue, commonHousehold, locationSpendingFactor };
+    : { LIV_KEYS, LIV_OVERRIDE_MAX, livingCategoryKey, budgetSegment, budgetValue, commonHousehold, locationSpendingFactor, resolvePlanItem };
   // Read when needed, not at load: script order in the page must not decide whether this works.
   const RB = () => (typeof module !== 'undefined' && module.exports ? require('./rent-buy.js') : root.PlannerRentBuy);
 

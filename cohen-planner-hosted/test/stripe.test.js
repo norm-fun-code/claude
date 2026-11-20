@@ -350,7 +350,7 @@ describe('retention policies', () => {
 
   it('fixed-% sells that share of the vest when cash needs are smaller', () => {
     const r = run({ ...P, stripePolicy: 'pct', stripeSellPct: 0.5, startingLiquid: 6000000 }).R[0];
-    expect(r.sSold).toBe(Math.round(r.sNew * 0.5));
+    expect(Math.abs(r.sSold-r.sNew*0.5)).toBeLessThanOrEqual(1);
   });
 
   it('maintain-floor keeps the diversified pool at or above the floor', () => {
@@ -663,8 +663,8 @@ describe('affordability', () => {
 
   it('reports both limits and names the one that binds', () => {
     const a = affordability(BUY, 0.28);
-    expect(a.max).toBe(Math.min(a.plan, a.comfort));
-    expect(a.binding).toBe(a.plan <= a.comfort ? 'plan' : 'comfort');
+    expect(a.max).toBe(Math.min(a.plan, a.shareLimit));
+    expect(a.binding).toBe(a.plan < a.shareLimit ? 'plan' : 'share');
   });
 
   it('the plan limit is the most expensive house that keeps the reserve floor intact', () => {

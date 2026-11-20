@@ -42,6 +42,20 @@ describe('Plan persistence',()=>{
     expect(writes).toEqual([2000000,1800000]);
     expect(h.statuses.filter(s=>s==='synced')).toHaveLength(1);
   });
+  it('keeps unsaved edits local after another tab changes the version',async()=>{
+    const writes=[];const h=harness(async(_url,opt)=>{
+      writes.push(JSON.parse(opt.body).version);
+      return writes.length===1
+        ?{ok:true,headers:{get:()=> 'version-2'}}
+        :{ok:false,status:409};
+    });
+    h.call('_planLoaded=true;_stateVersion="version-1";savePlannerState()');h.flush();await h.call('_saveQueue');
+    h.call('P={homePrice:1800000};savePlannerState()');h.flush();await h.call('_saveQueue');
+    h.call('savePlannerState()');h.flush();await h.call('_saveQueue');
+    expect(writes).toEqual(['version-1','version-2']);
+    expect(h.call('P.homePrice')).toBe(1800000);
+    expect(h.statuses.at(-1)).toBe('error');
+  });
   it('will not overwrite the server with defaults after a failed initial load',async()=>{
     let called=false;const h=harness(async()=>{called=true;return{ok:true};});
     h.call('savePlannerState()');h.flush();await h.call('_saveQueue');

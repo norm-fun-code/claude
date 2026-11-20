@@ -403,7 +403,7 @@ for (const asset of ['planner-time.js', 'stripe-grants.js', 'stripe-grants-ui.js
 // ── Planner state ─────────────────────────────────────────────────────────────
 app.get('/api/planner-state', requireAuth, async (req, res) => {
   try {
-    const result = await db.query('SELECT state FROM planner_state WHERE id = 1');
+    const result = await db.query('SELECT state, updated_at::text AS version FROM planner_state WHERE id = 1');
     const saved=result.rows[0]||{state:{}};
     res.json({...saved,state:require('./calibrated-budget-update').repairState(require('./promotion-comp-scenarios').repairState(saved.state).state)});
   } catch (err) {
@@ -414,13 +414,19 @@ app.get('/api/planner-state', requireAuth, async (req, res) => {
 
 app.put('/api/planner-state', requireAuth, async (req, res) => {
   try {
-    const state=require('./calibrated-budget-update').repairState(require('./promotion-comp-scenarios').repairState(req.body.state||{}).state);
-    await db.query(
+    const version=req.body.version;
+    if(version!==null&&typeof version!=='string')return res.status(409).json({error:'Reload before saving.'});
+    if(!req.body.state||typeof req.body.state!=='object'||Array.isArray(req.body.state))return res.status(400).json({error:'Invalid planner state.'});
+    const state=require('./calibrated-budget-update').repairState(require('./promotion-comp-scenarios').repairState(req.body.state).state);
+    const result=await db.query(
       `INSERT INTO planner_state (id, state) VALUES (1, $1)
-       ON CONFLICT (id) DO UPDATE SET state = $1, updated_at = NOW()`,
-      [JSON.stringify(state)]
+       ON CONFLICT (id) DO UPDATE SET state = $1, updated_at = clock_timestamp()
+       WHERE planner_state.updated_at::text = $2
+       RETURNING updated_at::text AS version`,
+      [JSON.stringify(state),version]
     );
-    res.json({ ok: true });
+    if(!result.rowCount)return res.status(409).json({error:'A newer plan has already been saved.'});
+    res.set('X-Planner-Version',result.rows[0].version??'').json({ ok: true });
   } catch (err) {
     console.error('PUT planner-state error:', err);
     res.status(500).json({ error: 'Database error' });
@@ -431,7 +437,7 @@ app.put('/api/planner-state', requireAuth, async (req, res) => {
 app.get('/api/scenarios', requireAuth, async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM scenarios ORDER BY created_at ASC');
-    res.json(result.rows);
+    res.json(require('./optimistic-comp').attach(result.rows));
   } catch (err) {
     console.error('GET scenarios error:', err);
     res.status(500).json({ error: 'Database error' });

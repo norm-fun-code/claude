@@ -13,7 +13,7 @@
    normStopAge:Math.round(bounded(c.normStopAge,65,35,90)),nancyStopAge:Math.round(bounded(c.nancyStopAge,65,35,90)),reserve:bounded(c.reserve,p.liquidReserveFloor??500000,0,1e7),maxWithdrawal:bounded(c.maxWithdrawal,.04,.005,.25),
    extraHealth:bounded(c.extraHealth,0,0,200000),contribution:bounded(c.contribution,0,0,100000),consultingOverhead:bounded(c.consultingOverhead,0,0,1e6),
    normNySource:bounded(c.normNySource,p.locationConfig?.normNySource??1,0,1),practiceNySource:bounded(c.practiceNySource,p.locationConfig?.practiceNySource??0,0,1),
-   stress:['base','downturn','earnings25','earnings50','early'].includes(c.stress)?c.stress:'base',ssLevel:[0,.75,1].includes(Number(c.ssLevel))?Number(c.ssLevel):1,
+   stress:['base','downturn','earnings25','earnings50','early','combined'].includes(c.stress)?c.stress:'base',ssLevel:[0,.75,1].includes(Number(c.ssLevel))?Number(c.ssLevel):1,
    ssCola:bounded(c.ssCola,p.expenseInflation??.025,0,.1),ssWageGrowth:bounded(c.ssWageGrowth,p.taxInflation??.025,0,.1),
    normClaimAge:Math.round(bounded(c.normClaimAge,67,62,70)),nancyClaimAge:Math.round(bounded(c.nancyClaimAge,67,62,70)),
    normSSMonthly:bounded(c.normSSMonthly,0,0,20000),nancySSMonthly:bounded(c.nancySSMonthly,0,0,20000),
@@ -55,7 +55,8 @@
  function accessible(r,p,c){return investments(r,p,c,false)+(r.yr-c.normBirthYear>=60?(r.k401||0):0)-Math.abs(p.otherDebt||0);}
  function summary(result,p,c){
   const R=result.R.filter(r=>r.yr>=c.transitionYear),opening=result.R.find(r=>r.yr===c.transitionYear-1);
-  const stats=R.map((r,i)=>{const prev=i?R[i-1]:opening;const available=(prev?accessible({...prev,yr:r.yr},p,c):0)+(!i?Math.max(0,p._fiExtraCapital||0):0);
+  const stats=R.map((r,i)=>{const prev=i?R[i-1]:opening;
+   const available=(prev?accessible({...prev,yr:r.yr,sEnd:r.stripeSalesBlocked?0:prev.sEnd},p,c):0)+(!i?Math.max(0,p._fiExtraCapital||0):0);
    const withdrawal=Math.max(0,r.fiFundingNeed||0)+Number(r.txS||0)+Number(r.sGainTax||0)+Number(r.fiRetTax||0)+Number(r.fiSSGainTax||0)+Number(r.fiPrivateGainTax||0);
    return {yr:r.yr,available,withdrawal,rate:withdrawal>0?(available>0?withdrawal/available:Infinity):0};});
   const fail=result.R.find(r=>r.liq<0||!Number.isFinite(r.netWorth));
@@ -100,7 +101,7 @@
    return {level,...t,...search(level),additionalCapital,fundingCapital};
   });
   const selected=ssComparisons.find(x=>x.level===c.ssLevel),{candidates,earliest,solvent}=selected;
-  const stressResults=stresses?['base','downturn','earnings25','earnings50','early'].map(stress=>({stress,...solve({stress})})):[];
+  const stressResults=stresses?['base','downturn','earnings25','earnings50','early','combined'].map(stress=>({stress,...solve({stress})})):[];
   let requiredNorm=null;
   if(scan&&s.status!=='Sustainable under assumptions'){
    let lo=c.normIncome,hi=2000000;
