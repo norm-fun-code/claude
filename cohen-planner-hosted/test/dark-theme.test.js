@@ -14,10 +14,10 @@ describe('no light-theme surfaces remain', () => {
     expect(inline).toMatch(/\.panel\{background:var\(--s1\);border:1px solid var\(--bd\)/);
   });
 
-  it('gives the command palette and story cards dark surfaces of their own', () => {
-    // Both are reachable and neither had an override, because the blanket rule was
-    // painting over them.
-    for (const sel of ['.cmdk-panel{', '.story-card{', '.story-close,.story-nav button{'])
+  it('uses an opaque ivory palette without affecting the story overlay', () => {
+    expect(inline).toMatch(/\.cmdk-panel\{[^}]*background:#fbfaf2;color:#233f31/);
+    expect(cockpit).not.toMatch(/\.cmdk-panel\{/);
+    for (const sel of ['.story-card{', '.story-close,.story-nav button{'])
       expect(cockpit, sel).toContain(sel);
   });
 
@@ -43,9 +43,9 @@ describe('no light-theme surfaces remain', () => {
 // #chartArea and opened the conversations sheet 1,200px below the fold on a phone.
 describe('backdrop-filter is not left on layout containers', () => {
   it('is cleared from the containers the glass rule used to put it on', () => {
-    for (const sel of ['.glass-card{backdrop-filter:none', '.cmdk-panel', '.story-card'])
+    for (const sel of ['.glass-card{backdrop-filter:none', '.story-card'])
       expect(cockpit, sel).toContain(sel);
-    expect(cockpit).toMatch(/\.cmdk-panel\{[^}]*backdrop-filter:none/);
+    expect(inline).not.toMatch(/\.cmdk-panel\{[^}]*backdrop-filter/);
     expect(cockpit).toMatch(/\.story-card\{[^}]*backdrop-filter:none/);
   });
 
