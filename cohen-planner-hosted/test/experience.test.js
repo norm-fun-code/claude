@@ -186,3 +186,12 @@ describe('money flow reconciles both lenses',()=>{
   for(const r of rows){Object.assign(t.ctx,{row:r,alloc:Budget.allocation(p,rows,r.yr)});const g=t.call('flowBudget(row,alloc)');expect(Math.abs(balance(g))).toBeLessThanOrEqual(1);expect(t.call('flowPicture(flowBudget(row,alloc),12)')).not.toContain('NaN');}
  });
 });
+
+it('shows imported years in Money Flow and frames the current year as YTD',()=>{
+ const t=presentation();t.ctx.s=[{month:'2024-01'},{month:'2025-11'},{month:'2026-02'},{month:'2026-11'}];
+ t.ctx.spendCurrentYear=s=>s.slice(0,4);
+ const render=scope=>t.call("spendingYearPicker(s,'2026-11-21',"+scope+")");
+ expect(render("{kind:'year',year:'2025'}")).toContain('value="year:2025" selected>2025');
+ expect(render("{kind:'ytd'}")).toContain('value="ytd" selected>2026 YTD');
+ expect(render("{kind:'all'}")).toContain('value="" selected>Year');
+});

@@ -509,6 +509,15 @@ async function experienceCatchUp(){
  try{await runIncremental();}catch(e){showToast('Could not catch up. Please try again.','red');}
  finally{experienceCatchUpBusy=false;const current=document.querySelector('.so-catch-up');if(current){current.disabled=false;current.textContent='↻ Catch up';}}
 }
+function spendingYearPicker(months,asOf,scope){
+ const current=spendCurrentYear(asOf);
+ const years=[...new Set(months.map(m=>String(m.month).slice(0,4)).filter(y=>/^\d{4}$/.test(y)))].sort().reverse();
+ if(!years.length)return '';
+ return '<label class="sk-year"><span class="ui-sr">Spending year</span><select aria-label="Spending year" onchange="if(this.value)setSpendScopeFromSelect(this.value)"><option value=""'+(!['year','ytd'].includes(scope.kind)||scope.kind==='ytd'&&!years.includes(current)?' selected':'')+'>Year…</option>'+years.map(y=>{
+  const active=scope.kind==='year'&&String(scope.year)===y||scope.kind==='ytd'&&y===current;
+  return '<option value="'+(y===current?'ytd':'year:'+y)+'"'+(active?' selected':'')+'>'+y+(y===current?' YTD':'')+'</option>';
+ }).join('')+'</select></label>';
+}
 function experienceSpendingVisual(){
  const w=document.querySelector('.spending-workspace');if(!w||!_spend||_spend.error)return;
  const rows=window.__spendingViz?.rows||[];if(!(_spend.months||[]).length)return;
@@ -517,7 +526,9 @@ function experienceSpendingVisual(){
  const section=document.createElement('section');section.className='ex-spending-visual';
  const partial=_spendScope.kind==='month'&&_spendScope.month===String(_spend.endDate).slice(0,7);
  const sum=rows.reduce((a,x)=>a+x.perMonth,0),max=Math.max(1,...rows.map(x=>x.perMonth));
- section.innerHTML=`<section class="so-spend-chart"><div class="ex-panel-head"><div><span class="ex-kicker">WHERE THE MONEY GOES</span><h3>${experienceMoney(sum)}<small> ${partial?'so far':'average / month'}</small></h3><p>${experienceEscape(period)}</p></div><div class="ex-segments">${[['ytd',null,'YTD'],...[3,6,12].filter(n=>closed.length>=n).map(n=>['recent',n,n+'M']),['all',null,'All']].map(([kind,n,label])=>`<button aria-pressed="${_spendScope.kind===kind&&(kind!=='recent'||Number(_spendScope.months)===n)}" onclick="setSpendScope('${kind}',${n})">${label}</button>`).join('')}</div></div><div class="so-spend-bars">${rows.slice(0,8).map((x,i)=>`<div class="so-spend-row"><span>${experienceEscape(x.name)}</span><div><i style="width:${Math.max(0,x.perMonth)/max*100}%;opacity:${1-i*.065}"></i></div><strong>${experienceMoney(x.perMonth)}</strong><small>${sum>0?(x.perMonth/sum*100).toFixed(0)+'%':'—'}</small></div>`).join('')}</div><p class="ex-chart-caption">${rows.length>8?'Largest 8 of '+rows.length+' categories':''}</p></section>`;
+ section.innerHTML=`<section class="so-spend-chart"><div class="ex-panel-head"><div><span class="ex-kicker">WHERE THE MONEY GOES</span><h3>${experienceMoney(sum)}<small> ${partial?'so far':'average / month'}</small></h3><p>${experienceEscape(period)}</p></div><div class="ex-segments">${[...(allMonths.some(m=>String(m.month).slice(0,4)===spendCurrentYear(asOf))?[['ytd',null,'YTD']]:[]),...[3,6,12].filter(n=>closed.length>=n).map(n=>['recent',n,n+'M']),['all',null,'All']].map(([kind,n,label])=>`<button aria-pressed="${_spendScope.kind===kind&&(kind!=='recent'||Number(_spendScope.months)===n)}" onclick="setSpendScope('${kind}',${n})">${label}</button>`).join('')}</div></div><div class="so-spend-bars">${rows.slice(0,8).map((x,i)=>`<div class="so-spend-row"><span>${experienceEscape(x.name)}</span><div><i style="width:${Math.max(0,x.perMonth)/max*100}%;opacity:${1-i*.065}"></i></div><strong>${experienceMoney(x.perMonth)}</strong><small>${sum>0?(x.perMonth/sum*100).toFixed(0)+'%':'—'}</small></div>`).join('')}</div><p class="ex-chart-caption">${rows.length>8?'Largest 8 of '+rows.length+' categories':''}</p></section>`;
+ const yearPicker=spendingYearPicker(allMonths,asOf,_spendScope);
+ if(yearPicker)section.querySelector('.ex-panel-head .ex-segments').insertAdjacentHTML('beforeend',yearPicker);
  const chart=section.querySelector('.so-spend-chart'),head=chart.querySelector('.ex-panel-head');
  const selector=document.createElement('div');selector.className='ex-segments sk-switch';selector.setAttribute('aria-label','Spending chart');
  selector.innerHTML=['flow','size'].map(k=>'<button aria-pressed="'+(spendChartMode===k)+'" onclick="spendChartMode=\''+k+'\';render()">'+(k==='flow'?'Money flow':'By size')+'</button>').join('');
@@ -525,7 +536,7 @@ function experienceSpendingVisual(){
  if(spendChartMode==='flow'){
    const scope=spendScopeMonths(closed,asOf,allMonths);
    head.querySelector('h3').textContent='Where your money went';
-   head.querySelector('p').textContent=period+' · recorded totals';
+   head.querySelector('p').textContent=period+' · recorded totals'+(_spendScope.kind==='year'&&scope.length<12?' · '+scope.length+' of 12 months with records':'');
    chart.querySelector('.so-spend-bars')?.remove();chart.querySelector('.ex-chart-caption')?.remove();
    selector.insertAdjacentHTML('afterend',flowPicture(flowActual(scope,rows),1));
  }
