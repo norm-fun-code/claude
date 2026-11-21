@@ -6205,8 +6205,7 @@ function jumpToHousingInputs(){
   _todayView='budget';
   _budgetEdit='housing';
   setTab('today');
-  const editor=document.querySelector('.bd-row[data-line="housing"] .bd-panel');
-  if(editor?.closest('.ex-row-detail')?.hidden)editor.closest('.bd-row').querySelector('.ex-row-more')?.click();
+  const editor=document.querySelector('.bd-row[data-line="housing"] + .bd-panel');
   experienceRevealElement(editor);
   editor?.querySelector('input:not([type="hidden"]),select')?.focus({preventScroll:true});
 }

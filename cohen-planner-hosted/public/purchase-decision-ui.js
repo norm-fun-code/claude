@@ -18,8 +18,10 @@ function mountPurchaseDecision({q,rows},views,controls,hs){
     metric('Available by Q'+quarter,f.elapsed?'Past quarter':pdMoney(f.available),pdMoney(f.need)+' to close')+
     metric('Lowest reserve',pdMoney(d.low.liq),d.low.yr+' · '+pdMoney(floor)+' floor')+'</div>';views.after(h);
   controls.querySelector('#exHomeLive')?.remove();
-  if(Object.keys(_rbOv).length){
-    const saved={...P,housingMode:'buy'},base=score(saved,run(saved).R);
+  const changed=Object.keys(_rbOv).length>0;
+  const saved={...P,housingMode:'buy'},savedRows=changed?run(saved).R:rows;
+  if(changed){
+    const base=score(saved,savedRows);
     if(base)h.insertAdjacentHTML('beforeend','<p class="pd-compare">Compared with '+(P.housingMode==='rent'?'your original buy preview':'the saved purchase')+': '+pdSigned(d.margin-base.margin)+' at the reserve low · '+pdSigned((f.available-f.need)-(base.funds.available-base.funds.need))+' in closing headroom.</p>');
   }
   const alts=[['Buy one year later','homePurchaseYear',q.homePurchaseYear+1],['Put 5 points less down','downPctg',Math.max(0,q.downPctg-5)],['Lower price by $100K','homePrice',Math.max(0,q.homePrice-100000)]].filter(([,k,v])=>v!==q[k]&&v>0&&(k!=='homePurchaseYear'||v<=rows.at(-1).yr));
@@ -29,6 +31,13 @@ function mountPurchaseDecision({q,rows},views,controls,hs){
     return '<button type="button" onclick="rbSet(\''+k+'\','+v+')"><b>'+label+'</b><span>'+pdSigned(n.margin-d.margin)+' at reserve low</span><small>'+(pass?'Clears all three':n.funds.elapsed?'Past closing quarter':!n.funds.fundable?pdMoney(n.funds.shortfall)+' short to close':n.margin<-1?pdMoney(-n.margin)+' below floor':pdShare(n.peak.share)+' peak housing share')+'</small></button>';
   }).join('');
   controls.insertAdjacentHTML('beforeend','<p class="pd-caption">'+pdMoney(cost)+'/month at purchase · select a change to preview it.</p><div class="pd-tests">'+tests+'</div>');
+  const peak=PurchaseDecision.peakImpact(savedRows,rows,saved.homePurchaseYear);
+  if(peak){
+    const entry=(name,base,value,delta)=>'<div><span>'+name+'</span><strong>'+pdMoney(value)+'</strong><small>'+(delta?'<b data-gain="'+(delta>0)+'">'+pdSigned(delta)+'</b> vs '+pdMoney(base):'No change from '+pdMoney(base))+'</small></div>';
+    controls.insertAdjacentHTML('afterend','<section class="pd-panel pd-peak" aria-label="Peak year impact"><span class="pd-kicker">PEAK PRESSURE · '+peak.year+'</span><h3>Impact in your tightest year</h3><div class="pd-peak-grid">'+
+      entry('Annual cash flow',peak.base.flowFull,peak.preview.flowFull,peak.flowDelta)+entry('Year-end net worth',peak.base.netWorth,peak.preview.netWorth,peak.wealthDelta)+
+      '</div><p class="pd-caption">Same year in both views: the tightest year in '+(P.housingMode==='rent'?'your original buy preview':'the saved purchase')+'. Cash flow is after-tax compensation, including vested stock, less annual spending. Amounts in future dollars.</p></section>');
+  }
   const section=document.createElement('section');section.className='pd-section';hs.before(section);
   const source=(label,available,used)=>'<tr><th scope="row">'+label+'</th><td>'+pdMoney(available)+'</td><td>'+pdMoney(used)+'</td></tr>';
   section.innerHTML='<div class="pd-panel"><div class="pd-top"><div><span class="pd-kicker">CLOSING FUNDS</span><h3>'+(f.elapsed?'Closing quarter has passed':f.usedSales>0?pdMoney(f.usedSales)+' needs a Stripe sale.':f.shortfall>0?'Closing still needs '+pdMoney(f.shortfall)+'.':'No Stripe sale needed.')+'</h3></div><label>Closing quarter<select onchange="afSet2(\'q\',this.value)">'+[1,2,3,4].map(x=>'<option '+(x===quarter?'selected':'')+' value="'+x+'">Q'+x+'</option>').join('')+'</select></label></div>'+

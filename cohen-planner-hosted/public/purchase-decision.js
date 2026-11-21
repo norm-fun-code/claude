@@ -46,5 +46,12 @@
     const peak=years.reduce((a,b)=>!a||b.share>a.share?b:a,null);
     return {owned,low,tight,peak,funds,margin:low.liq-(p.liquidReserveFloor??500000)};
   }
-  const api={closing,assess};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PurchaseDecision=api;
+  // Anchor to the original purchase's tightest operating year, even if the preview moves it.
+  function peakImpact(baseRows,previewRows,purchaseYear){
+    const base=baseRows.filter(r=>r.yr>=purchaseYear).reduce((a,b)=>!a||b.flowFull<a.flowFull?b:a,null);
+    const preview=base&&previewRows.find(r=>r.yr===base.yr);
+    if(!preview)return null;
+    return {year:base.yr,base,preview,flowDelta:preview.flowFull-base.flowFull,wealthDelta:preview.netWorth-base.netWorth};
+  }
+  const api={closing,assess,peakImpact};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PurchaseDecision=api;
 })(typeof window!=='undefined'?window:this);

@@ -36,3 +36,9 @@ describe.each(['deal','brooklyn'])('selected purchase in %s',mode=>{
   expect(d.tight.flowFull).toBe(Math.min(...d.owned.map(r=>r.flowFull)));expect(JSON.stringify(p)).toBe(before);
  });
 });
+
+it('keeps the same peak pressure year when a purchase preview moves the tightest year',()=>{
+ const base=[{yr:2030,flowFull:-1000,netWorth:10},{yr:2031,flowFull:-20,netWorth:100},{yr:2032,flowFull:-10,netWorth:200}];
+ const preview=[{yr:2031,flowFull:20,netWorth:90},{yr:2032,flowFull:-100,netWorth:250}];
+ expect(Dn.peakImpact(base,preview,2031)).toMatchObject({year:2031,flowDelta:40,wealthDelta:-10});
+});
