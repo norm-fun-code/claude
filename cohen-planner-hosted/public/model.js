@@ -51,7 +51,7 @@ const NJ_MFJ_BR=[[20000,.014],[50000,.0175],[70000,.0245],[80000,.035],[150000,.
 // Category-specific NJ planning assumptions, ex housing / tuition / added transport / taxes.
 // .95 means a 5% discount to the Brooklyn baseline.
 const DEAL_SPENDING_FACTORS={groceries:.95,dining:.90,shopping:.97,clothing:.97,vacations:1,auto:1,insurance:1,misc:.90,entertainment:.90,charity:1,medical:.95,transit:1,utilities:.95};
-const NJ_PROPERTY_RATES={deal:.00435,longBranch:.01370,ocean:.01323}; // 2025 effective-rate planning proxies, not parcel bills.
+const NJ_PROPERTY_RATES={deal:.00435,longBranch:.01370,westLongBranch:.01302,ocean:.01323}; // 2025 effective-rate planning proxies, not parcel bills.
 function modeledMonthlyRent(p,yr){
     const rentGrowth=Math.max(0,Number(p.rentInflation??0.03)||0);
   const rentCap=Number(p.rentCap)>0?Number(p.rentCap):Infinity;
