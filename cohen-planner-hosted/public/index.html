@@ -2219,6 +2219,12 @@ function renderPlanView({R,tT,tC,tTx,tS,dp,mm}){
   if(activeTab==='home'){
     if(_homeView==='housing'||_homeView==='rentbuy'){renderHomeTab(R,P);return}
     if(_homeView==='family'){renderFamilySize(R,P);return}
+    if(_homeView==='independence'){
+      destroyCharts();
+      ca.innerHTML='<div class="fi-page-kicker">DECISIONS / FINANCIAL INDEPENDENCE</div><div id="fiRoot"></div>';
+      renderFinancialIndependence();
+      document.getElementById('summaries').innerHTML='';return;
+    }
     if(_homeView==='compare'){renderCompareTab(R,P);return}
     renderWhatIfTab(R,P);return;
   }
@@ -5517,9 +5523,8 @@ function updateRefiCalc(){
 function renderWhatIfTab(R,P){
   const ca=document.getElementById('chartArea');
   destroyCharts();
-  ca.innerHTML=`<div id="fiRoot"></div><div id="wiStress"></div><div id="wiDR"></div><div class="home-sec"><div class="hero-eyebrow">Then</div><h2>Which assumptions matter most</h2></div><div id="wiKL"></div>`;
+  ca.innerHTML=`<div id="wiDR"></div><div id="wiStress"></div><div class="home-sec"><div class="hero-eyebrow">Then</div><h2>Which assumptions matter most</h2></div><div id="wiKL"></div>`;
   window._lastR=R;window._lastP=P;
-  renderFinancialIndependence();
   renderAnnualStress(R,P);
   renderDecisionRoom(R,'wiDR');
   renderSensitivityTab(R,P,'wiKL');
@@ -6140,7 +6145,7 @@ let cockpitExRet=true;
 let _homeView='explore';
 const SUB_VIEWS={
   home:{get:()=>_homeView==='rentbuy'?'housing':_homeView==='levers'?'explore':_homeView,set:v=>{_homeView=v},
-    views:[['explore','spark','What-if'],['housing','home','Home'],['family','circle','Family size'],['compare','diamond','Compare']]},
+    views:[['explore','spark','What-if'],['housing','home','Home'],['family','circle','Family size'],['independence','chart','Financial Independence'],['compare','diamond','Compare']]},
   projection:{get:()=>_projView,set:v=>{_projView=v},
     views:[['nw','chart','Net worth'],['income','circle','Income & tax'],['cashflow','arrow','Cash flow'],['table','doc','Table']]},
   today:{get:()=>_todayView,set:v=>{_todayView=v},

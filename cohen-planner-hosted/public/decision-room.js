@@ -9,6 +9,7 @@ const decisionMoney=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:
 const decisionEsc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function decisionValue(key,value){
   const f=PlannerDecisions.fields[key];
+  if(f.format==='hourly')return decisionMoney(value)+'/hr';
   if(f.format==='months')return value?value+' mo old':'birth';
   return f.format==='money'?decisionMoney(value):f.format==='percent'?(value*100).toFixed(1)+'%'
     :f.format==='rate'?value.toFixed(3).replace(/0+$/,'').replace(/\.$/,'')+'%'
@@ -28,30 +29,24 @@ function renderDecisionRoom(R,host){
   decisionSyncBase();
   if(decisionYear===null)decisionYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,PlannerTime.year()));
   decisionYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,decisionYear));
-  const summary=PlannerDecisions.summarize(P,R,decisionYear);
+  const otherOpen=document.querySelector('#'+_drHost+' .dr-other')?.open;
   const events=PlannerDecisions.milestones(P,R);
-  const todayYear=Math.max(R[0].yr,Math.min(R[R.length-1].yr,PlannerTime.year()));
-  const today=R.find(r=>r.yr===todayYear);
-  const title=summary.floor.liq<0?'Your plan has a funding gap.':summary.deficitYears>0?'Some years draw on savings.':'Your next chapter, in focus.';
-  const detail=summary.floor.liq<0?`Projected liquid assets turn negative. Explore the timing and trade-offs below.`:summary.deficitYears>0?`${summary.deficitYears} ${summary.deficitYears===1?'year draws':'years draw'} on investments to cover spending. Start with the tightest year.`:`Your current assumptions cover annual spending in every modeled year. Explore how your choices change that path.`;
-  const upcoming=events.filter(e=>e.yr>=todayYear).slice(0,4);
-  const synced=PlannerDecisions.usableSnapshot(monarchSnapshot);
-  const age=synced?Math.max(0,Math.floor((Date.now()-Date.parse(monarchSnapshot.syncedAt))/86400000)):null;
-  const source=synced?`Monarch · ${PlannerTime.formatDate(monarchSnapshot.syncedAt,{month:'short',day:'numeric'})}${age>7?' · refresh recommended':''}`:(monarchSnapshot?.partial?'Plan assumptions · account totals incomplete (see Portfolio)':(monarchSnapshot?.partial?'Plan assumptions · account totals incomplete (see Portfolio)':'Plan assumptions · live balances unavailable'));
+  const practiceFields=Object.entries(PlannerDecisions.fields).filter(([key])=>key.startsWith('nancy'));
+  const others=Object.entries(PlannerDecisions.fields).filter(([key])=>!key.startsWith('nancy')&&(P.housingMode!=='rent'||!['homePrice','homePurchaseYear','mortgageRate','downPctg'].includes(key)));
+  const renderControl=([key,f])=>{
+    const value=decisionOverrides[key]??P[key];
+    const min=['homePurchaseYear','nancyRampYear'].includes(key)?Math.min(P.planStartYear,value):Math.min(f.min,value);
+    const max=Math.max(key==='nancyRampYear'?Math.min(f.max,P.planEndYear):f.max,value);
+    return `<div class="dr-control"><label for="dr-${key}">${f.label}<output id="dr-value-${key}">${decisionValue(key,value)}</output></label><input id="dr-${key}" type="range" min="${min}" max="${max}" step="${f.step}" value="${value}" oninput="decisionChange('${key}',Number(this.value))"><span>Current plan: ${decisionValue(key,P[key])}</span></div>`;
+  };
   document.getElementById('summaries').innerHTML='';
   document.getElementById(_drHost).innerHTML=`<div class="decision-room">
-    <section class="dr-intro">
-      <div><h2>${title}</h2><p>${detail}</p>
-      </div>
-    </section>
-    <section class="dr-card" id="decisionLab"><div class="dr-section-head"><div><h3>Explore a what-if</h3><p>Try a starting point, then combine changes. Your current plan stays intact.</p></div><button class="dr-secondary" onclick="decisionReset()">Reset preview</button></div>
-      <div class="dr-presets">${[['smaller','A $200K smaller home'],['later','Buy 2 years later'],['rate','Mortgage rate +1%'],['down','10% more down'],['care','An extra $1K in childcare'],['practice','Practice starts 1 year later'],['time','3 fewer clients / week'],['returns','Returns 2 points lower']].filter(([key])=>P.housingMode!=='rent'||!['smaller','later','rate','down'].includes(key)).map(([key,label])=>`<button onclick="decisionPreset('${key}')">${label}</button>`).join('')}</div>
-      <div class="dr-lab-layout"><div class="dr-sliders">${Object.entries(PlannerDecisions.fields).filter(([key])=>P.housingMode!=='rent'||!['homePrice','homePurchaseYear','mortgageRate','downPctg'].includes(key)).map(([key,f])=>{
-        const value=decisionOverrides[key]??P[key];
-        const min=['homePurchaseYear','nancyRampYear'].includes(key)?Math.min(P.planStartYear,value):Math.min(f.min,value);
-        const max=Math.max(f.max,value);
-        return `<div class="dr-control"><label for="dr-${key}">${f.label}<output id="dr-value-${key}">${decisionValue(key,value)}</output></label><input id="dr-${key}" type="range" min="${min}" max="${max}" step="${f.step}" value="${value}" oninput="decisionChange('${key}',Number(this.value))"><span>Current plan: ${decisionValue(key,P[key])}</span></div>`;
-      }).join('')}</div><div class="dr-impact"><div id="decisionImpact" aria-live="polite"></div><div class="dr-save"><label for="decisionName">Scenario name</label><input id="decisionName" type="text" maxlength="80" placeholder="e.g. More family time" value="${decisionEsc(decisionName)}" oninput="decisionName=this.value"><div><button id="decisionSave" class="dr-primary" onclick="decisionSaveScenario()">Save as new scenario</button><button class="dr-secondary" onclick="decisionAsk('variant')">Ask advisor about this</button></div><p id="decisionSaveStatus" role="status">Saving adds a separate scenario for comparison.</p></div></div></div>
+    <section class="dr-card" id="decisionLab"><div class="dr-section-head"><div><span class="dr-kicker">DECISIONS / WHAT-IF</span><h3>Nancy’s private practice</h3><p>Preview the work schedule and what it pays. Your plan stays intact.</p></div><button class="dr-secondary" onclick="decisionReset()">Reset preview</button></div>
+      <div class="dr-lab-layout"><div class="dr-sliders">
+       <div id="drPracticeSummary" class="dr-practice-summary" aria-live="polite"></div>
+       ${practiceFields.map(renderControl).join('')}
+       <details class="dr-other" ${otherOpen?'open':''}><summary>Other levers: housing, childcare &amp; returns</summary><div class="dr-presets">${[['smaller','A $200K smaller home'],['later','Buy 2 years later'],['rate','Mortgage rate +1%'],['down','10% more down'],['care','An extra $1K in childcare'],['returns','Returns 2 points lower']].filter(([key])=>P.housingMode!=='rent'||!['smaller','later','rate','down'].includes(key)).map(([key,label])=>`<button onclick="decisionPreset('${key}')">${label}</button>`).join('')}</div>${others.map(renderControl).join('')}</details>
+      </div><div class="dr-impact"><div id="decisionImpact" aria-live="polite"></div><div class="dr-save"><label for="decisionName">Scenario name</label><input id="decisionName" type="text" maxlength="80" placeholder="e.g. More family time" value="${decisionEsc(decisionName)}" oninput="decisionName=this.value"><div><button id="decisionSave" class="dr-primary" onclick="decisionSaveScenario()">Save as new scenario</button><button class="dr-secondary" onclick="decisionAsk('variant')">Ask advisor about this</button></div><p id="decisionSaveStatus" role="status">Saving adds a separate scenario for comparison.</p></div></div></div>
     </section>
     <details class="dr-method"><summary>What these numbers include</summary><p>All previews use your existing annual projection and tax model. Total net worth includes liquid assets, Stripe equity, home equity and retirement, less modeled debt. Retirement is also shown separately so you can see its contribution. Monthly margin is net flow: all after-tax pay less all modeled spending. A year can need part of the Stripe vest sold to cover spending and still have positive net flow; that is not a deficit, and the amount to sell is shown beside it. Liquid assets include investments and are not the same as cash. Net flow excludes the home down payment. The closing buffer uses the previous year-end investable balance — the diversified portfolio plus Stripe equity, since the funding waterfall sells held Stripe for the down payment once the portfolio reaches its reserve floor — less the down payment. It excludes closing costs and the capital-gains tax on those sales. The existing model continues employment income and retirement contributions through the end of the plan; this is not a retirement drawdown simulation. Returns are assumptions, not guaranteed outcomes. Changing home price holds maintenance and other expenses fixed unless you edit them in Settings. Changing childcare applies the monthly rate to each eligible child.</p></details>
   </div>`;
@@ -89,6 +84,14 @@ function decisionUpdatePreview(){
   const preview=changed.length?run(params).R:base;
   const a=PlannerDecisions.summarize(P,base,decisionYear),b=PlannerDecisions.summarize(params,preview,decisionYear);
   decisionContext.preview=preview;decisionContext.params=params;
+  const practice=document.getElementById('drPracticeSummary');
+  if(practice){
+    const year=params.nancyRampYear+params.nancyRampYears,start=preview.find(r=>r.yr===params.nancyRampYear),full=preview.find(r=>r.yr===year);
+    const gross=full?.nancyG??Math.round(params.nancyHourlyRate*params.nancyMaxClients*params.nancyWeeksPerYear);
+    const initial=start?.nancyG??Math.round(params.nancyHourlyRate*(params.nancyRampYears===0?params.nancyMaxClients:params.nancyRampClients)*params.nancyWeeksPerYear);
+    const after=gross-(params.nancySoloPractice===1?(params.nancyPracticeOverhead||0):0);
+    practice.innerHTML=`<span>Gross revenue at capacity · ${year}${full?'':' · outside projection'}</span><strong>${decisionMoney(gross)}/yr</strong><small>${decisionMoney(initial)} at launch in ${params.nancyRampYear}${params.nancySoloPractice===1?' · '+decisionMoney(after)+' at capacity after practice overhead, before tax':''}</small>`;
+  }
   const delta=decisionDollars(b.netWorth-a.netWorth,a.last.yr);
   // ── The comparison ──
   // Split in two, because the two halves answer different questions and reading them as one

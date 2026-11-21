@@ -13,7 +13,11 @@
     // year a child arrives more than the monthly rate does.
     childcareStartMonths:{label:'Childcare starts at',min:0,max:24,step:1,format:'months'},
     nancyRampYear:{label:'Nancy’s practice start year',min:2026,max:2099,step:1,format:'year'},
-    nancyMaxClients:{label:'Nancy’s clients / week',min:0,max:40,step:1,format:'number'},
+    nancyHourlyRate:{label:'Collected hourly rate',min:0,max:1000,step:5,format:'hourly'},
+    nancyMaxClients:{label:'Paid sessions per week at capacity',min:0,max:40,step:1,format:'number'},
+    nancyWeeksPerYear:{label:'Working weeks per year',min:1,max:52,step:1,format:'number'},
+    nancyRampClients:{label:'Paid sessions per week at launch',min:0,max:40,step:1,format:'number'},
+    nancyRampYears:{label:'Years to reach capacity',min:0,max:15,step:1,format:'number'},
     investReturn:{label:'Annual portfolio return',min:0,max:0.12,step:0.005,format:'percent'},
   };
   function variant(base,overrides){
@@ -25,7 +29,7 @@
       out[key]=value;
     }
     // A lighter practice must also cap the initial ramp, otherwise it starts above capacity.
-    if('nancyMaxClients' in overrides)out.nancyRampClients=Math.min(out.nancyRampClients,out.nancyMaxClients);
+    if('nancyMaxClients' in overrides||'nancyRampClients' in overrides)out.nancyRampClients=Math.min(out.nancyRampClients,out.nancyMaxClients);
     return out;
   }
   function summarize(p,R,year){

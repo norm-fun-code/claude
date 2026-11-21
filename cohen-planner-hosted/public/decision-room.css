@@ -138,3 +138,6 @@ body.home-view{background:#f3f6fb;padding:18px 24px}
   .dr-comparison th:first-child{width:auto}
   .dr-yearpick>span{flex-basis:100%;text-align:left}
 }
+
+.dr-practice-summary{display:grid;gap:3px;padding:14px 16px;margin:0 0 18px;border:1px solid #c8d4c5;border-radius:12px;background:#e9efe3;color:#254734}
+.dr-practice-summary span,.dr-practice-summary small{font-size:.82rem;line-height:1.4}.dr-practice-summary strong{font-size:1.65rem;line-height:1.15;font-variant-numeric:tabular-nums}.dr-other{border-block-start:1px solid #c8d4c5;padding-top:12px}.dr-other summary{cursor:pointer;font-size:.9rem;font-weight:650}.dr-other .dr-presets{margin:12px 0}

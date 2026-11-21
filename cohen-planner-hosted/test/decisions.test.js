@@ -152,3 +152,15 @@ describe('Cash flow is measured against income, and net worth means one thing',(
     expect(s.tightest.flow).toBe(Math.min(...R.map(r=>r.flow)));
   });
 });
+
+it('responds to collected fees and reduced hours only after Nancy starts her practice',()=>{
+  const p={...defaults,nancyRampYear:2029,nancyRampYears:2,nancyRampClients:5,nancyMaxClients:15,nancyHourlyRate:250,nancyWeeksPerYear:46,nancySoloPractice:1};
+  const q=variant(p,{nancyHourlyRate:225,nancyWeeksPerYear:44,nancyMaxClients:12});
+  const current=run(p).R,preview=run(q).R,at=(r,y)=>r.find(x=>x.yr===y);
+  expect(at(preview,2028).nancyG).toBe(at(current,2028).nancyG);
+  expect(at(preview,2029).nancyG).toBe(49500);
+  expect(at(preview,2031).nancyG).toBe(118800);
+  expect(at(current,2031).nancyG).toBe(172500);
+  expect(at(preview,2031).netTC).toBeLessThan(at(current,2031).netTC);
+  expect(p.nancyHourlyRate).toBe(250);
+});
