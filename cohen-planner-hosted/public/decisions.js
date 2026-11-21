@@ -83,6 +83,14 @@
     if(peak.tu+peak.cc>0)add(peak.yr,'Peak education + care','school');
     return events.sort((a,b)=>a.yr-b.yr);
   }
+  function impactYears(p,rows){
+    if(!rows.length)return [];
+    const years=new Set(rows.map(r=>r.yr));
+    const peak=rows.reduce((a,b)=>(b.totEFull??b.totE)>(a.totEFull??a.totE)?b:a);
+    const births=Array.from({length:p.numKids},(_,i)=>({key:'child'+(i+1),label:'Child '+(i+1)+' born',year:Number(p['kid'+(i+1)+'Birth'])}));
+    return [...births,...(p.housingMode==='rent'?[]:[{key:'purchase',label:'Home purchase',year:p.homePurchaseYear}]),
+      {key:'peak',label:'Peak spending',year:peak.yr},{key:'end',label:'Plan end',year:rows.at(-1).yr}].filter(x=>years.has(x.year));
+  }
   function preset(p,key){
     const presets={
       smaller:{homePrice:clamp(p.homePrice-200000,100000,6000000)},
@@ -103,7 +111,7 @@
     // Legacy empty responses were stored as all-zero balances. Require evidence for zero.
     return s.accountCount>0||s.assets!==0||s.liabilities!==0;
   }
-  const api={fields,variant,summarize,milestones,preset,usableSnapshot};
+  const api={fields,variant,summarize,milestones,impactYears,preset,usableSnapshot};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.PlannerDecisions=api;
 })(typeof window!=='undefined'?window:this);

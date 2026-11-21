@@ -60,7 +60,7 @@ describe('the change column colours what is GOOD, not what went up', () => {
     // harder. Painting them green would have the panel saying the opposite of what it means.
     expect(room).toContain('const chg=(x,z,f,worseUp)=>{');
     expect(room).toContain('const good=worseUp?d<0:d>0;');
-    expect(room).toContain('chg(at(a.current.totE),at(b.current.totE),null,true)');
+    expect(room).toContain('chg(at(a.current.totEFull??a.current.totE),at(b.current.totEFull??b.current.totE),null,true)');
     expect(room).toContain('chg(at(a.current.gap),at(b.current.gap),null,true)');
     expect(room).toContain("chg(a.deficitYears,b.deficitYears,n=>n+(n===1?' yr':' yrs'),true)");
   });
@@ -94,4 +94,10 @@ describe('what the year rows actually compare', () => {
     expect(D.summarize(plan({ childcareMonthly: 3800 }), hiR, late).current.totE)
       .toBe(D.summarize(plan(), R, late).current.totE);
   });
+});
+
+it('offers only modeled milestones and finds peak full-year spending in the baseline',()=>{
+  const p=plan({numKids:3,kid1Birth:2026,kid2Birth:2027,kid3Birth:2051,housingMode:'rent'});
+  const years=D.impactYears(p,[{yr:2026,totE:20,totEFull:90},{yr:2027,totE:80,totEFull:80}]);
+  expect(years.map(x=>[x.key,x.year])).toEqual([['child1',2026],['child2',2027],['peak',2026],['end',2027]]);
 });

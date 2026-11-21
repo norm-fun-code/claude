@@ -55,11 +55,13 @@ function renderDecisionRoom(R,host){
 }
 function decisionSelectYear(year){
   if(!decisionContext)return;
+  const focusId=document.activeElement?.id;
   decisionYear=Math.max(P.planStartYear,Math.min(P.planEndYear,year));
   const slider=document.getElementById('decisionYear');if(slider)slider.value=decisionYear;
   const label=document.getElementById('decisionYearLabel');if(label)label.textContent=decisionYear;
   const picker=document.getElementById('decisionYearPick');if(picker)picker.value=decisionYear;
   decisionUpdatePreview();
+  if(focusId)document.getElementById(focusId)?.focus({preventScroll:true});
 }
 // Step one year without leaving the keyboard or hunting the right option in a list of 33.
 function decisionStepYear(by){
@@ -92,7 +94,6 @@ function decisionUpdatePreview(){
     const after=gross-(params.nancySoloPractice===1?(params.nancyPracticeOverhead||0):0);
     practice.innerHTML=`<span>Gross revenue at capacity · ${year}${full?'':' · outside projection'}</span><strong>${decisionMoney(gross)}/yr</strong><small>${decisionMoney(initial)} at launch in ${params.nancyRampYear}${params.nancySoloPractice===1?' · '+decisionMoney(after)+' at capacity after practice overhead, before tax':''}</small>`;
   }
-  const delta=decisionDollars(b.netWorth-a.netWorth,a.last.yr);
   // ── The comparison ──
   // Split in two, because the two halves answer different questions and reading them as one
   // list made only the plan-end rows feel like the answer. The top half is ONE YEAR, chosen
@@ -118,9 +119,9 @@ function decisionUpdatePreview(){
   };
   const rows=[
     ['head',`In ${yr}`],
-    ['Net flow / mo',decisionMoney(at(a.current.flow)/12),decisionMoney(at(b.current.flow)/12),
-      chg(at(a.current.flow)/12,at(b.current.flow)/12,decisionMoney)],
-    ['Total spending',fmt(at(a.current.totE)),fmt(at(b.current.totE)),chg(at(a.current.totE),at(b.current.totE),null,true)],
+    ['Net flow / mo',decisionMoney(at(a.current.flowFull??a.current.flow)/12),decisionMoney(at(b.current.flowFull??b.current.flow)/12),
+      chg(at(a.current.flowFull??a.current.flow)/12,at(b.current.flowFull??b.current.flow)/12,decisionMoney)],
+    ['Total spending',fmt(at(a.current.totEFull??a.current.totE)),fmt(at(b.current.totEFull??b.current.totE)),chg(at(a.current.totEFull??a.current.totE),at(b.current.totEFull??b.current.totE),null,true)],
     ['Vest sold to cover',a.current.gap>0?fmt(at(a.current.gap)):'None',b.current.gap>0?fmt(at(b.current.gap)):'None',
       chg(at(a.current.gap),at(b.current.gap),null,true)],
     ['Liquid assets',fmt(at(a.current.liq)),fmt(at(b.current.liq)),chg(at(a.current.liq),at(b.current.liq))],
@@ -141,15 +142,19 @@ function decisionUpdatePreview(){
       chg(a.closingBuffer,b.closingBuffer)],
   ];
   const years=base.map(r=>r.yr);
-  document.getElementById('decisionImpact').innerHTML=`<div class="dr-kicker">${changed.length?'PREVIEW VS CURRENT PLAN':'YOUR CURRENT PLAN'}</div><div class="dr-impact-number ${delta<0?'dr-negative':''}">${changed.length?decisionDelta(delta):fmt(decisionDollars(a.netWorth,a.last.yr))}</div><p>${changed.length?'Change in net worth':'Projected net worth'} in ${a.last.yr} · ${inflationView?P.planStartYear+' dollars':'future dollars'}</p>
+  const funding=(row)=>at(row.flowFull??row.flow),wealth=(row)=>at(row.netWorth);
+  const impact=(label,before,after)=>`<div><span>${label}</span><strong>${fmt(after)}</strong>${changed.length?`<small class="${Math.round(after-before)===0?'':after>before?'dr-up':'dr-down'}">${Math.round(after-before)===0?'No change':decisionDelta(after-before)} · current ${fmt(before)}</small>`:''}</div>`;
+  const presets=PlannerDecisions.impactYears(P,base);
+  document.getElementById('decisionImpact').innerHTML=`<div class="dr-kicker">${changed.length?'PREVIEW VS CURRENT PLAN':'YOUR CURRENT PLAN'}</div>
     <div class="dr-yearpick">
       <label for="decisionYearPick">Compare year</label>
-      <button type="button" onclick="decisionStepYear(-1)" aria-label="Previous year"${yr<=years[0]?' disabled':''}>◀</button>
+      <button type="button" id="drYearPrev" onclick="decisionStepYear(-1)" aria-label="Previous year"${yr<=years[0]?' disabled':''}>◀</button>
       <select id="decisionYearPick" onchange="decisionSelectYear(Number(this.value),false)">${years.map(y=>`<option value="${y}"${y===yr?' selected':''}>${y}</option>`).join('')}</select>
-      <button type="button" onclick="decisionStepYear(1)" aria-label="Next year"${yr>=years[years.length-1]?' disabled':''}>▶</button>
-      <span>${(()=>{const k=Array.from({length:P.numKids},(_,i)=>yr-P['kid'+(i+1)+'Birth']).filter(x=>x>=0);
-        return k.length?`${k.length} ${k.length===1?'child':'children'} · age${k.length===1?'':'s'} ${k.join(', ')}`:'before the kids arrive';})()}${params.housingMode!=='rent'&&yr===params.homePurchaseYear?' · home purchase':''}</span>
+      <button type="button" id="drYearNext" onclick="decisionStepYear(1)" aria-label="Next year"${yr>=years[years.length-1]?' disabled':''}>▶</button>
     </div>
+    <div class="dr-year-presets" role="group" aria-label="Key years">${presets.map(x=>`<button type="button" id="drYear-${x.key}" onclick="decisionSelectYear(${x.year})" aria-pressed="${x.year===yr}">${x.label} · ${x.year}</button>`).join('')}</div>
+    <div class="dr-impact-metrics" aria-label="${yr} impact">${impact('Annual cash flow',funding(a.current),funding(b.current))}${impact('Year-end net worth',wealth(a.current),wealth(b.current))}</div>
+    <p>${yr} · ${inflationView?P.planStartYear+' dollars':'future dollars'}. Cash flow is take-home pay (including vested stock) minus spending, excluding the down payment. Peak spending refers to the current plan.</p>
     <table class="dr-comparison"><thead><tr><th>Measure</th><th>Current</th><th>Preview</th><th>Change</th></tr></thead><tbody>
     ${rows.map(r=>r[0]==='head'
       ? `<tr class="dr-group"><th colspan="4">${decisionEsc(r[1])}</th></tr>`
