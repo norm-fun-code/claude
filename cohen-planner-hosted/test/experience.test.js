@@ -29,7 +29,7 @@ describe('focused spending and budget presentation',()=>{
  it('distinguishes overspending, underspending and missing actuals without inventing zero actuals',()=>{
   const t=presentation();t.ctx.row=row(2026,{groceries:12000,clothing:6000,medical:1200});
   t.ctx.actual={lines:{groceries:{perMonth:1500},clothing:{perMonth:400}}};
-  const html=t.call('experienceRankChart(row,actual,true)');
+  t.call("budgetRankMode='size'");const html=t.call('experienceRankChart(row,actual,true)');
   expect(html).toContain('data-kind="actual" data-over="true"');expect(html).toContain('$500 over plan');
   expect(html).toContain('$100 under plan');expect(html).toContain('No matched actuals');
  });
@@ -39,19 +39,19 @@ describe('focused spending and budget presentation',()=>{
  });
  it('shows review prompts rather than actual-budget verdicts in future years',()=>{
   const t=presentation();t.ctx.row=row(2036,{clothing:100000});
-  const html=t.call('experienceRankChart(row,null,true)');
+  t.call("budgetRankMode='size'");const html=t.call('experienceRankChart(row,null,true)');
   expect(html).toContain('Needs review');expect(html).toContain('Above household guide · review');expect(html).not.toContain('No matched actuals');
   t.call("budgetRankMode='over'");expect(t.call('experienceRankChart(row,null,true)')).toContain('Assumptions worth reviewing');
  });
  it('includes one-off costs and signed adjustments in the spending plan',()=>{
   const t=presentation();t.ctx.row=row(2036,{groceries:12000},{eAdj:-1200});
-  const ranked=t.call("experienceBudgetRanking(row,null,'size')");
+  t.call("budgetRankMode='size'");const ranked=t.call("experienceBudgetRanking(row,null,'size')");
   expect(ranked.find(x=>x.key==='oneoff').planned).toBe(-100);
   expect(t.call('experienceRankChart(row,null,true)')).toContain('One-off costs &amp; adjustments');
  });
  it('shows all categories on request without changing plan parameters',()=>{
   const t=presentation();t.ctx.row=row(2026,Object.fromEntries(Array.from({length:10},(_,i)=>['line'+i,12000+i*1200])));
-  const before=JSON.stringify(t.ctx.P);expect((t.call('experienceRankChart(row,null,true)').match(/class="ex-rank-row"/g)||[])).toHaveLength(8);
+  t.call("budgetRankMode='size'");const before=JSON.stringify(t.ctx.P);expect((t.call('experienceRankChart(row,null,true)').match(/class="ex-rank-row"/g)||[])).toHaveLength(8);
   t.call('budgetShowAll=true');expect((t.call('experienceRankChart(row,null,true)').match(/class="ex-rank-row"/g)||[])).toHaveLength(10);expect(JSON.stringify(t.ctx.P)).toBe(before);
  });
  it('opens collapsed ancestors and the relevant editor when a category is selected',()=>{
@@ -171,5 +171,18 @@ describe('Overview and Future chart reconciliation',()=>{
    expect(ds[0].data[1]).toBe(t.call('experienceTimelineWealth(R[0])'));
    expect(ds[1].data).toEqual([330,t.call('experienceInvestableAssets(R[0])')]);
   }
+ });
+});
+
+describe('money flow reconciles both lenses',()=>{
+ const balance=g=>g.inputs.reduce((n,x)=>n+Math.max(0,x[1]),0)-g.groups.flatMap(x=>x[1]).reduce((n,x)=>n+Math.max(0,x[1]),0);
+ it('nets refunds and shows the uncovered amount, without including transfers or investments',()=>{
+  const t=presentation();const g=t.call("flowActual([{income:1000,expense:1400,transfer:500,investment:300}],[{name:'Rent',net:1500},{name:'Refunded',net:-100}])");
+  expect(balance(g)).toBe(0);expect(g.inputs).toContainEqual(['Spending beyond income',400]);expect(g.inputs).toContainEqual(['Net category refunds',100]);
+ });
+ it('reconciles every modeled year and keeps retained shares distinct from cash savings',()=>{
+  const html=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+  const p=vm.runInNewContext('('+html.match(/const D=(\{[\s\S]*?\n\});/)[1]+')'),rows=Model.run(p).R,t=presentation();
+  for(const r of rows){Object.assign(t.ctx,{row:r,alloc:Budget.allocation(p,rows,r.yr)});const g=t.call('flowBudget(row,alloc)');expect(Math.abs(balance(g))).toBeLessThanOrEqual(1);expect(t.call('flowPicture(flowBudget(row,alloc),12)')).not.toContain('NaN');}
  });
 });

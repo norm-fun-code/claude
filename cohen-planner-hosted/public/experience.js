@@ -2,7 +2,9 @@
 // Presentation layer. All values come from the existing model and import modules.
 let experienceHousingView='afford';
 let lifeYear=null,lifeMode='wealth',lifeContext=null,lifeIsolated=null;
-let budgetRankMode='size';
+let budgetRankMode='flow';
+let spendChartMode='flow';
+
 let budgetShowAll=false;
 let spendingStoryView='categories';
 // Optional liquidity lens only: never modifies the underlying compensation or equity.
@@ -249,7 +251,7 @@ function experienceBudget(R){
   bar?.after(band);
   if(bucket)experienceFold(bd,[bucket],'How income is allocated','budget-allocation');
   const rank=document.createElement('section');rank.className='ex-panel ex-budget-chart';
-  rank.innerHTML=experienceRankChart(r,act,mo);
+  rank.innerHTML=experienceRankChart(r,act,mo,a);
   band.after(rank);
   const lines=bd.querySelector('.bd-lines');
   // Income, saving, investing and one-off editors remain available, but spending leads.
@@ -475,15 +477,6 @@ function experienceBudgetRanking(row,actual,mode){
 function experienceBudgetReveal(key){const el=key==='oneoff'?document.getElementById('bd-g-oneoff'):document.querySelector('.bd-row[data-line="'+key+'"]');if(!el)return;for(let parent=el.parentElement;parent;parent=parent.parentElement){if(parent.tagName==='DETAILS'){parent.open=true;if(parent.dataset.fold)experienceFolds.add(parent.dataset.fold);}}document.querySelectorAll('.ex-row-highlight').forEach(n=>n.classList.remove('ex-row-highlight'));el.classList.add('ex-row-highlight');el.scrollIntoView({behavior:_reduceMotion()?'instant':'smooth',block:'center'});const details=el.querySelector('.ex-row-detail');if(details?.hidden)el.querySelector('.ex-row-more')?.click();}
 
 // Visual briefing: use the same values as the category table; never infer complete coverage.
-const visualPalette=['#365d45','#688363','#8d9e78','#b2b89b','#a68b66','#bdc7ae'];
-function experienceDonut(entries,total,label,note){
-  const positive=entries.filter(x=>Number(x.value)>0).sort((a,b)=>b.value-a.value);
-  const top=positive.slice(0,5),rest=positive.slice(5).reduce((a,x)=>a+x.value,0);
-  if(rest>0)top.push({label:'Other categories',value:rest});
-  const scale=top.reduce((a,x)=>a+x.value,0),circ=2*Math.PI*86;let offset=0;
-  const arcs=top.map((x,i)=>{const share=scale?x.value/scale:0,len=Math.max(0,share*circ-4),arc=`<circle cx="110" cy="110" r="86" fill="none" stroke="${visualPalette[i]}" stroke-width="13" stroke-dasharray="${len} ${circ-len}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)"><title>${experienceEscape(x.label)} · ${experienceMoney(x.value)} · ${(share*100).toFixed(1)}%</title></circle>`;offset+=share*circ;return arc;}).join('');
-  return `<div class="ex-composition"><div class="ex-donut"><svg viewBox="0 0 220 220" role="img" aria-label="${experienceEscape(label)} by category"><circle cx="110" cy="110" r="86" fill="none" stroke="#d8ddcd" stroke-width="13"/>${arcs}</svg><div><span>${label}</span><strong>${experienceMoney(total)}</strong><small>${note}</small></div></div><div class="ex-composition-key">${top.map((x,i)=>`<div><i style="background:${visualPalette[i]}"></i><span>${experienceEscape(x.label)}</span><strong>${experienceMoney(x.value)}</strong><small>${scale?(x.value/scale*100).toFixed(0):0}%</small></div>`).join('')}</div></div>`;
-}
 function experienceBudgetVisual(R){
  const bd=document.querySelector('.bd');if(!bd)return;
  const yr=Math.min(R.at(-1).yr,Math.max(R[0].yr,_budgetYear??PlannerTime.year())),r=R.find(x=>x.yr===yr),mo=_budgetUnit==='month';
@@ -518,13 +511,24 @@ async function experienceCatchUp(){
 }
 function experienceSpendingVisual(){
  const w=document.querySelector('.spending-workspace');if(!w||!_spend||_spend.error)return;
- const rows=window.__spendingViz?.rows||[];if(!rows.length)return;
+ const rows=window.__spendingViz?.rows||[];if(!(_spend.months||[]).length)return;
  const allMonths=_spend.months||[],asOf=_spend.endDate,closed=allMonths.filter(m=>m.month<String(asOf).slice(0,7));
  const period=spendScopeLabel(closed,asOf,allMonths);
  const section=document.createElement('section');section.className='ex-spending-visual';
  const partial=_spendScope.kind==='month'&&_spendScope.month===String(_spend.endDate).slice(0,7);
  const sum=rows.reduce((a,x)=>a+x.perMonth,0),max=Math.max(1,...rows.map(x=>x.perMonth));
- section.innerHTML=`<section class="so-spend-chart"><div class="ex-panel-head"><div><span class="ex-kicker">WHERE THE MONEY GOES</span><h3>${experienceMoney(sum)}<small> ${partial?'so far':'average / month'}</small></h3><p>${experienceEscape(period)}</p></div><div class="ex-segments">${[['ytd',null,'YTD'],...[3,6,12].filter(n=>closed.length>=n).map(n=>['recent',n,n+'M']),['all',null,'All']].map(([kind,n,label])=>`<button aria-pressed="${_spendScope.kind===kind&&(kind!=='recent'||Number(_spendScope.months)===n)}" onclick="setSpendScope('${kind}',${n})">${label}</button>`).join('')}</div></div><div class="so-spend-bars">${rows.slice(0,8).map((x,i)=>`<div class="so-spend-row"><span>${experienceEscape(x.name)}</span><div><i style="width:${Math.max(0,x.perMonth)/max*100}%;opacity:${1-i*.065}"></i></div><strong>${experienceMoney(x.perMonth)}</strong><small>${sum>0?(x.perMonth/sum*100).toFixed(0)+'%':'—'}</small></div>`).join('')}</div><p class="ex-chart-caption">${rows.length>8?'Largest 8 of '+rows.length+' categories':''}</p><details class="ex-detail"><summary>Category composition</summary>${experienceDonut(rows.map(x=>({label:x.name,value:x.perMonth})),sum,'Recorded spending',partial?'month to date':'per month')}<p class="ex-chart-caption">The ring shows positive net categories; refund-only categories remain in the full table.</p></details></section>`;
+ section.innerHTML=`<section class="so-spend-chart"><div class="ex-panel-head"><div><span class="ex-kicker">WHERE THE MONEY GOES</span><h3>${experienceMoney(sum)}<small> ${partial?'so far':'average / month'}</small></h3><p>${experienceEscape(period)}</p></div><div class="ex-segments">${[['ytd',null,'YTD'],...[3,6,12].filter(n=>closed.length>=n).map(n=>['recent',n,n+'M']),['all',null,'All']].map(([kind,n,label])=>`<button aria-pressed="${_spendScope.kind===kind&&(kind!=='recent'||Number(_spendScope.months)===n)}" onclick="setSpendScope('${kind}',${n})">${label}</button>`).join('')}</div></div><div class="so-spend-bars">${rows.slice(0,8).map((x,i)=>`<div class="so-spend-row"><span>${experienceEscape(x.name)}</span><div><i style="width:${Math.max(0,x.perMonth)/max*100}%;opacity:${1-i*.065}"></i></div><strong>${experienceMoney(x.perMonth)}</strong><small>${sum>0?(x.perMonth/sum*100).toFixed(0)+'%':'—'}</small></div>`).join('')}</div><p class="ex-chart-caption">${rows.length>8?'Largest 8 of '+rows.length+' categories':''}</p></section>`;
+ const chart=section.querySelector('.so-spend-chart'),head=chart.querySelector('.ex-panel-head');
+ const selector=document.createElement('div');selector.className='ex-segments sk-switch';selector.setAttribute('aria-label','Spending chart');
+ selector.innerHTML=['flow','size'].map(k=>'<button aria-pressed="'+(spendChartMode===k)+'" onclick="spendChartMode=\''+k+'\';render()">'+(k==='flow'?'Money flow':'By size')+'</button>').join('');
+ head.after(selector);
+ if(spendChartMode==='flow'){
+   const scope=spendScopeMonths(closed,asOf,allMonths);
+   head.querySelector('h3').textContent='Where your money went';
+   head.querySelector('p').textContent=period+' · recorded totals';
+   chart.querySelector('.so-spend-bars')?.remove();chart.querySelector('.ex-chart-caption')?.remove();
+   selector.insertAdjacentHTML('afterend',flowPicture(flowActual(scope,rows),1));
+ }
  const averages=w.querySelector('.ex-spend-averages');if(averages)experienceFold(w,[averages],'Compare 3-, 6- and 12-month averages','spending-averages');
 
  const lens=[...w.children].find(n=>n.textContent.includes('Categories against your income'));
@@ -551,13 +555,17 @@ function experienceSpendingVisual(){
 }
 
 // Every comparison carries its scale, source and exact values, including missing actuals.
-function experienceRankChart(row,actual,monthly){
+function experienceRankChart(row,actual,monthly,allocation){
+  if(budgetRankMode==='flow'){
+    const graph=flowBudget(row,allocation);
+    return '<div class="ex-panel-head"><div><span class="ex-kicker">PLANNED MONEY FLOW</span><h3>Where your income goes</h3><p>'+row.yr+' · '+(monthly?'monthly average':'full year')+'</p></div>'+flowBudgetSwitch(row.yr)+'</div>'+flowPicture(graph,monthly?12:1);
+  }
   const future=row.yr>PlannerTime.year(),checks=future?experienceFutureChecks(P,row):[],byLine=new Map(checks.map(c=>[c.line,c]));
   const all=experienceBudgetRanking(row,actual,future?'size':budgetRankMode).filter(x=>!future||budgetRankMode!=='over'||byLine.has(x.key)),rows=budgetShowAll?all:all.slice(0,8);
   const max=Math.max(1,...rows.flatMap(x=>[x.planned,x.actual??0]));
   const factor=monthly?1:12,unit=monthly?'per month':actual?'annualized pace':'per year';
   const exact=v=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(v*factor);
-  const head=`<div class="ex-panel-head"><div><span class="ex-kicker">CATEGORY COMPARISON</span><h3>${budgetRankMode==='over'?(future?'Assumptions worth reviewing':'What’s over budget?'):'The biggest spending categories.'}</h3><p>${actual?'Recorded pace and your plan':'Planned amounts'} · ${monthly?'per month':future?'per year':unit}${all.length>8&&!budgetShowAll?' · top 8 of '+all.length:''}</p></div><div class="ex-segments"><button aria-pressed="${budgetRankMode==='size'}" onclick="budgetRankMode='size';render()">By size</button><button aria-pressed="${budgetRankMode==='over'}" onclick="budgetRankMode='over';render()">${future?'Needs review':'Over budget'}</button></div></div>`;
+  const head=`<div class="ex-panel-head"><div><span class="ex-kicker">CATEGORY COMPARISON</span><h3>${budgetRankMode==='over'?(future?'Assumptions worth reviewing':'What’s over budget?'):'The biggest spending categories.'}</h3><p>${actual?'Recorded pace and your plan':'Planned amounts'} · ${monthly?'per month':future?'per year':unit}${all.length>8&&!budgetShowAll?' · top 8 of '+all.length:''}</p></div>${flowBudgetSwitch(row.yr)}</div>`;
   const legend=`<div class="ex-rank-key">${actual?'<span><i class="actual"></i>At / under plan</span><span><i class="over"></i>Over plan</span><span><i class="marker"></i>Budget</span>':''}<span><i class="planned"></i>Plan only</span></div>`;
   const bars=rows.map(x=>{
     const name=x.key==='oneoff'?'One-off costs & adjustments':LIV_LABEL[x.key]||x.key,hasActual=x.actual!=null,value=x.actual??x.planned,delta=hasActual?x.actual-x.planned:null;
@@ -704,3 +712,54 @@ function experienceLocation(){
 }
 
 if(_planLoaded)render();
+
+// Cash-flow Sankey: actuals are posted ledger totals; budgets are annual model rows.
+function flowBudgetSwitch(year){
+ return '<div class="ex-segments" aria-label="Budget chart">'+[['flow','Money flow'],['size','By size'],['over',year>PlannerTime.year()?'Needs review':'Over budget']].map(([k,l])=>'<button aria-pressed="'+(budgetRankMode===k)+'" onclick="budgetRankMode=\''+k+'\';render()">'+l+'</button>').join('')+'</div>';
+}
+function flowActual(months,rows){
+ const income=months.reduce((n,m)=>n+(m.income||0),0),spend=months.reduce((n,m)=>n+(m.expense||0),0);
+ const out=rows.map(r=>[r.name,r.net]),uncat=spend-out.reduce((n,r)=>n+r[1],0);if(Math.abs(uncat)>.005)out.push(['Uncategorized',uncat]);
+ const inputs=[['Recorded income',Math.max(0,income)],['Net category refunds',-out.filter(x=>x[1]<0).reduce((n,x)=>n+x[1],0)],['Spending beyond income',Math.max(0,spend-income)]];
+ return {inputs,groups:[['Spending',out],['Remaining',[['Income left after spending',Math.max(0,income-spend)]]],['Income reversals',[['Reversed income',Math.max(0,-income)]]]],note:'Posted Monarch transactions. Transfers and card payments excluded. Remaining income is not verified savings.'};
+}
+function flowBudget(r,a){
+ const labels={housing:'Housing',tuition:'Tuition',childcare:'Childcare',oneoff:'Events & adjustments',groceries:'Groceries',medical:'Medical',shopping:'Shopping',clothing:'Clothing',dining:'Dining',vacations:'Vacations',auto:'Auto',insurance:'Insurance',misc:'Miscellaneous',entertainment:'Entertainment',charity:'Charity',transit:'Transit',utilities:'Utilities & phone'};
+ const spend=Object.entries({...r.livFullParts,housing:r.hFull,tuition:r.tuFull,childcare:r.ccFull,oneoff:r.eAdj}).map(([k,v])=>[labels[k]||k,Number(v)||0]);
+ const cash=r.normCash||0,stock=r.normStock||0,other=r.otherInc||0,nancy=r.gross-cash-stock,net=r.netTC,flow=net-r.totEFull;
+ const inputs=[['Norm · cash pay',cash],['Norm · vested stock',stock],['Nancy · gross earnings',nancy],['Other modeled income',other],['Budget credits',-spend.filter(x=>x[1]<0).reduce((n,x)=>n+x[1],0)],['Funding gap',Math.max(0,-flow)]];
+ const excess=Math.max(0,flow),save=Math.min(excess,Math.max(0,a?.saving?.total||0)),held=Math.min(excess-save,Math.max(0,a?.investing?.stripe||0)),ded=r.gross+other-net-r.tax,overhead=Math.max(0,Math.min(ded,r.bizOverhead||0));
+ return {inputs,groups:[['Deductions',[['Taxes on income',r.tax],['Payroll deductions',ded-overhead],['Practice overhead',overhead]]],['Spending',spend],['Saving & investing',[['Reserve savings',save],['Stripe shares kept',held],['Portfolio allocation',excess-save-held]]]],note:'Operating budget, including vested stock. Home closing costs and investment sales are separate.'};
+}
+let flowChartSerial=0;
+function flowPicture(data,divisor){
+ const prefix="sk"+(++flowChartSerial)+"-";
+ const esc=experienceEscape,fmt=v=>experienceMoney(v/divisor),exact=v=>UI.money(v/divisor,{exact:true});
+ const colors=['#64776b','#ac8056','#597951'],src='#397566',pool='#275542';
+ const pos=a=>a.filter(x=>Number.isFinite(x[1])&&x[1]>.000001);
+ const ins=pos(data.inputs),groups=data.groups.map(([name,lines],i)=>({name,lines:pos(lines).sort((a,b)=>b[1]-a[1]),color:name==='Spending'?'#a87d53':name==='Remaining'?'#63835a':colors[i%3]})).filter(g=>g.lines.length);
+ const total=ins.reduce((n,x)=>n+x[1],0);if(!total)return '<p class="ex-chart-empty">No recorded flow for this period.</p>';
+ const cols=[[],[],[],[]],edges=[];
+ const node=(col,name,v,color)=>{const o={id:cols[col].length+'c'+col,name,v,color,col};cols[col].push(o);return o;};
+ const mid=node(1,'Total resources',total,pool),edge=(a,b,v)=>edges.push({a,b,v});
+ ins.forEach(([l,v])=>edge(node(0,l,v,src),mid,v));
+ groups.forEach(g=>{const sum=g.lines.reduce((n,x)=>n+x[1],0),parent=node(2,g.name,sum,g.color);edge(mid,parent,sum);
+ const keep=g.name==='Spending'?5:3,top=g.lines.slice(0,keep),rest=g.lines.slice(keep);
+ if(rest.length)top.push(['Other '+g.name.toLowerCase(),rest.reduce((n,x)=>n+x[1],0)]);
+ top.forEach(([l,v])=>edge(parent,node(3,l,v,g.color),v));});
+ // The same monetary scale drives every ribbon. Extra label space never fattens a tiny flow.
+ const scale=172/total,H=Math.max(...cols.map(col=>col.reduce((n,o)=>n+Math.max(36,o.v*scale+9),0)))+20;
+ const X=[8,234,449,669],W=868;
+ cols.forEach(col=>{const space=col.reduce((n,o)=>n+Math.max(36,o.v*scale+9),0);let y=(H-space)/2;col.forEach(o=>{const h=Math.max(36,o.v*scale+9);Object.assign(o,{x:X[o.col],h:o.v*scale,y:y+(h-o.v*scale)/2,inPos:0,outPos:0});y+=h;});});
+ const defs='<defs>'+edges.map(({a,b},i)=>'<linearGradient id="'+prefix+i+'"><stop stop-color="'+a.color+'"/><stop offset="100%" stop-color="'+b.color+'"/></linearGradient>').join('')+'</defs>';
+ const paths=edges.map(({a,b,v},i)=>{const x=a.x+7,z=b.x,m=(x+z)/2,t=a.y+a.outPos,u=b.y+b.inPos,h=v*scale;a.outPos+=h;b.inPos+=h;return '<path data-from="'+a.id+'" data-to="'+b.id+'" fill="url(#'+prefix+i+')" d="M'+x+' '+t+' C'+m+' '+t+' '+m+' '+u+' '+z+' '+u+' v'+h+' C'+m+' '+(u+h)+' '+m+' '+(t+h)+' '+x+' '+(t+h)+' Z"><title>'+esc(a.name+' → '+b.name+' · '+exact(v))+'</title></path>';}).join('');
+ const nodes=cols.flat().map(o=>{const label=o.name.length>23?o.name.slice(0,22)+'…':o.name,y=o.y+o.h/2,desc=o.name+' · '+exact(o.v)+' · '+(o.v/total*100).toFixed(1)+'% of resources';return '<g data-node="'+o.id+'" role="button" tabindex="0" aria-pressed="false" aria-label="'+esc(desc)+'" onclick="flowSelect(this)" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();flowSelect(this)}"><title>'+esc(desc)+'</title><rect x="'+o.x+'" y="'+o.y+'" width="7" height="'+Math.max(.8,o.h)+'" rx="3" fill="'+o.color+'"/><rect x="'+o.x+'" y="'+(y-16)+'" width="190" height="33" fill="transparent"/><text x="'+(o.x+12)+'" y="'+(y-2)+'">'+esc(label)+'</text><text class="sk-value" x="'+(o.x+12)+'" y="'+(y+13)+'">'+fmt(o.v)+'</text></g>';}).join('');
+ const list=a=>a.map(([l,v])=>'<div><span>'+esc(l)+'</span><strong>'+exact(v)+'</strong></div>').join('');
+ return '<div class="sk-flow"><div class="sk-scroll" tabindex="0" role="region" aria-label="Money flow diagram, scroll horizontally on small screens"><svg viewBox="0 0 '+W+' '+H+'" role="group" aria-label="Income sources flowing to uses. Select a label to trace it.">'+defs+paths+nodes+'</svg></div><p class="sk-hint" aria-live="polite">Select a label to trace its flow.</p><details><summary>Amounts & categories</summary><h4>Sources</h4>'+list(ins)+groups.map(g=>'<h4>'+esc(g.name)+'</h4>'+list(g.lines)).join('')+'<p>'+esc(data.note)+'</p></details></div>';
+}
+function flowSelect(el){
+ const wrap=el.closest('.sk-flow'),paths=[...wrap.querySelectorAll('path')],nodes=[...wrap.querySelectorAll('[data-node]')],id=el.dataset.node,on=el.getAttribute('aria-pressed')!=='true',seen=new Set([id]),active=new Set();
+ for(const [from,to] of [['from','to'],['to','from']]){const walk=k=>paths.filter(p=>p.dataset[from]===k).forEach(p=>{active.add(p);seen.add(p.dataset[to]);walk(p.dataset[to]);});walk(id);}
+ paths.forEach(p=>p.classList.toggle('sk-dim',on&&!active.has(p)));nodes.forEach(n=>{n.classList.toggle('sk-dim',on&&!seen.has(n.dataset.node));n.setAttribute('aria-pressed',String(on&&n===el));});
+ wrap.querySelector('.sk-hint').textContent=on?el.getAttribute('aria-label')+' · select again to reset.':'Select a label to trace its flow.';
+}
